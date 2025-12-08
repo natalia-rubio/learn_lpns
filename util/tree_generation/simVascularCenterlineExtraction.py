@@ -38,7 +38,7 @@ def main():
         sys.exit(1)
     
     # Set up paths following svVascularize convention
-    base_dir = "/Users/natalia/cursor_access/svv_trees"
+    base_dir = "/Users/natalia/cursor_access/learn_lpns"
     threeD_dir = os.path.join(base_dir, "data", "threeD", set_name, geo_name)
     centerlines_output = os.path.join(threeD_dir, "centerlines_simVascular.vtp")
     
