@@ -96,7 +96,7 @@ def generate_single_tree(tree_id, set_name='test_set', domain_size=45.0, n_branc
         
         # Generate centerlines using SimVascular
         logger.info("Generating centerlines using SimVascular")
-        simvascular_cmd = f"/Applications/SimVascular.app/Contents/Resources/simvascular --python -- simVascularCenterlineExtraction.py {geo_name} {set_name}"
+        simvascular_cmd = f"/Applications/SimVascular.app/Contents/Resources/simvascular --python -- util/tree_generation/simVascularCenterlineExtraction.py {geo_name} {set_name}"
         logger.info(f"Running: {simvascular_cmd}")
         result = os.system(simvascular_cmd)
         

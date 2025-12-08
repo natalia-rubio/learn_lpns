@@ -86,7 +86,7 @@ mpirun --mca mpi_cuda_support 0 -n {total_tasks} singularity run $IMAGE_PATH {sv
 
     
     # Write the shell script
-    threeD_dir = f"/Users/natalia/cursor_access/svv_trees/data/threeD/{set_name}/{geo_name}"
+    threeD_dir = f"/Users/natalia/cursor_access/learn_lpns/data/threeD/{set_name}/{geo_name}"
     output_path = os.path.join(threeD_dir, output_file)
     with open(output_path, 'w') as f:
         f.write(shell_content)
