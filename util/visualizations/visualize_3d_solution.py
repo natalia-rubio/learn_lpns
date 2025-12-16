@@ -256,8 +256,17 @@ def visualize_3d_solution(vtu_path, output_path, field='pressure',
         scalar_bar.SetTitle(f"{field.capitalize()}")
         scalar_bar.SetNumberOfLabels(5)
         scalar_bar.SetLookupTable(lut)
-        scalar_bar.GetTitleTextProperty().SetFontSize(32)
-        scalar_bar.GetLabelTextProperty().SetFontSize(28)
+        
+        title_prop = scalar_bar.GetTitleTextProperty()
+        title_prop.SetFontSize(32)
+        title_prop.SetColor(0, 0, 0)  # Black text
+        scalar_bar.SetTitleTextProperty(title_prop)
+        
+        label_prop = scalar_bar.GetLabelTextProperty()
+        label_prop.SetFontSize(28)
+        label_prop.SetColor(0, 0, 0)  # Black text
+        scalar_bar.SetLabelTextProperty(label_prop)
+        
         renderer.AddActor2D(scalar_bar)
         
         # Track text actor
