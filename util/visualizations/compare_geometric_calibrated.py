@@ -59,12 +59,12 @@ try:
             plt.rcParams['mathtext.fontset'] = 'cm'
             LATEX_AVAILABLE = False
         
-        plt.rcParams['axes.labelsize'] = 16
-        plt.rcParams['axes.titlesize'] = 18
-        plt.rcParams['xtick.labelsize'] = 14
-        plt.rcParams['ytick.labelsize'] = 14
-        plt.rcParams['legend.fontsize'] = 14
-        plt.rcParams['figure.titlesize'] = 20
+        plt.rcParams['axes.labelsize'] = 32
+        plt.rcParams['axes.titlesize'] = 36
+        plt.rcParams['xtick.labelsize'] = 28
+        plt.rcParams['ytick.labelsize'] = 28
+        plt.rcParams['legend.fontsize'] = 28
+        plt.rcParams['figure.titlesize'] = 40
         
         try:
             import seaborn as sns
@@ -253,12 +253,12 @@ def create_violin_plots(geometric_vessel_values, calibrated_vessel_values,
         if element_type in log_scale and len(geo_vals) > 0 and len(cal_vals) > 0:
             ax.set_yscale('log')
         
-        ax.set_title(element_label, fontsize=18, fontweight='bold')
-        ax.set_ylabel(r'Value', fontsize=16)
+        ax.set_title(element_label, fontsize=36, fontweight='bold')
+        ax.set_ylabel(r'Value', fontsize=32)
         ax.grid(True, alpha=0.3)
     
     # Add row label for vessels (moved further left)
-    fig.text(0.01, 0.75, r'Vessels', fontsize=16, fontweight='bold', rotation=90, 
+    fig.text(0.01, 0.75, r'Vessels', fontsize=32, fontweight='bold', rotation=90, 
              ha='center', va='center')
     
     # Second row: Junction elements
@@ -324,19 +324,19 @@ def create_violin_plots(geometric_vessel_values, calibrated_vessel_values,
         if element_type in log_scale and len(geo_vals) > 0 and len(cal_vals) > 0:
             ax.set_yscale('log')
         
-        ax.set_title(element_label, fontsize=18, fontweight='bold')
-        ax.set_ylabel(r'Value', fontsize=16)
+        ax.set_title(element_label, fontsize=36, fontweight='bold')
+        ax.set_ylabel(r'Value', fontsize=32)
         ax.grid(True, alpha=0.3)
     
     # Add row label for junctions (moved further left)
-    fig.text(0.01, 0.25, r'Junctions', fontsize=16, fontweight='bold', rotation=90, 
+    fig.text(0.01, 0.25, r'Junctions', fontsize=32, fontweight='bold', rotation=90, 
              ha='center', va='center')
     
     # Add overall title
     title = r'Geometric vs Calibrated 0D Element Values'
     if geo_name:
         title += f' --- {geo_name}'
-    fig.suptitle(title, fontsize=20, fontweight='bold', y=0.995)
+    fig.suptitle(title, fontsize=40, fontweight='bold', y=0.995)
     
     plt.tight_layout(rect=[0.03, 0, 1, 1])  # Leave space on left for row labels
     plt.savefig(output_path, dpi=150, bbox_inches='tight')

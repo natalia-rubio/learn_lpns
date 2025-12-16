@@ -105,7 +105,6 @@ else:
     HAS_CASADI = False
 
 # Constants
-NUM_OBS = 100  # Number of observations for calibration data refinement
 RHO = 1.06  # Blood density (g/cm^3)
 MU = 0.04  # Blood viscosity (Poise)
 
@@ -347,7 +346,7 @@ def identify_junctions_and_bcs(centerline_data, vessels):
                 "bc_type": "RESISTANCE",
                 "bc_values": {
                     "Pd": 0.0,
-                    "R": 0.0  # Will be calibrated
+                    "R": 1.0
                 }
             })
             vessel_bc_map[bc_name] = {
@@ -457,7 +456,7 @@ def find_inlet_outlet_caps(geo_dir):
 
 
 def create_geometric_zerod_input_rom(geo_dir, centerline_path, output_path, 
-                                     simvascular_path=None, dt=0.2, num_time_steps=5):
+                                     simvascular_path=None, dt=0.2, num_time_steps=5, num_cardiac_cycles=1):
     """
     Create geometric svZeroDSolver input file using SimVascular's ROM workflow.
     
@@ -539,7 +538,7 @@ bcs.add_velocities(face_name='{inlet_cap}', file_name='{os.path.abspath(inflow_f
     
     # Add resistance BCs for outlets
     for outlet_cap in outlet_caps:
-        script_content += f"bcs.add_resistance(face_name='{outlet_cap}', resistance=0.0)\n"
+        script_content += f"bcs.add_resistance(face_name='{outlet_cap}', resistance=1.0)\n"
     
     script_content += f"""solution_params = params.Solution()
 solution_params.time_step = {dt}
@@ -630,7 +629,7 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
     print(f"  geo_dir: {geo_dir}")
     print(f"  output_path: {output_path}")
     print(f"  inlet_cap: {inlet_cap}")
-    update_geometric_input_from_simulation(geo_dir, output_path, inlet_cap)
+    update_geometric_input_from_simulation(geo_dir, output_path, inlet_cap, num_cardiac_cycles=num_cardiac_cycles)
     
     # Re-read the updated JSON
     with open(output_path, 'r') as f:
@@ -742,107 +741,18 @@ def read_flow_file(flow_path):
         return None, None
 
 
-def update_geometric_input_from_simulation(geo_dir, json_path, inlet_cap_name):
+def update_geometric_input_from_simulation(geo_dir, json_path, inlet_cap_name, num_cardiac_cycles=1):
     """
     Update geometric input JSON with simulation parameters from XML and flow file.
-    If calibration_input.json exists, use the inflow BC from there instead.
     
     Args:
         geo_dir: Geometry directory containing XML and flow files
         json_path: Path to geometric input JSON file
         inlet_cap_name: Name of inlet cap (e.g., 'cap_6')
+        num_cardiac_cycles: Number of cardiac cycles (default: 1)
     """
     print(f"  Looking for inflow BC data...")
     print(f"  Inlet cap name: {inlet_cap_name}")
-    
-    # First, check if calibration_input.json exists in the same directory
-    calibration_input_path = os.path.join(os.path.dirname(json_path), 'calibration_input.json')
-    
-    if os.path.exists(calibration_input_path):
-        print(f"  Found calibration_input.json, using inflow BC from there")
-        try:
-            with open(calibration_input_path, 'r') as f:
-                calibration_input = json.load(f)
-            
-            # Extract inflow BC from calibration input
-            bc_times = None
-            bc_flows = None
-            
-            # Look for INFLOW boundary condition
-            for bc in calibration_input.get('boundary_conditions', []):
-                if bc.get('bc_name') == 'INFLOW':
-                    bc_values = bc.get('bc_values', {})
-                    bc_times = bc_values.get('t')
-                    bc_flows = bc_values.get('Q')
-                    if bc_times is not None and bc_flows is not None:
-                        print(f"    Found INFLOW BC in calibration input")
-                        print(f"      Number of time points: {len(bc_times)}")
-                        print(f"      Time range: [{bc_times[0]:.6f}, {bc_times[-1]:.6f}]")
-                        print(f"      Flow range: [{min(bc_flows):.3f}, {max(bc_flows):.3f}]")
-                        break
-            
-            # If not found in boundary_conditions, try to extract from observations
-            if bc_times is None or bc_flows is None:
-                observations = calibration_input.get('y', {})
-                # Look for flow observation at INFLOW
-                flow_key = None
-                for key in observations.keys():
-                    if key.startswith('flow:INFLOW:') or key.startswith('flow:') and 'INFLOW' in key:
-                        flow_key = key
-                        break
-                
-                if flow_key:
-                    print(f"    Found flow observation in calibration input: {flow_key}")
-                    bc_flows = observations[flow_key]
-                    # Generate time array (normalized to [0, 1])
-                    bc_times = np.linspace(0.0, 1.0, len(bc_flows)).tolist()
-                    print(f"      Number of time points: {len(bc_times)}")
-                    print(f"      Flow range: [{min(bc_flows):.3f}, {max(bc_flows):.3f}]")
-            
-            if bc_times is not None and bc_flows is not None:
-                # Read geometric input JSON
-                with open(json_path, 'r') as f:
-                    zerod_input = json.load(f)
-                
-                # Update number_of_time_pts_per_cardiac_cycle
-                num_time_steps = len(bc_times)
-                if 'simulation_parameters' in zerod_input:
-                    zerod_input['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = num_time_steps
-                    print(f"  Updated number_of_time_pts_per_cardiac_cycle: {num_time_steps}")
-                
-                # Update inflow boundary condition
-                for bc in zerod_input.get('boundary_conditions', []):
-                    if bc.get('bc_name') == 'INFLOW':
-                        bc['bc_values']['t'] = bc_times
-                        bc['bc_values']['Q'] = bc_flows
-                        print(f"  Updated INFLOW BC from calibration_input.json:")
-                        print(f"    Number of time points: {len(bc_times)}")
-                        print(f"    Time range: [{bc_times[0]:.6f}, {bc_times[-1]:.6f}]")
-                        print(f"    Flow range: [{min(bc_flows):.3f}, {max(bc_flows):.3f}]")
-                        break
-                
-                # Set all capacitance (C) values to 10^-10
-                capacitance_value = 1e-10
-                vessels_updated = 0
-                for vessel in zerod_input.get('vessels', []):
-                    if 'zero_d_element_values' in vessel and 'C' in vessel['zero_d_element_values']:
-                        vessel['zero_d_element_values']['C'] = capacitance_value
-                        vessels_updated += 1
-                print(f"  Set capacitance (C) to {capacitance_value} for {vessels_updated} vessels")
-                
-                # Write updated JSON
-                with open(json_path, 'w') as f:
-                    json.dump(zerod_input, f, indent=4)
-                
-                print(f"  Updated geometric input with inflow BC from calibration_input.json")
-                print(f"  Saved to: {json_path}")
-                return
-            else:
-                print(f"  Warning: Could not extract inflow BC from calibration_input.json")
-                print(f"    Falling back to XML/flow file approach")
-        except Exception as e:
-            print(f"  Warning: Error reading calibration_input.json: {e}")
-            print(f"    Falling back to XML/flow file approach")
     
     # Fallback to original XML/flow file approach
     print(f"  Using XML and flow files from: {geo_dir}")
@@ -917,11 +827,6 @@ def update_geometric_input_from_simulation(geo_dir, json_path, inlet_cap_name):
     with open(json_path, 'r') as f:
         zerod_input = json.load(f)
     
-    # Update number_of_time_pts_per_cardiac_cycle
-    if 'simulation_parameters' in zerod_input:
-        zerod_input['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = num_time_steps
-        print(f"  Updated number_of_time_pts_per_cardiac_cycle: {num_time_steps}")
-    
     # Generate time array from 0 with time_step_size increments
     bc_times = [i * time_step_size for i in range(num_time_steps)]
     
@@ -965,6 +870,21 @@ def update_geometric_input_from_simulation(geo_dir, json_path, inlet_cap_name):
             print(f"    Time range: [{bc_times[0]:.6f}, {bc_times[-1]:.6f}]")
             print(f"    Flow range: [{min(flows):.3f}, {max(flows):.3f}]")
             break
+
+    # Ensure simulation_parameters.number_of_time_pts_per_cardiac_cycle
+    # matches the length of the inflow BC time series
+    if 'simulation_parameters' in zerod_input:
+        n_pts = len(bc_times)
+        zerod_input['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = n_pts
+        zerod_input['simulation_parameters']['number_of_cardiac_cycles'] = num_cardiac_cycles
+        zerod_input['simulation_parameters']['steady_initial'] = False
+        zerod_input['simulation_parameters']['absolute_tolerance'] = 1e-5
+        zerod_input['simulation_parameters']['maximum_nonlinear_iterations'] = 50
+        print(f"  Updated number_of_time_pts_per_cardiac_cycle: {n_pts}")
+        print(f"  Updated number_of_cardiac_cycles: {num_cardiac_cycles}")
+        print(f"  Set steady_initial: False")
+        print(f"  Set absolute_tolerance: 1e-5")
+        print(f"  Set maximum_nonlinear_iterations: 50")
     
     # Set all capacitance (C) values to 10^-10
     capacitance_value = 1e-10
@@ -991,67 +911,9 @@ def update_geometric_input_from_simulation(geo_dir, json_path, inlet_cap_name):
                 print(f"    First time: {bc['bc_values']['t'][0]}, Last time: {bc['bc_values']['t'][-1]}")
                 print(f"    First flow: {bc['bc_values']['Q'][0]:.3f}, Last flow: {bc['bc_values']['Q'][-1]:.3f}")
                 break
-    
-    # Set all capacitance (C) values to 10^-10
-    capacitance_value = 1e-10
-    vessels_updated = 0
-    for vessel in zerod_input.get('vessels', []):
-        if 'zero_d_element_values' in vessel and 'C' in vessel['zero_d_element_values']:
-            vessel['zero_d_element_values']['C'] = capacitance_value
-            vessels_updated += 1
-    print(f"  Set capacitance (C) to {capacitance_value} for {vessels_updated} vessels")
-    
-    # Write updated JSON
-    with open(json_path, 'w') as f:
-        json.dump(zerod_input, f, indent=4)
-    
-    print(f"  Updated geometric input with simulation parameters")
-    print(f"  Saved to: {json_path}")
-    
-    # Verify the update
-    with open(json_path, 'r') as f:
-        verify = json.load(f)
-        for bc in verify.get('boundary_conditions', []):
-            if bc.get('bc_name') == 'INFLOW':
-                print(f"  Verification - INFLOW BC has {len(bc['bc_values']['t'])} time points")
-                print(f"    First time: {bc['bc_values']['t'][0]}, Last time: {bc['bc_values']['t'][-1]}")
-                print(f"    First flow: {bc['bc_values']['Q'][0]:.3f}, Last flow: {bc['bc_values']['Q'][-1]:.3f}")
-                break
 
 
-def refine_curve(x, y, num):
-    """
-    Refine a curve using cubic spline interpolation with derivative.
-    
-    Args:
-        x: X-coordinates
-        y: Y-coordinates
-        num: New number of points
-        
-    Returns:
-        new_y: New y-coordinates
-        new_dy: New dy-coordinates
-    """
-    if CubicSpline is None:
-        # Fallback to simple linear interpolation
-        x_new = np.linspace(x[0], x[-1], num)
-        y_array = np.array(y)
-        x_array = np.array(x)
-        new_y = np.interp(x_new, x_array, y_array)
-        # Simple finite difference for derivative
-        new_dy = np.gradient(new_y, x_new[1] - x_new[0] if len(x_new) > 1 else 1.0)
-        return new_y.tolist(), new_dy.tolist()
-    
-    y = y.copy()
-    y[-1] = y[0]  # Periodic boundary
-    x_new = np.linspace(x[0], x[-1], num)
-    spline = CubicSpline(x, y, bc_type="periodic")
-    new_y = spline(x_new)
-    new_dy = spline.derivative()(x_new)
-    return new_y.tolist(), new_dy.tolist()
-
-
-def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
+def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None):
     """
     Extract observation data from 1D centerline solution VTP file.
     Extracts observations at boundaries and junctions following the format expected by svZeroDCalibrator.
@@ -1059,6 +921,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
     Args:
         centerline_soln_path: Path to centerline solution VTP (with pressure/velocity arrays)
         geometric_input_path: Path to geometric 0D input JSON (to understand vessel/junction structure)
+        geo_dir: Geometry directory containing XML file (optional, will try to infer from paths)
         
     Returns:
         Dictionary with observation data (y, dy) for calibration
@@ -1099,9 +962,42 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
     if not pressure_timesteps or not flow_timesteps:
         raise ValueError("No pressure or flow timesteps found in centerline solution")
     
+    # Calculate timestep increment from the solution
+    timestep_indices = [extract_timestep(name) for name in pressure_timesteps]
+    if len(timestep_indices) > 1:
+        # Calculate increment between consecutive timesteps
+        increments = [timestep_indices[i+1] - timestep_indices[i] for i in range(len(timestep_indices)-1)]
+        # Use the most common increment (in case there are variations)
+        timestep_increment = max(set(increments), key=increments.count) if increments else 1
+    else:
+        timestep_increment = 1
+    
+    # Try to get time_step_size from XML
+    time_step_size = None
+    if geo_dir is None:
+        # Try to infer geo_dir from geometric_input_path
+        # Typically: data/zeroD/set_X/tree_Y/geometric_input.json
+        # XML would be at: data/threeD/set_X/tree_Y/fluid_simulation_0-0.xml
+        geo_dir = os.path.dirname(geometric_input_path)
+        # Try to find threeD directory
+        parts = geo_dir.split(os.sep)
+        if 'zeroD' in parts:
+            idx = parts.index('zeroD')
+            parts[idx] = 'threeD'
+            geo_dir = os.sep.join(parts)
+    
+    xml_path = os.path.join(geo_dir, 'fluid_simulation_0-0.xml')
+    if os.path.exists(xml_path):
+        sim_params = parse_simulation_xml(xml_path)
+        if sim_params and 'time_step_size' in sim_params:
+            time_step_size = sim_params['time_step_size']
+            print(f"  Found XML time_step_size: {time_step_size:.6f} s")
+            print(f"  Timestep increment in solution: {timestep_increment}")
+    
     # Extract time array (assume uniform time steps)
     num_timesteps = len(pressure_timesteps)
     times = np.linspace(0.0, 1.0, num_timesteps)  # Normalized time
+    obs_len = len(times)
     
     # Extract data at boundary points and junctions
     branch_id = centerline_data.get('BranchId', None)
@@ -1118,11 +1014,20 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
             elif gid[i] > 0:  # Outlet
                 outlet_indices.append(i)
     
+    # Calculate dt from XML timestep size and solution increment
+    if time_step_size is not None:
+        dt = time_step_size * timestep_increment
+        print(f"  Calculated dt for derivatives: {dt:.6f} s (time_step_size * increment = {time_step_size:.6f} * {timestep_increment})")
+    else:
+        # Fallback: use normalized time difference
+        dt = times[1] - times[0] if len(times) > 1 else 1.0
+        print(f"  Warning: Could not find XML time_step_size, using normalized time difference: {dt:.6f}")
+    
     # Extract observations
     observations = {"y": {}, "dy": {}}
     
     # Helper function to extract and refine data at a point
-    def extract_at_point(point_idx, times):
+    def extract_at_point(point_idx, times, dt):
         if point_idx is None or point_idx >= len(branch_id):
             return None, None, None, None
         
@@ -1131,15 +1036,25 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
         flow_data = np.array([centerline_data[ft][point_idx] 
                            for ft in flow_timesteps])
         
-        pressure_refined, pressure_der = refine_curve(times, pressure_data, NUM_OBS)
-        flow_refined, flow_der = refine_curve(times, flow_data, NUM_OBS)
+        # Keep pressure in original units (dynes/cm^2) - conversion to mmHg done in visualization
+        # Use data directly without refinement
+        pressure_refined = pressure_data.tolist()
+        flow_refined = flow_data.tolist()
+        
+        # Compute derivatives using numpy gradient with correct dt
+        if len(times) > 1:
+            pressure_der = np.gradient(pressure_data, dt).tolist()
+            flow_der = np.gradient(flow_data, dt).tolist()
+        else:
+            pressure_der = [0.0] * len(pressure_refined)
+            flow_der = [0.0] * len(flow_refined)
         
         return pressure_refined, pressure_der, flow_refined, flow_der
     
     # Extract observations at boundaries (inlet and outlets)
     # Inflow BC
     if inlet_idx is not None:
-        p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times)
+        p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt)
         if p_ref is not None:
             observations["y"][f"pressure:INFLOW:branch0_seg0"] = p_ref
             observations["dy"][f"pressure:INFLOW:branch0_seg0"] = p_der
@@ -1172,7 +1087,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
                             break
                 
                 if outlet_point_idx is not None:
-                    p_ref, p_der, f_ref, f_der = extract_at_point(outlet_point_idx, times)
+                    p_ref, p_der, f_ref, f_der = extract_at_point(outlet_point_idx, times, dt)
                     if p_ref is not None:
                         observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = p_ref
                         observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = p_der
@@ -1181,7 +1096,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
                     else:
                         # Create zero observations if extraction failed
                         print(f"  Warning: Could not extract observations for {vessel['vessel_name']}:{bc_outlet}, using zeros")
-                        zero_obs = [0.0] * NUM_OBS
+                        zero_obs = [0.0] * obs_len
                         observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
                         observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
                         observations["y"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
@@ -1189,7 +1104,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
                 else:
                     # Create zero observations if outlet point not found
                     print(f"  Warning: Could not find outlet point for {vessel['vessel_name']}:{bc_outlet}, using zeros")
-                    zero_obs = [0.0] * NUM_OBS
+                    zero_obs = [0.0] * obs_len
                     observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
                     observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
                     observations["y"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
@@ -1213,7 +1128,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
                 # This is approximate - ideally we'd find the exact junction point
                 for i in range(len(branch_id) - 1, -1, -1):
                     if branch_id[i] == vessel_branch:
-                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times)
+                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt)
                         if p_ref is not None:
                             observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref
                             observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der
@@ -1231,7 +1146,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
                 # Find a point on this vessel near the junction (use first point of branch)
                 for i in range(len(branch_id)):
                     if branch_id[i] == vessel_branch:
-                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times)
+                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt)
                         if p_ref is not None:
                             observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref
                             observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der
@@ -1242,27 +1157,99 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path):
     return observations
 
 
-def create_calibration_input(geometric_input_path, observations, output_path):
+def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, num_cardiac_cycles=1, timestep_scale_factor=0.25):
     """
     Create calibration input file from geometric input and observations.
+    Computes BC times from 1D solution timesteps multiplied by timestep size from XML.
     
     Args:
         geometric_input_path: Path to geometric 0D input JSON
         observations: Dictionary with observation data (y, dy)
         output_path: Path to save calibration input JSON
+        centerline_soln_path: Path to 1D centerline solution VTP (to extract timestep count)
+        geo_dir: Geometry directory (to find XML file for timestep size)
+        num_cardiac_cycles: Number of cardiac cycles (default: 1)
+        timestep_scale_factor: Scaling factor for 0D timestep relative to 1D/3D timestep (default: 0.25)
     """
     print(f"Reading geometric input from: {geometric_input_path}")
     with open(geometric_input_path, 'r') as f:
         inp = json.load(f)
     
-    # Use observations directly to set inflow BC
-    # Note: Forward simulation is skipped to avoid potential segfaults with invalid geometric models
-    # The observations from 1D/3D results are used directly for calibration
+    # Compute BC times directly from 1D solution timesteps (no refinement/interpolation)
+    bc_time = None
+    
+    if centerline_soln_path and geo_dir:
+        # Find timestep count from 1D solution
+        centerline_data, _ = read_centerline_vtp(centerline_soln_path)
+        flow_timesteps = [key for key in centerline_data.keys() if key.startswith('velocity_') or key.startswith('flow_')]
+        
+        def extract_timestep(name):
+            try:
+                return int(name.split('_')[-1])
+            except:
+                return 0
+        
+        flow_timesteps.sort(key=extract_timestep)
+        num_timesteps = len(flow_timesteps)
+        
+        # Get timestep size from XML
+        xml_path = os.path.join(geo_dir, 'fluid_simulation_0-0.xml')
+        if os.path.exists(xml_path):
+            sim_params = parse_simulation_xml(xml_path)
+            if sim_params and 'time_step_size' in sim_params:
+                time_step_size = sim_params['time_step_size']
+                
+                # Use exact times from 1D solution: time_step * time_step_size
+                # e.g., velocity_00002 -> time_step = 2, so time = 2 * time_step_size
+                bc_time = [extract_timestep(name) * time_step_size for name in flow_timesteps]
+                
+                print(f"  Using BC times directly from 1D solution:")
+                print(f"    Number of timesteps: {num_timesteps}")
+                print(f"    Time step size: {time_step_size:.6f} s")
+                print(f"    Time range: [{bc_time[0]:.6f}, {bc_time[-1]:.6f}] s")
+                print(f"    Example: {flow_timesteps[0]} -> time = {bc_time[0]:.6f} s")
+                if len(flow_timesteps) > 1:
+                    print(f"    Example: {flow_timesteps[1]} -> time = {bc_time[1]:.6f} s")
+            else:
+                print(f"  Warning: Could not extract time_step_size from XML, using normalized time")
+                bc_time = np.linspace(0.0, 1.0, num_timesteps).tolist()
+        else:
+            print(f"  Warning: XML file not found at {xml_path}, using normalized time")
+            bc_time = np.linspace(0.0, 1.0, num_timesteps).tolist()
+    else:
+        # Fallback: derive number of observations from available solution data
+        if "flow:INFLOW:branch0_seg0" in observations["y"]:
+            num_obs = len(observations["y"]["flow:INFLOW:branch0_seg0"])
+        elif observations["y"]:
+            # Use the length of any available observation series as the reference count
+            first_series = next(iter(observations["y"].values()))
+            num_obs = len(first_series)
+        else:
+            raise ValueError("Cannot determine number of observations: no solution data available")
+        bc_time = np.linspace(0.0, 1.0, num_obs).tolist()
+        print(f"  Using normalized time (fallback): {len(bc_time)} points derived from observation length")
+    
+    # Use observations directly to set inflow BC (no interpolation)
     if "flow:INFLOW:branch0_seg0" in observations["y"]:
-        bc_time = np.linspace(0.0, 1.0, NUM_OBS).tolist()
+        # Use flow values directly from observations
         bc_flow = observations["y"]["flow:INFLOW:branch0_seg0"]
         
-        # Update inflow BC with observed flow
+        # Ensure bc_time matches bc_flow length
+        if len(bc_time) != len(bc_flow):
+            print(f"  Warning: BC time length ({len(bc_time)}) != flow length ({len(bc_flow)})")
+            if len(bc_time) > len(bc_flow):
+                bc_time = bc_time[:len(bc_flow)]
+                print(f"    Truncated bc_time to {len(bc_time)} points")
+            else:
+                # This shouldn't happen if we're using times from 1D solution
+                print(f"    ERROR: Not enough time points for flow data!")
+                bc_flow = bc_flow[:len(bc_time)]
+        
+        print(f"  Using flow values directly from 1D observations:")
+        print(f"    Number of flow points: {len(bc_flow)}")
+        print(f"    Flow range: [{min(bc_flow):.3f}, {max(bc_flow):.3f}] cm³/s")
+        
+        # Update inflow BC with interpolated flow
         for bc in inp["boundary_conditions"]:
             if bc["bc_name"] == "INFLOW":
                 bc["bc_values"]["t"] = bc_time
@@ -1271,30 +1258,35 @@ def create_calibration_input(geometric_input_path, observations, output_path):
     else:
         print("Warning: No inflow flow data found in observations")
         # Use default constant flow
-        bc_time = np.linspace(0.0, 1.0, NUM_OBS).tolist()
-        bc_flow = [0.0] * NUM_OBS
+        bc_flow = [0.0] * len(bc_time)
         for bc in inp["boundary_conditions"]:
             if bc["bc_name"] == "INFLOW":
                 bc["bc_values"]["t"] = bc_time
                 bc["bc_values"]["Q"] = bc_flow
                 break
     
-    # Set all elements to zero for calibration
-    for vessel in inp["vessels"]:
-        for ele in vessel["zero_d_element_values"].keys():
-            vessel["zero_d_element_values"][ele] = 0.0
+    # Keep geometric parameters (R_poiseuille, C, L, stenosis_coefficient) from geometric input
+    # These will serve as initial values for calibration
     
     # Add calibration parameters
     inp["calibration_parameters"] = {
         "tolerance_gradient": 1e-5,
         "tolerance_increment": 1e-10,
         "maximum_iterations": 100,
-        "calibrate_stenosis_coefficient": True,
+        "calibrate_stenosis_coefficient": False,
         "set_capacitance_to_zero": False,
     }
     
-    # Only calibrate to last cycle
-    inp["simulation_parameters"]["output_all_cycles"] = False
+    # Output all cycles and ensure time points per cycle matches inflow BC length
+    if "simulation_parameters" not in inp:
+        inp["simulation_parameters"] = {}
+    n_time_pts = len(bc_time)
+    inp["simulation_parameters"]["number_of_time_pts_per_cardiac_cycle"] = n_time_pts
+    inp["simulation_parameters"]["output_all_cycles"] = True
+    inp["simulation_parameters"]["number_of_cardiac_cycles"] = num_cardiac_cycles
+    inp["simulation_parameters"]["steady_initial"] = False
+    inp["simulation_parameters"]["absolute_tolerance"] = 1e-5
+    inp["simulation_parameters"]["maximum_nonlinear_iterations"] = 50
     
     # Add observations
     inp.update(observations)
@@ -1308,26 +1300,190 @@ def create_calibration_input(geometric_input_path, observations, output_path):
     return inp
 
 
+def update_geometric_input_with_calibration_bc(geometric_input_path, calibration_input_path):
+    """
+    Update geometric_input.json with inflow BC from calibration_input.json.
+    
+    Args:
+        geometric_input_path: Path to geometric input JSON
+        calibration_input_path: Path to calibration input JSON
+    """
+    print(f"\nUpdating geometric input with inflow BC from calibration input...")
+    
+    if not os.path.exists(calibration_input_path):
+        print(f"  Warning: Calibration input not found at {calibration_input_path}")
+        return False
+    
+    # Read calibration input
+    with open(calibration_input_path, 'r') as f:
+        calib_data = json.load(f)
+    
+    # Extract inflow BC from calibration input
+    calib_inflow_bc = None
+    for bc in calib_data.get('boundary_conditions', []):
+        if bc.get('bc_name') == 'INFLOW':
+            calib_inflow_bc = bc.get('bc_values', {})
+            break
+    
+    if not calib_inflow_bc:
+        print(f"  Warning: Could not find INFLOW BC in calibration input")
+        return False
+    
+    # Read geometric input
+    with open(geometric_input_path, 'r') as f:
+        geo_input = json.load(f)
+    
+    # Update inflow BC
+    geo_updated = False
+    n_pts_inflow = len(calib_inflow_bc.get('t', []))
+    for bc in geo_input.get('boundary_conditions', []):
+        if bc.get('bc_name') == 'INFLOW':
+            bc['bc_values'] = calib_inflow_bc.copy()
+            geo_updated = True
+            print(f"  Updated geometric input INFLOW BC:")
+            print(f"    Number of time points: {n_pts_inflow}")
+            if calib_inflow_bc.get('t'):
+                print(f"    Time range: [{calib_inflow_bc['t'][0]:.6f}, {calib_inflow_bc['t'][-1]:.6f}]")
+            if calib_inflow_bc.get('Q'):
+                print(f"    Flow range: [{min(calib_inflow_bc['Q']):.3f}, {max(calib_inflow_bc['Q']):.3f}]")
+            break
+
+    # Ensure simulation_parameters.number_of_time_pts_per_cardiac_cycle
+    # matches the length of the inflow BC time series in the geometric input
+    if geo_updated and 'simulation_parameters' in geo_input:
+        geo_input['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = n_pts_inflow
+        print(f"  Updated simulation_parameters.number_of_time_pts_per_cardiac_cycle to {n_pts_inflow}")
+    
+    if geo_updated:
+        # Write updated geometric input
+        with open(geometric_input_path, 'w') as f:
+            json.dump(geo_input, f, indent=4)
+        print(f"  Saved updated geometric input to: {geometric_input_path}")
+        return True
+    else:
+        print(f"  Warning: Could not find INFLOW BC in geometric input to update")
+        return False
+
+
 def run_calibration(calibration_input_path, output_path):
     """
     Run svZeroDCalibrator to generate calibrated input file.
+    Uses svzerodcalibrator executable at /Users/natalia/cursor_access/svZeroDPlus/Release/svzerodcalibrator.
+    Ensures the calibrated output preserves the inflow BC from the calibration input (3D observations).
     
     Args:
         calibration_input_path: Path to calibration input JSON
         output_path: Path to save calibrated output JSON
     """
-    if pysvzerod is None:
-        raise RuntimeError("pysvzerod not available. Cannot run calibration.")
+    import subprocess
     
     print(f"Running calibration...")
+    
+    # Read calibration input
     with open(calibration_input_path, 'r') as f:
         config = json.load(f)
     
+    # Extract inflow BC from calibration input to preserve it
+    inflow_bc = None
+    for bc in config.get('boundary_conditions', []):
+        if bc.get('bc_name') == 'INFLOW':
+            inflow_bc = bc.copy()
+            break
+    
+    # Use svzerodcalibrator executable
+    calibrator_exe = '/Users/natalia/cursor_access/svZeroDPlus/Release/svzerodcalibrator'
+    
+    # Get absolute paths
+    abs_input_path = os.path.abspath(calibration_input_path)
+    abs_output_path = os.path.abspath(output_path)
+    
+    print(f"  Attempting calibration with svzerodcalibrator executable...")
+    print(f"    Executable: {calibrator_exe}")
+    print(f"    Input: {abs_input_path}")
+    print(f"    Output: {abs_output_path}")
+    
     try:
-        cali = pysvzerod.calibrate(config)
+        # Run svzerodcalibrator: svzerodcalibrator <input.json> <output.json>
+        result = subprocess.run(
+            [calibrator_exe, abs_input_path, abs_output_path],
+            capture_output=False,
+            text=True,
+            check=True
+        )
+        #import pdb; pdb.set_trace()
+        print(f"  ✓ Calibration completed with svzerodcalibrator")
+        if result.stdout:
+            print(f"  STDOUT: {result.stdout}")
+        
+    except subprocess.CalledProcessError as e:
+        error_msg = f"svzerodcalibrator failed with return code {e.returncode}"
+        if e.stdout:
+            error_msg += f"\nSTDOUT: {e.stdout}"
+        if e.stderr:
+            error_msg += f"\nSTDERR: {e.stderr}"
+        raise RuntimeError(error_msg)
+    except FileNotFoundError:
+        raise RuntimeError(f"svzerodcalibrator executable not found at: {calibrator_exe}")
+    
+    # Read the calibrated output
+    try:
+        with open(abs_output_path, 'r') as f:
+            cali = json.load(f)
     except Exception as e:
-        print(f"Calibration failed: {e}")
-        raise
+        raise RuntimeError(f"Failed to read calibrated output from {abs_output_path}: {e}")
+    
+    # Post-process calibrated output to ensure compatibility with svzerodsolver
+    for junc in cali.get('junctions', []):
+        if 'junction_values' in junc:
+            # Remove C parameter if present (not supported by svzerodsolver)
+            if 'C' in junc['junction_values']:
+                del junc['junction_values']['C']
+            
+            # For HybridJunction, ensure pressure_recovery_coefficient is present
+            if junc.get('junction_type') == 'HybridJunction':
+                if 'pressure_recovery_coefficient' not in junc['junction_values']:
+                    # Add with default zeros matching number of outlets
+                    num_outlets = len(junc.get('outlet_vessels', []))
+                    junc['junction_values']['pressure_recovery_coefficient'] = [0.0] * num_outlets
+                    print(f"  Added pressure_recovery_coefficient to {junc.get('junction_name', 'unknown')} (HybridJunction)")
+            else:
+                # For non-HybridJunction types, remove pressure_recovery_coefficient if present
+                if 'pressure_recovery_coefficient' in junc['junction_values']:
+                    del junc['junction_values']['pressure_recovery_coefficient']
+    
+    # Ensure calibrated output has the correct inflow BC from 3D observations
+    if inflow_bc is not None:
+        # Update or add the inflow BC in the calibrated output
+        bc_found = False
+        for bc in cali.get('boundary_conditions', []):
+            if bc.get('bc_name') == 'INFLOW':
+                bc['bc_values'] = inflow_bc['bc_values'].copy()
+                bc_found = True
+                print(f"  Preserved INFLOW BC from 3D observations in calibrated output")
+                break
+        
+        if not bc_found:
+            # Add inflow BC if it doesn't exist
+            if 'boundary_conditions' not in cali:
+                cali['boundary_conditions'] = []
+            cali['boundary_conditions'].append(inflow_bc)
+            print(f"  Added INFLOW BC from 3D observations to calibrated output")
+    
+    # Preserve number_of_cardiac_cycles from calibration input
+    if 'simulation_parameters' in config and 'number_of_cardiac_cycles' in config['simulation_parameters']:
+        if 'simulation_parameters' not in cali:
+            cali['simulation_parameters'] = {}
+        cali['simulation_parameters']['number_of_cardiac_cycles'] = config['simulation_parameters']['number_of_cardiac_cycles']
+        print(f"  Preserved number_of_cardiac_cycles: {cali['simulation_parameters']['number_of_cardiac_cycles']}")
+    
+    # Ensure steady_initial and solver parameters are set
+    if 'simulation_parameters' in cali:
+        cali['simulation_parameters']['steady_initial'] = False
+        cali['simulation_parameters']['absolute_tolerance'] = 1e-5
+        cali['simulation_parameters']['maximum_nonlinear_iterations'] = 50
+        print(f"  Set steady_initial: False in calibrated output")
+        print(f"  Set absolute_tolerance: 1e-10 in calibrated output")
+        print(f"  Set maximum_nonlinear_iterations: 50 in calibrated output")
     
     # Write calibrated output
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -1395,10 +1551,195 @@ def convert_simulation_results_to_csv(sim_results, output_csv_path):
     return output_csv_path
 
 
+def verify_inlet_flow_matches_bc(input_data, results, inlet_vessel_name='branch0_seg0'):
+    """
+    Verify that the inlet flow in simulation results matches the boundary condition.
+    
+    Args:
+        input_data: Input JSON data (contains BC)
+        results: Simulation results dictionary or CSV path
+        inlet_vessel_name: Name of inlet vessel
+        
+    Returns:
+        True if matches (within tolerance), False otherwise
+    """
+    # Extract BC flow values
+    bc_times = None
+    bc_flows = None
+    for bc in input_data.get('boundary_conditions', []):
+        if bc.get('bc_name') == 'INFLOW':
+            bc_values = bc.get('bc_values', {})
+            bc_times = bc_values.get('t', [])
+            bc_flows = bc_values.get('Q', [])
+            break
+    
+    if bc_times is None or bc_flows is None:
+        print("  Warning: Could not find INFLOW BC in input data")
+        return False
+    
+    # Extract inlet flow from results
+    if isinstance(results, str):
+        # Results is a CSV path, read it
+        import csv
+        inlet_flows = []
+        result_times = []
+        with open(results, 'r') as f:
+            reader = csv.DictReader(f)
+            # Check which column name is used for vessel identifier by reading fieldnames
+            fieldnames = reader.fieldnames
+            if fieldnames is None:
+                print("  Warning: Could not read CSV fieldnames")
+                return False
+            
+            # Determine vessel identifier column name
+            vessel_id_col = None
+            if 'location' in fieldnames:
+                vessel_id_col = 'location'
+            elif 'name' in fieldnames:
+                vessel_id_col = 'name'
+            else:
+                print("  Warning: Could not find 'location' or 'name' column in CSV")
+                print(f"    Available columns: {fieldnames}")
+                return False
+            
+            # Process all rows
+            for row in reader:
+                if row.get(vessel_id_col) == inlet_vessel_name:
+                    result_times.append(float(row['time']))
+                    inlet_flows.append(float(row['flow_in']))
+    else:
+        # Results is a dictionary from pysvzerod
+        names = results.get('name', [])
+        times = results.get('time', [])
+        flow_in = results.get('flow_in', [])
+        
+        inlet_flows = []
+        result_times = []
+        for i, name in enumerate(names):
+            if name == inlet_vessel_name:
+                result_times.append(times[i] if i < len(times) else 0.0)
+                inlet_flows.append(flow_in[i] if i < len(flow_in) else 0.0)
+    
+    if not inlet_flows:
+        print(f"  Warning: Could not find inlet flow for vessel '{inlet_vessel_name}' in results")
+        return False
+    
+    # Interpolate BC flows to match result times
+    if HAS_SCIPY_INTERP:
+        from scipy.interpolate import interp1d
+        try:
+            interp_func = interp1d(bc_times, bc_flows, kind='linear', 
+                                  bounds_error=False, fill_value='extrapolate')
+            bc_flows_interp = [float(interp_func(t)) for t in result_times]
+        except:
+            bc_flows_interp = np.interp(result_times, bc_times, bc_flows).tolist()
+    else:
+        bc_flows_interp = np.interp(result_times, bc_times, bc_flows).tolist()
+    
+    # Compare
+    max_diff = 0.0
+    max_diff_time = None
+    tolerance = 1e-3  # Allow small numerical differences
+    
+    for i, (result_flow, bc_flow) in enumerate(zip(inlet_flows, bc_flows_interp)):
+        diff = abs(result_flow - bc_flow)
+        if diff > max_diff:
+            max_diff = diff
+            max_diff_time = result_times[i] if i < len(result_times) else None
+    
+    if max_diff > tolerance:
+        print(f"  ⚠ WARNING: Inlet flow does not match BC!")
+        print(f"    Maximum difference: {max_diff:.6f} cm³/s at t={max_diff_time:.3f}")
+        print(f"    BC flow range: [{min(bc_flows):.2f}, {max(bc_flows):.2f}] cm³/s")
+        print(f"    Result flow range: [{min(inlet_flows):.2f}, {max(inlet_flows):.2f}] cm³/s")
+        print(f"    This may indicate convergence issues or BC application problems")
+        return False
+    else:
+        print(f"  ✓ Verified: Inlet flow matches BC (max diff: {max_diff:.6e} cm³/s)")
+        return True
+
+
+def modify_junction_types(config, junction_type):
+    """
+    Modify junction types in a config based on the number of outlets.
+    Junctions with more than one outlet use the specified junction type.
+    Junctions with only one outlet remain as NORMAL_JUNCTION.
+    
+    Args:
+        config: Dictionary with 0D input configuration
+        junction_type: String specifying junction type ('BloodVesselJunction', 'DirDepJunction', 'DirIndepJunction', 'HybridJunction')
+        
+    Returns:
+        Modified config dictionary
+    """
+    import copy
+    config_modified = copy.deepcopy(config)
+    
+    # Update junctions based on number of outlets
+    if 'junctions' in config_modified:
+        for junc in config_modified['junctions']:
+            # Get number of outlet vessels
+            num_outlets = len(junc.get('outlet_vessels', []))
+            
+            # Only modify junctions with more than one outlet
+            if num_outlets <= 1:
+                # Keep as NORMAL_JUNCTION for single outlet
+                junc['junction_type'] = 'NORMAL_JUNCTION'
+                # Remove junction_values if present (not needed for NORMAL_JUNCTION)
+                if 'junction_values' in junc:
+                    del junc['junction_values']
+                continue
+            
+            # Update to new junction type for multi-outlet junctions
+            junc['junction_type'] = junction_type
+            
+            # For special junction types, we need to provide junction_values
+            if junction_type in ['BloodVesselJunction', 'DirDepJunction', 'DirIndepJunction', 'HybridJunction']:
+                num_outlets = len(junc.get('outlet_vessels', []))
+                
+                if num_outlets > 0:
+                    # Initialize or update junction values with only the required parameters
+                    if 'junction_values' not in junc:
+                        junc['junction_values'] = {}
+                    
+                    # Determine which parameters are needed based on junction type
+                    # BloodVesselJunction, DirDepJunction and DirIndepJunction: R_poiseuille, L, stenosis_coefficient
+                    # HybridJunction: R_poiseuille, L, stenosis_coefficient, pressure_recovery_coefficient
+                    required_params = ['R_poiseuille', 'L', 'stenosis_coefficient']
+                    if junction_type == 'HybridJunction':
+                        required_params.append('pressure_recovery_coefficient')
+                    
+                    # Set the required parameters
+                    for param in required_params:
+                        if param not in junc['junction_values']:
+                            junc['junction_values'][param] = [0.0] * num_outlets
+                        elif len(junc['junction_values'][param]) != num_outlets:
+                            # Resize to match number of outlets
+                            current_len = len(junc['junction_values'][param])
+                            if current_len < num_outlets:
+                                # Extend with zeros
+                                junc['junction_values'][param].extend([0.0] * (num_outlets - current_len))
+                            else:
+                                # Truncate
+                                junc['junction_values'][param] = junc['junction_values'][param][:num_outlets]
+                    
+                    # Remove C parameter (not supported by any junction type in svzerodsolver)
+                    if 'C' in junc['junction_values']:
+                        del junc['junction_values']['C']
+                    
+                    # Remove pressure_recovery_coefficient for non-HybridJunction types
+                    if junction_type != 'HybridJunction' and 'pressure_recovery_coefficient' in junc['junction_values']:
+                        del junc['junction_values']['pressure_recovery_coefficient']
+    
+    return config_modified
+
+
 def run_forward_simulation(input_json_path, output_csv_path):
     """
     Run forward 0D simulation and save results to CSV.
-    Uses pysvzerod.simulate() by default, falls back to CasADi solver if it fails.
+    Uses svzerodsolver executable at /Users/natalia/cursor_access/svZeroDPlus/Release/svzerodsolver.
+    Falls back to CasADi solver if it fails.
+    Verifies that inlet flow matches the boundary condition.
     
     Args:
         input_json_path: Path to 0D input JSON file
@@ -1407,19 +1748,27 @@ def run_forward_simulation(input_json_path, output_csv_path):
     Returns:
         Simulation results dictionary (or None if using CasADi fallback)
     """
-    if pysvzerod is None and not HAS_CASADI:
-        raise RuntimeError("Neither pysvzerod nor CasADi solver available. Cannot run simulation.")
+    import subprocess
+    import copy
+    
+    svzerodsolver_path = '/Users/natalia/cursor_access/svZeroDPlus/Release/svzerodsolver'
+    
+    if not os.path.exists(svzerodsolver_path):
+        if HAS_CASADI and HAS_PANDAS and solve_casadi_unsteady is not None:
+            print(f"  Warning: svzerodsolver executable not found at {svzerodsolver_path}")
+            print(f"  Falling back to CasADi solver...")
+        else:
+            raise RuntimeError(f"svzerodsolver executable not found at {svzerodsolver_path} and CasADi fallback not available.")
     
     print(f"Running forward simulation from: {input_json_path}")
     
     with open(input_json_path, 'r') as f:
         input_data = json.load(f)
     
-    # Try pysvzerod first
-    if pysvzerod is not None:
+    # Try svzerodsolver executable first
+    if os.path.exists(svzerodsolver_path):
         try:
             # Create a deep copy to avoid modifying the original
-            import copy
             input_data_sim = copy.deepcopy(input_data)
             
             # Remove calibration parameters if present (not needed for forward simulation)
@@ -1432,19 +1781,76 @@ def run_forward_simulation(input_json_path, output_csv_path):
             if 'dy' in input_data_sim:
                 del input_data_sim['dy']
             
-            # Note: Calibrated output may have BloodVesselJunction type with extra fields,
-            # but pysvzerod.simulate() should handle it correctly
+            # Write temporary input file for svzerodsolver (use original input path if it's already clean)
+            # Check if we need to create a temp file or can use the original
+            use_temp = ('calibration_parameters' in input_data or 'y' in input_data or 'dy' in input_data)
             
-            print("  Attempting simulation with pysvzerod...")
-            results = pysvzerod.simulate(input_data_sim)
+            if use_temp:
+                temp_input_path = input_json_path + '.temp'
+                with open(temp_input_path, 'w') as f:
+                    json.dump(input_data_sim, f, indent=4)
+                input_file_for_solver = temp_input_path
+            else:
+                input_file_for_solver = input_json_path
             
-            # Convert to CSV
-            convert_simulation_results_to_csv(results, output_csv_path)
+            # Ensure output directory exists
+            os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
             
-            print("  ✓ Simulation completed successfully with pysvzerod")
-            return results
+            # Compute absolute paths BEFORE changing directories
+            abs_input_path = os.path.abspath(input_file_for_solver)
+            abs_output_dir = os.path.abspath(os.path.dirname(output_csv_path)) if os.path.dirname(output_csv_path) else os.path.abspath('.')
+            abs_output_csv = os.path.abspath(output_csv_path)
+            
+            print(f"  Attempting simulation with svzerodsolver executable...")
+            print(f"    Executable: {svzerodsolver_path}")
+            print(f"    Input: {abs_input_path}")
+            print(f"    Output: {output_csv_path}")
+            
+            # Run svzerodsolver: takes input.json as first argument
+            # If output is not specified, it defaults to ./output.csv in the current directory
+            # We'll run it in the output directory and then move/rename the output file
+            output_dir = os.path.dirname(output_csv_path) or '.'
+            output_filename = os.path.basename(output_csv_path)
+            
+            # Change to output directory to run solver (so output.csv is created there)
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(abs_output_dir)
+                # Command format: svzerodsolver input.json
+                # It will output to ./output.csv in the current directory
+                # Use absolute path for input file (computed before changing directories)
+                cmd = [svzerodsolver_path, abs_input_path]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode != 0:
+                    raise RuntimeError(f"svzerodsolver failed with return code {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+                
+                # Move output.csv to the desired filename if it exists
+                # output.csv should be in the current directory (abs_output_dir)
+                default_output = os.path.join(abs_output_dir, 'output.csv')
+                if os.path.exists(default_output):
+                    if default_output != abs_output_csv:
+                        os.rename(default_output, abs_output_csv)
+                elif os.path.exists('output.csv'):
+                    os.rename('output.csv', abs_output_csv)
+                else:
+                    raise RuntimeError(f"svzerodsolver did not create output file. Expected './output.csv' in {abs_output_dir}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+            finally:
+                os.chdir(original_cwd)
+                # Clean up temporary input file if we created one
+                if use_temp and os.path.exists(temp_input_path):
+                    os.remove(temp_input_path)
+            
+            print("  ✓ Simulation completed successfully with svzerodsolver")
+            
+            # Verify inlet flow matches BC
+            print("\n  Verifying inlet flow matches boundary condition...")
+            verify_inlet_flow_matches_bc(input_data_sim, output_csv_path)
+            
+            # Return None since we're using CSV output, not a results dictionary
+            return None
         except Exception as e:
-            print(f"  ✗ pysvzerod simulation failed: {e}")
+            print(f"  ✗ svzerodsolver simulation failed: {e}")
             if HAS_CASADI and HAS_PANDAS and solve_casadi_unsteady is not None:
                 print(f"  Falling back to CasADi solver...")
     
@@ -1480,6 +1886,10 @@ def run_forward_simulation(input_json_path, output_csv_path):
             
             print(f"  ✓ Simulation completed successfully with CasADi solver")
             print(f"  Results saved to: {output_csv_path}")
+            
+            # Verify inlet flow matches BC
+            print("\n  Verifying inlet flow matches boundary condition...")
+            verify_inlet_flow_matches_bc(input_data_sim, output_csv_path)
             
             # Return None since CasADi doesn't return the same format as pysvzerod
             return None
@@ -1521,16 +1931,31 @@ def main():
                        help='Time step size for ROM workflow (default: 0.2)')
     parser.add_argument('--num-time-steps', type=int, default=5,
                        help='Number of time steps for ROM workflow (default: 5)')
+    parser.add_argument('--num-cardiac-cycles', type=int, default=1,
+                       help='Number of cardiac cycles for 0D simulation (default: 1)')
+    parser.add_argument('--timestep-scale-factor', type=float, default=0.25,
+                       help='Scaling factor for 0D simulation timestep relative to 1D/3D timestep (default: 0.25, i.e., quarter the timestep)')
+    parser.add_argument('--junction-types', nargs='+', 
+                       default=['BloodVesselJunction', 'DirDepJunction', 'DirIndepJunction', 'HybridJunction'],
+                       help='Junction types to generate calibration files for (default: all four types)')
     
     args = parser.parse_args()
     
     # Construct paths
     base_dir = os.path.join(args.output_dir, args.set_name, args.geo_name)
     geometric_input_path = os.path.join(base_dir, 'geometric_input.json')
+    geometric_results_csv = os.path.join(base_dir, 'geometric_results.csv')
     calibration_input_path = os.path.join(base_dir, 'calibration_input.json')
     calibrated_output_path = os.path.join(base_dir, 'calibrated_output.json')
-    geometric_results_csv = os.path.join(base_dir, 'geometric_results.csv')
-    calibrated_results_csv = os.path.join(base_dir, 'calibrated_results.csv')
+    
+    # Paths for each junction type variant
+    junction_type_paths = {}
+    for jtype in args.junction_types:
+        junction_type_paths[jtype] = {
+            'calibration_input': os.path.join(base_dir, f'calibration_input_{jtype}.json'),
+            'calibrated_output': os.path.join(base_dir, f'calibrated_output_{jtype}.json'),
+            'calibrated_results': os.path.join(base_dir, f'calibrated_results_{jtype}.csv')
+        }
     
     # Find centerline file
     if args.centerline:
@@ -1566,17 +1991,18 @@ def main():
         geo_dir, centerline_path, geometric_input_path,
         simvascular_path=args.simvascular_path,
         dt=args.dt,
-        num_time_steps=args.num_time_steps
+        num_time_steps=args.num_time_steps,
+        num_cardiac_cycles=args.num_cardiac_cycles
     )
     
-    # Step 2: Extract observations and create calibration input
+    # Step 2: Extract observations and create calibration inputs for each junction type
     if not args.skip_calibration:
         print("\n" + "="*60)
-        print("Step 2: Creating calibration input file")
+        print("Step 2: Creating calibration input files for each junction type")
         print("="*60)
         
         if args.one_d_soln:
-            observations = extract_observations_from_1d(args.one_d_soln, geometric_input_path)
+            observations = extract_observations_from_1d(args.one_d_soln, geometric_input_path, geo_dir=geo_dir)
         elif args.three_d_soln_dir:
             raise NotImplementedError("3D solution extraction not yet implemented")
         else:
@@ -1593,12 +2019,12 @@ def main():
             if not os.path.exists(soln_path):
                 # Try scratch directory location
                 alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
-                                           args.set_name, args.geo_name, 'unsteady_soln.vtp')
+                                               args.set_name, args.geo_name, 'unsteady_soln.vtp')
                 if os.path.exists(alt_soln_path):
                     soln_path = alt_soln_path
             
             if os.path.exists(soln_path):
-                observations = extract_observations_from_1d(soln_path, geometric_input_path)
+                observations = extract_observations_from_1d(soln_path, geometric_input_path, geo_dir=geo_dir)
             else:
                 print("Warning: No 1D or 3D solution found. Skipping calibration.")
                 print(f"  Looked for:")
@@ -1608,13 +2034,86 @@ def main():
                 args.skip_calibration = True
         
         if not args.skip_calibration:
-            create_calibration_input(geometric_input_path, observations, calibration_input_path)
+            # Determine centerline solution path and geo_dir for time computation
+            if args.one_d_soln:
+                soln_path = args.one_d_soln
+            else:
+                # Use the path that was found earlier
+                oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
+                soln_path = os.path.join(oneD_dir, 'unsteady_soln.vtp')
+                if not os.path.exists(soln_path):
+                    reduced_results_dir = os.path.join('data', 'reduced_results', args.set_name, args.geo_name)
+                    soln_path = os.path.join(reduced_results_dir, 'unsteady_soln.vtp')
+                if not os.path.exists(soln_path):
+                    alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
+                                               args.set_name, args.geo_name, 'unsteady_soln.vtp')
+                    if os.path.exists(alt_soln_path):
+                        soln_path = alt_soln_path
             
-            # Step 3: Run calibration
+            # Get geo_dir
+            geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
+            
+            # Create base calibration input
+            print(f"\n  Creating base calibration input...")
+            calibration_input_path = os.path.join(base_dir, 'calibration_input.json')
+            
+            # Create calibration input with time computation from 1D solution
+            create_calibration_input(geometric_input_path, observations, calibration_input_path,
+                                   centerline_soln_path=soln_path, geo_dir=geo_dir,
+                                   num_cardiac_cycles=args.num_cardiac_cycles,
+                                   timestep_scale_factor=args.timestep_scale_factor)
+            
+            print(f"    ✓ Base calibration input saved to: {calibration_input_path}")
+            
+            # Update geometric input with BC from calibration input
+            update_geometric_input_with_calibration_bc(geometric_input_path, calibration_input_path)
+            
+            # Create calibration input variants for each junction type
+            print(f"\n  Creating calibration input variants for each junction type...")
+            with open(calibration_input_path, 'r') as f:
+                base_calibration_config = json.load(f)
+            
+            for jtype in args.junction_types:
+                print(f"    Creating {jtype} calibration input...")
+                jtype_input_path = junction_type_paths[jtype]['calibration_input']
+                
+                # Apply junction type modification to calibration input
+                jtype_config = modify_junction_types(base_calibration_config, jtype)
+                
+                with open(jtype_input_path, 'w') as f:
+                    json.dump(jtype_config, f, indent=4)
+                
+                print(f"      ✓ Saved to: {jtype_input_path}")
+            
+            # Step 3: Run calibration for each junction type
             print("\n" + "="*60)
-            print("Step 3: Running calibration")
+            print("Step 3: Running calibration for each junction type")
             print("="*60)
-            calibrated_input = run_calibration(calibration_input_path, calibrated_output_path)
+            
+            # First run calibration with base (BloodVesselJunction) input
+            calibrated_output_path = os.path.join(base_dir, 'calibrated_output.json')
+            
+            try:
+                calibrated_input = run_calibration(calibration_input_path, calibrated_output_path)
+                print(f"  ✓ Base calibration completed")
+            except Exception as e:
+                print(f"  ✗ Base calibration failed: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Run calibration for each junction type variant
+            for jtype in args.junction_types:
+                print(f"\n  Calibrating {jtype}...")
+                jtype_input_path = junction_type_paths[jtype]['calibration_input']
+                jtype_output_path = junction_type_paths[jtype]['calibrated_output']
+                
+                try:
+                    calibrated_config = run_calibration(jtype_input_path, jtype_output_path)
+                    print(f"    ✓ Calibration completed for {jtype}")
+                except Exception as e:
+                    print(f"    ✗ Calibration failed for {jtype}: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             # Step 4: Run forward simulations
             print("\n" + "="*60)
@@ -1622,31 +2121,42 @@ def main():
             print("="*60)
             
             # Run simulation with geometric input
-            print("Running simulation with geometric input...")
+            print("\n  Running simulation with geometric input...")
             try:
                 run_forward_simulation(geometric_input_path, geometric_results_csv)
+                print(f"    ✓ Geometric simulation completed successfully")
             except Exception as e:
-                print(f"Warning: Geometric simulation failed: {e}")
+                print(f"    ✗ Geometric simulation failed: {e}")
             
-            # Run simulation with calibrated input
-            print("Running simulation with calibrated input...")
-            try:
-                run_forward_simulation(calibrated_output_path, calibrated_results_csv)
-                print(f"  ✓ Calibrated simulation completed successfully")
-            except Exception as e:
-                print(f"  ✗ Calibrated simulation failed: {e}")
-                import traceback
-                traceback.print_exc()
+            # Run simulation with each calibrated input
+            for jtype in args.junction_types:
+                print(f"\n  Running simulation with calibrated {jtype} input...")
+                calibrated_output_path = junction_type_paths[jtype]['calibrated_output']
+                calibrated_results_csv = junction_type_paths[jtype]['calibrated_results']
+                
+                try:
+                    run_forward_simulation(calibrated_output_path, calibrated_results_csv)
+                    print(f"    ✓ Calibrated {jtype} simulation completed successfully")
+                except Exception as e:
+                    print(f"    ✗ Calibrated {jtype} simulation failed: {e}")
+                    import traceback
+                    traceback.print_exc()
     
     print("\n" + "="*60)
     print("Done!")
     print("="*60)
     print(f"Geometric input: {geometric_input_path}")
+    print(f"Geometric simulation results: {geometric_results_csv}")
     if not args.skip_calibration:
-        print(f"Calibration input: {calibration_input_path}")
-        print(f"Calibrated output: {calibrated_output_path}")
-        print(f"Geometric simulation results: {geometric_results_csv}")
-        print(f"Calibrated simulation results: {calibrated_results_csv}")
+        print(f"\nBase calibration files:")
+        print(f"  Calibration input: {calibration_input_path}")
+        print(f"  Calibrated output: {calibrated_output_path}")
+        print(f"\nJunction type variants:")
+        for jtype in args.junction_types:
+            print(f"  {jtype}:")
+            print(f"    Calibration input: {junction_type_paths[jtype]['calibration_input']}")
+            print(f"    Calibrated output: {junction_type_paths[jtype]['calibrated_output']}")
+            print(f"    Simulation results: {junction_type_paths[jtype]['calibrated_results']}")
 
 
 if __name__ == "__main__":

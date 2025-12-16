@@ -161,14 +161,27 @@ def read_zerod_csv(csv_path):
     
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
+        # Check which column name is used for vessel identifier
+        fieldnames = reader.fieldnames
+        if fieldnames is None:
+            return dict(results), sorted(times), sorted(fields)
+        
+        vessel_col = None
+        if 'location' in fieldnames:
+            vessel_col = 'location'
+        elif 'name' in fieldnames:
+            vessel_col = 'name'
+        else:
+            raise ValueError(f"CSV file must have either 'location' or 'name' column. Found: {fieldnames}")
+        
         for row in reader:
-            location = row['location']
+            location = row[vessel_col]
             time = float(row['time'])
             times.add(time)
             
             # Extract all numeric fields
             for key, value in row.items():
-                if key not in ['location', 'time']:
+                if key not in [vessel_col, 'time']:
                     try:
                         val = float(value)
                         results[location][time][key] = val
@@ -495,6 +508,10 @@ def read_observations_from_calibration(calibration_input_path, field='pressure')
             if vessel_name not in vessel_obs:
                 vessel_obs[vessel_name] = {'inlet': None, 'outlet': None}
             
+            # Convert pressure from dynes/cm^2 to mmHg if field is pressure
+            if field == 'pressure':
+                values = [v / 1333.0 for v in values]  # Convert to mmHg
+            
             if is_inlet:
                 vessel_obs[vessel_name]['inlet'] = values
             else:
@@ -536,6 +553,45 @@ def extract_inlet_flow_from_observations(calibration_input_path):
     times = np.linspace(0.0, 1.0, num_obs)
     
     return times, flows
+
+
+def extract_inlet_pressure_from_observations(calibration_input_path):
+    """
+    Extract inlet pressure data from calibration input observations.
+    Converts from dynes/cm^2 to mmHg (divide by 1333).
+    
+    Returns:
+        times: Time array (normalized [0, 1])
+        pressures: Pressure values array (in mmHg)
+    """
+    import json
+    
+    with open(calibration_input_path, 'r') as f:
+        calib_data = json.load(f)
+    
+    if 'y' not in calib_data:
+        return None, None
+    
+    observations = calib_data['y']
+    
+    # Look for inlet pressure: "pressure:INFLOW:branch0_seg0"
+    inlet_pressure_key = None
+    for key in observations.keys():
+        if key.startswith('pressure:INFLOW:'):
+            inlet_pressure_key = key
+            break
+    
+    if inlet_pressure_key is None:
+        return None, None
+    
+    # Pressure is stored in dynes/cm^2, convert to mmHg
+    pressures_dynes = observations[inlet_pressure_key]
+    pressures = [p / 1333.0 for p in pressures_dynes]  # Convert to mmHg
+    
+    num_obs = len(pressures)
+    times = np.linspace(0.0, 1.0, num_obs)
+    
+    return times, pressures
 
 
 def create_flow_plot_actor(times_normalized, flows, current_time_normalized, plot_bounds_normalized, 
@@ -687,10 +743,10 @@ def create_flow_plot_actor(times_normalized, flows, current_time_normalized, plo
 
 def create_flow_plot_movie(calibration_input_path, output_path, resolution=(1920, 1080), fps=5):
     """
-    Create a standalone movie showing inlet flow vs time with a moving dot using matplotlib.
+    Create a standalone movie showing inlet flow and pressure vs time with moving dots using matplotlib.
     
     Args:
-        calibration_input_path: Path to calibration input JSON (contains flow observations)
+        calibration_input_path: Path to calibration input JSON (contains flow and pressure observations)
         output_path: Path to save output MP4
         resolution: (width, height) for output video
         fps: Frames per second
@@ -700,7 +756,7 @@ def create_flow_plot_movie(calibration_input_path, output_path, resolution=(1920
         return False
     
     print("="*60)
-    print("Creating Flow Plot Movie (using matplotlib)")
+    print("Creating Flow and Pressure Plot Movie (using matplotlib)")
     print("="*60)
     
     # Check ffmpeg
@@ -717,10 +773,27 @@ def create_flow_plot_movie(calibration_input_path, output_path, resolution=(1920
     
     print(f"  Found {len(flow_values)} flow points")
     
+    # Extract inlet pressure data
+    print("\nExtracting inlet pressure data...")
+    pressure_times, pressure_values = extract_inlet_pressure_from_observations(calibration_input_path)
+    if pressure_times is None or pressure_values is None:
+        print("  Warning: Could not extract inlet pressure data, will only show flow")
+        pressure_times = None
+        pressure_values = None
+    else:
+        print(f"  Found {len(pressure_values)} pressure points")
+    
     # Filter to second half
     mid_point = len(flow_times) // 2
     times_second_half = flow_times[mid_point:]
     flows_second_half = flow_values[mid_point:]
+    
+    if pressure_times is not None:
+        pressure_times_second_half = pressure_times[mid_point:]
+        pressures_second_half = pressure_values[mid_point:]
+    else:
+        pressure_times_second_half = None
+        pressures_second_half = None
     
     # Create time array for simulation (second half)
     # Use the same number of frames as the main visualization would use
@@ -729,8 +802,12 @@ def create_flow_plot_movie(calibration_input_path, output_path, resolution=(1920
     
     # Flow range
     flow_min, flow_max = np.min(flows_second_half), np.max(flows_second_half)
-    print(f"  Flow range: [{flow_min:.2f}, {flow_max:.2f}]")
+    print(f"  Flow range: [{flow_min:.2f}, {flow_max:.2f}] cm³/s")
     print(f"  Time range: [{times_second_half[0]:.3f}, {times_second_half[-1]:.3f}]")
+    
+    if pressures_second_half is not None:
+        pressure_min, pressure_max = np.min(pressures_second_half), np.max(pressures_second_half)
+        print(f"  Pressure range: [{pressure_min:.2f}, {pressure_max:.2f}] mmHg")
     
     # Create temporary directory for frames
     temp_dir = tempfile.mkdtemp(prefix='flow_plot_')
@@ -743,14 +820,21 @@ def create_flow_plot_movie(calibration_input_path, output_path, resolution=(1920
             if (idx + 1) % 10 == 0 or idx == 0:
                 print(f"  Frame {idx+1}/{num_frames}: t={time_sim:.3f}")
             
-            # Create figure
-            fig, ax = plt.subplots(figsize=(resolution[0]/100, resolution[1]/100), dpi=100)
+            # Create figure with subplots (2 rows: flow on top, pressure on bottom)
+            if pressures_second_half is not None:
+                fig, axes = plt.subplots(2, 1, figsize=(resolution[0]/100, resolution[1]/100), dpi=100, sharex=True)
+                ax_flow = axes[0]
+                ax_pressure = axes[1]
+            else:
+                fig, ax_flow = plt.subplots(figsize=(resolution[0]/100, resolution[1]/100), dpi=100)
+                ax_pressure = None
+            
             fig.patch.set_facecolor('white')
             
-            # Plot the full curve (second half)
-            ax.plot(times_second_half, flows_second_half, 'b-', linewidth=3, label='Inlet Flow')
+            # Plot flow (top subplot)
+            ax_flow.plot(times_second_half, flows_second_half, 'b-', linewidth=3, label='Inlet Flow')
             
-            # Find current point on curve
+            # Find current point on flow curve
             if len(times_second_half) > 1:
                 # Interpolate to find current flow value
                 if HAS_SCIPY_INTERP:
@@ -762,20 +846,45 @@ def create_flow_plot_movie(calibration_input_path, output_path, resolution=(1920
             else:
                 current_flow = flows_second_half[0] if len(flows_second_half) > 0 else 0.0
             
-            # Plot moving dot
-            ax.plot(time_sim, current_flow, 'ro', markersize=15, label='Current')
+            # Plot moving dot on flow
+            ax_flow.plot(time_sim, current_flow, 'ro', markersize=15, label='Current')
             
-            # Set labels and title
-            ax.set_xlabel('Time (normalized)', fontsize=18)
-            ax.set_ylabel('Inlet Flow', fontsize=18)
-            ax.set_title(f'Inlet Flow vs Time\nTime: {time_sim:.3f} s', fontsize=20)
+            # Set flow plot labels
+            ax_flow.set_ylabel('Flow (cm³/s)', fontsize=18)
+            ax_flow.set_title(f'Inlet Flow and Pressure vs Time\nTime: {time_sim:.3f} s', fontsize=20)
+            ax_flow.set_xlim(times_second_half[0], times_second_half[-1])
+            ax_flow.set_ylim(flow_min - 0.1 * (flow_max - flow_min), flow_max + 0.1 * (flow_max - flow_min))
+            ax_flow.grid(True, alpha=0.3)
             
-            # Set axis limits
-            ax.set_xlim(times_second_half[0], times_second_half[-1])
-            ax.set_ylim(flow_min - 0.1 * (flow_max - flow_min), flow_max + 0.1 * (flow_max - flow_min))
-            
-            # Add grid
-            ax.grid(True, alpha=0.3)
+            # Plot pressure (bottom subplot) if available
+            if ax_pressure is not None and pressures_second_half is not None:
+                ax_pressure.plot(pressure_times_second_half, pressures_second_half, 'r-', linewidth=3, label='Inlet Pressure')
+                
+                # Find current point on pressure curve
+                if len(pressure_times_second_half) > 1:
+                    # Interpolate to find current pressure value
+                    if HAS_SCIPY_INTERP:
+                        interp_func_p = interp1d(pressure_times_second_half, pressures_second_half, kind='linear',
+                                                bounds_error=False, fill_value='extrapolate')
+                        current_pressure = float(interp_func_p(time_sim))
+                    else:
+                        current_pressure = float(np.interp(time_sim, pressure_times_second_half, pressures_second_half))
+                else:
+                    current_pressure = pressures_second_half[0] if len(pressures_second_half) > 0 else 0.0
+                
+                # Plot moving dot on pressure
+                ax_pressure.plot(time_sim, current_pressure, 'ro', markersize=15, label='Current')
+                
+                # Set pressure plot labels
+                ax_pressure.set_xlabel('Time (normalized)', fontsize=18)
+                ax_pressure.set_ylabel('Pressure (mmHg)', fontsize=18)
+                ax_pressure.set_xlim(pressure_times_second_half[0], pressure_times_second_half[-1])
+                ax_pressure.set_ylim(pressure_min - 0.1 * (pressure_max - pressure_min), 
+                                    pressure_max + 0.1 * (pressure_max - pressure_min))
+                ax_pressure.grid(True, alpha=0.3)
+            else:
+                # If no pressure data, set xlabel on flow plot
+                ax_flow.set_xlabel('Time (normalized)', fontsize=18)
             
             # Save frame
             frame_path = os.path.join(temp_dir, f"frame_{idx:05d}.png")
@@ -842,9 +951,10 @@ def create_flow_plot_movie(calibration_input_path, output_path, resolution=(1920
 def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_path, 
                                          geometric_input_json_path, centerline_path, mesh_path,
                                          output_path, field='pressure',
-                                         resolution=(1920, 1080), fps=5):
+                                         resolution=(1920, 1080), fps=5,
+                                         calibrated_csv_path=None):
     """
-    Create a side-by-side movie comparing geometric 0D solution and 3D solution observations.
+    Create a three-panel movie comparing geometric 0D solution, 3D solution observations, and calibrated 0D solution.
     
     Args:
         geometric_csv_path: Path to geometric 0D results CSV
@@ -856,6 +966,7 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
         field: Field to visualize ('pressure' or 'flow')
         resolution: (width, height) for output video
         fps: Frames per second
+        calibrated_csv_path: Optional path to calibrated 0D results CSV
     """
     print("="*60)
     print("Visualizing 0D Solutions Side-by-Side")
@@ -870,6 +981,38 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
     print("\nReading geometric 0D results...")
     results_geo, times_geo, fields_geo = read_zerod_csv(geometric_csv_path)
     print(f"  Geometric: {len(results_geo)} vessels, {len(times_geo)} time steps")
+    
+    # Read calibrated CSV file if provided
+    results_cal = None
+    times_cal = None
+    fields_cal = None
+    print(f"\nChecking for calibrated CSV...")
+    print(f"  calibrated_csv_path parameter: {calibrated_csv_path}")
+    if calibrated_csv_path:
+        print(f"  File exists: {os.path.exists(calibrated_csv_path)}")
+    
+    if calibrated_csv_path and os.path.exists(calibrated_csv_path):
+        print("\nReading calibrated 0D results...")
+        try:
+            results_cal, times_cal, fields_cal = read_zerod_csv(calibrated_csv_path)
+            print(f"  Calibrated: {len(results_cal)} vessels, {len(times_cal)} time steps")
+            if len(times_cal) > 0:
+                print(f"  Calibrated time range: [{min(times_cal):.3f}, {max(times_cal):.3f}]")
+            print(f"  Calibrated fields: {fields_cal}")
+            if results_cal:
+                sample_vessel = list(results_cal.keys())[0]
+                print(f"  Sample vessel '{sample_vessel}' has {len(results_cal[sample_vessel])} time points")
+            else:
+                print("  WARNING: Calibrated CSV read but results_cal is empty!")
+        except Exception as e:
+            print(f"  ERROR reading calibrated CSV: {e}")
+            import traceback
+            traceback.print_exc()
+            results_cal = None
+    else:
+        print("\nNote: Calibrated CSV not provided or not found, showing only geometric and 3D solution")
+        if calibrated_csv_path:
+            print(f"  Expected path: {calibrated_csv_path}")
     
     # Read observations from calibration input
     print("\nReading 3D solution observations from calibration input...")
@@ -909,17 +1052,36 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
         print(f"Error: Fields '{inlet_field_name}' and/or '{outlet_field_name}' not found in geometric CSV.")
         return False
     
-    # Get all values for color range (include both geometric solution and observations)
-    print(f"\nComputing color range for {field} (geometric and 3D observations)...")
+    # Get all values for color range (include geometric, 3D observations, and calibrated if available)
+    print(f"\nComputing color range for {field} (geometric, 3D observations, and calibrated)...")
     all_values = []
     
+    # Track where min/max values come from
+    min_info = {'value': float('inf'), 'source': None, 'location': None, 'time': None, 'type': None}
+    max_info = {'value': float('-inf'), 'source': None, 'location': None, 'time': None, 'type': None}
+    
     # Add geometric solution values (already filtered to second half via times)
+    # Convert pressure from dynes/cm^2 to mmHg if field is pressure
     for location in results_geo:
         for time in times:
             if inlet_field_name in results_geo[location][time]:
-                all_values.append(results_geo[location][time][inlet_field_name])
+                val = results_geo[location][time][inlet_field_name]
+                if field == 'pressure':
+                    val = val / 1333.0  # Convert to mmHg
+                all_values.append(val)
+                if val < min_info['value']:
+                    min_info = {'value': val, 'source': 'geometric', 'location': location, 'time': time, 'type': 'inlet'}
+                if val > max_info['value']:
+                    max_info = {'value': val, 'source': 'geometric', 'location': location, 'time': time, 'type': 'inlet'}
             if outlet_field_name in results_geo[location][time]:
-                all_values.append(results_geo[location][time][outlet_field_name])
+                val = results_geo[location][time][outlet_field_name]
+                if field == 'pressure':
+                    val = val / 1333.0  # Convert to mmHg
+                all_values.append(val)
+                if val < min_info['value']:
+                    min_info = {'value': val, 'source': 'geometric', 'location': location, 'time': time, 'type': 'outlet'}
+                if val > max_info['value']:
+                    max_info = {'value': val, 'source': 'geometric', 'location': location, 'time': time, 'type': 'outlet'}
     
     # Add observation values (filter to second half to match geometric solution)
     # Observations are normalized to [0, 1], so second half is [0.5, 1.0]
@@ -927,10 +1089,46 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
     for vessel_name, obs in observations_data.items():
         if obs['inlet'] is not None and len(obs['inlet']) > obs_mid_point:
             # Only use second half of observation values
-            all_values.extend(obs['inlet'][obs_mid_point:])
+            for idx, val in enumerate(obs['inlet'][obs_mid_point:], start=obs_mid_point):
+                all_values.append(val)
+                obs_time = obs_times[idx] if idx < len(obs_times) else obs_times[-1]
+                if val < min_info['value']:
+                    min_info = {'value': val, 'source': '3D_observations', 'location': vessel_name, 'time': obs_time, 'type': 'inlet'}
+                if val > max_info['value']:
+                    max_info = {'value': val, 'source': '3D_observations', 'location': vessel_name, 'time': obs_time, 'type': 'inlet'}
         if obs['outlet'] is not None and len(obs['outlet']) > obs_mid_point:
             # Only use second half of observation values
-            all_values.extend(obs['outlet'][obs_mid_point:])
+            for idx, val in enumerate(obs['outlet'][obs_mid_point:], start=obs_mid_point):
+                all_values.append(val)
+                obs_time = obs_times[idx] if idx < len(obs_times) else obs_times[-1]
+                if val < min_info['value']:
+                    min_info = {'value': val, 'source': '3D_observations', 'location': vessel_name, 'time': obs_time, 'type': 'outlet'}
+                if val > max_info['value']:
+                    max_info = {'value': val, 'source': '3D_observations', 'location': vessel_name, 'time': obs_time, 'type': 'outlet'}
+    
+    # Add calibrated solution values if available (filter to second half)
+    # Convert pressure from dynes/cm^2 to mmHg if field is pressure
+    if results_cal is not None:
+        for location in results_cal:
+            for time in times:
+                if inlet_field_name in results_cal[location][time]:
+                    val = results_cal[location][time][inlet_field_name]
+                    if field == 'pressure':
+                        val = val / 1333.0  # Convert to mmHg
+                    all_values.append(val)
+                    if val < min_info['value']:
+                        min_info = {'value': val, 'source': 'calibrated', 'location': location, 'time': time, 'type': 'inlet'}
+                    if val > max_info['value']:
+                        max_info = {'value': val, 'source': 'calibrated', 'location': location, 'time': time, 'type': 'inlet'}
+                if outlet_field_name in results_cal[location][time]:
+                    val = results_cal[location][time][outlet_field_name]
+                    if field == 'pressure':
+                        val = val / 1333.0  # Convert to mmHg
+                    all_values.append(val)
+                    if val < min_info['value']:
+                        min_info = {'value': val, 'source': 'calibrated', 'location': location, 'time': time, 'type': 'outlet'}
+                    if val > max_info['value']:
+                        max_info = {'value': val, 'source': 'calibrated', 'location': location, 'time': time, 'type': 'outlet'}
     
     if not all_values:
         print(f"Error: No values found for {field}")
@@ -939,6 +1137,8 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
     # Use full range (min to max)
     color_range = [np.min(all_values), np.max(all_values)]
     print(f"  Color range (full): [{color_range[0]:.2f}, {color_range[1]:.2f}]")
+    print(f"  Minimum {field} ({min_info['value']:.2f}) found in: {min_info['source']}, location: {min_info['location']}, time: {min_info['time']:.3f}, type: {min_info['type']}")
+    print(f"  Maximum {field} ({max_info['value']:.2f}) found in: {max_info['source']}, location: {max_info['location']}, time: {max_info['time']:.3f}, type: {max_info['type']}")
     
     # Get node locations for all vessels
     print("\nMapping vessels to 3D locations...")
@@ -969,27 +1169,60 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
     node_radius = mesh_size * 0.02
     print(f"  Node radius: {node_radius:.3f}")
     
-    # Create two renderers side by side
-    # Each renderer will be half the width
-    render_width = resolution[0] // 2
+    # Create three renderers side by side
+    # Each renderer will be one-third the width
+    render_width = resolution[0] // 3
     render_height = resolution[1]
     
-    renderer_geo = vtk.vtkRenderer()
-    renderer_geo.SetBackground(1.0, 1.0, 1.0)
-    renderer_geo.SetViewport(0.0, 0.0, 0.5, 1.0)  # Left half
-    renderer_geo.AddActor(vasculature_actor)
+    # Determine if we have calibrated results
+    has_calibrated = results_cal is not None
     
-    renderer_cal = vtk.vtkRenderer()
-    renderer_cal.SetBackground(1.0, 1.0, 1.0)
-    renderer_cal.SetViewport(0.5, 0.0, 1.0, 1.0)  # Right half
-    # Create a copy of vasculature actor for right side
-    vasculature_actor_cal = create_vasculature_actor(mesh_path)
-    renderer_cal.AddActor(vasculature_actor_cal)
+    print(f"\n  has_calibrated flag: {has_calibrated}")
+    if has_calibrated:
+        print(f"  Will create 3-panel layout (geometric, 3D, calibrated)")
+    else:
+        print(f"  Will create 2-panel layout (geometric, 3D)")
+    
+    if has_calibrated:
+        # Three panels: geometric, 3D solution, calibrated
+        # Heavily overlapping viewports to eliminate white space
+        renderer_geo = vtk.vtkRenderer()
+        renderer_geo.SetBackground(1.0, 1.0, 1.0)
+        renderer_geo.SetViewport(0.0, 0.0, 0.34, 1.0)  # Left panel
+        renderer_geo.AddActor(vasculature_actor)
+        
+        renderer_3d = vtk.vtkRenderer()
+        renderer_3d.SetBackground(1.0, 1.0, 1.0)
+        renderer_3d.SetViewport(0.33, 0.0, 0.67, 1.0)  # Middle panel (overlaps significantly)
+        vasculature_actor_3d = create_vasculature_actor(mesh_path)
+        renderer_3d.AddActor(vasculature_actor_3d)
+        
+        renderer_cal = vtk.vtkRenderer()
+        renderer_cal.SetBackground(1.0, 1.0, 1.0)
+        renderer_cal.SetViewport(0.66, 0.0, 1.0, 1.0)  # Right panel (overlaps significantly)
+        vasculature_actor_cal = create_vasculature_actor(mesh_path)
+        renderer_cal.AddActor(vasculature_actor_cal)
+    else:
+        # Two panels: geometric, 3D solution (fallback to original layout)
+        renderer_geo = vtk.vtkRenderer()
+        renderer_geo.SetBackground(1.0, 1.0, 1.0)
+        renderer_geo.SetViewport(0.0, 0.0, 0.5, 1.0)  # Left half
+        renderer_geo.AddActor(vasculature_actor)
+        
+        renderer_3d = vtk.vtkRenderer()
+        renderer_3d.SetBackground(1.0, 1.0, 1.0)
+        renderer_3d.SetViewport(0.5, 0.0, 1.0, 1.0)  # Right half
+        vasculature_actor_3d = create_vasculature_actor(mesh_path)
+        renderer_3d.AddActor(vasculature_actor_3d)
+        
+        renderer_cal = None
     
     # Create render window
     render_window = vtk.vtkRenderWindow()
     render_window.AddRenderer(renderer_geo)
-    render_window.AddRenderer(renderer_cal)
+    render_window.AddRenderer(renderer_3d)
+    if renderer_cal is not None:
+        render_window.AddRenderer(renderer_cal)
     render_window.SetSize(resolution[0], resolution[1])
     render_window.SetOffScreenRendering(1)
     render_window.SetShowWindow(False)
@@ -1014,40 +1247,62 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
         r, g, b, a = temp_colors[num_colors - 1 - i]
         lut.SetTableValue(i, r, g, b, a)
     
-    # Create colorbars
-    scalar_bar_geo = vtk.vtkScalarBarActor()
-    scalar_bar_geo.SetTitle(f"{field.capitalize()} (Geometric)")
-    scalar_bar_geo.SetNumberOfLabels(5)
-    scalar_bar_geo.SetLookupTable(lut)
-    scalar_bar_geo.SetPosition(0.02, 0.1)  # Left side of left renderer
-    scalar_bar_geo.SetWidth(0.08)  # Narrower to avoid overlap
-    # Increase font sizes significantly
-    scalar_bar_geo.GetTitleTextProperty().SetFontSize(32)
-    scalar_bar_geo.GetLabelTextProperty().SetFontSize(28)
-    renderer_geo.AddActor2D(scalar_bar_geo)
+    # Create a single horizontal colorbar for all panels at the bottom
+    # Add it to the middle renderer (3D solution) so it spans across all panels
+    scalar_bar = vtk.vtkScalarBarActor()
+    scalar_bar.SetTitle(f"{field.capitalize()}")
+    scalar_bar.SetNumberOfLabels(5)
+    scalar_bar.SetLookupTable(lut)
+    # Set to horizontal orientation
+    scalar_bar.SetOrientationToHorizontal()
+    # Position at the bottom center of the screen (position is relative to viewport)
+    # For middle renderer viewport (0.33 to 0.67), position to span across all panels
+    scalar_bar.SetPosition(0.0, 0.05)  # Bottom of viewport
+    # Set width to span across the middle panel (and extend into adjacent panels)
+    scalar_bar.SetWidth(1.0)  # Full width of viewport
+    # Set height for horizontal colorbar
+    scalar_bar.SetMaximumHeightInPixels(int(resolution[1] * 0.08))  # 8% of screen height for horizontal bar
     
-    scalar_bar_cal = vtk.vtkScalarBarActor()
-    scalar_bar_cal.SetTitle(f"{field.capitalize()} (3D Solution)")
-    scalar_bar_cal.SetNumberOfLabels(5)
-    scalar_bar_cal.SetLookupTable(lut)
-    scalar_bar_cal.SetPosition(0.02, 0.1)  # Left side of right renderer (relative to its viewport)
-    scalar_bar_cal.SetWidth(0.08)  # Narrower to avoid overlap
-    # Increase font sizes significantly
-    scalar_bar_cal.GetTitleTextProperty().SetFontSize(32)
-    scalar_bar_cal.GetLabelTextProperty().SetFontSize(28)
-    renderer_cal.AddActor2D(scalar_bar_cal)
+    # Increase font sizes by 3x (was 32/28, now 96/84 for exactly 3x)
+    title_prop = scalar_bar.GetTitleTextProperty()
+    title_prop.SetFontSize(96)  # 3x the original 32
+    title_prop.BoldOn()
+    title_prop.ShadowOff()
+    title_prop.SetColor(0, 0, 0)  # Ensure text is black and visible
+    scalar_bar.SetTitleTextProperty(title_prop)
     
-    # Set up cameras
+    # Set label font properties - triple the current size (84 * 3 = 252)
+    label_prop = scalar_bar.GetLabelTextProperty()
+    label_prop.SetFontSize(252)  # 3x the current 84 (9x the original 28)
+    label_prop.BoldOn()
+    label_prop.ShadowOff()
+    label_prop.SetColor(0, 0, 0)  # Ensure text is black and visible
+    scalar_bar.SetLabelTextProperty(label_prop)
+    
+    # Add to the middle renderer (3D solution) so it appears at bottom center
+    # This way it spans across all three panels visually
+    renderer_3d.AddActor2D(scalar_bar)
+    
+    # Set up cameras with increased zoom to fill panels better and reduce vertical white space
     renderer_geo.ResetCamera()
-    renderer_cal.ResetCamera()
+    renderer_3d.ResetCamera()
     camera_geo = renderer_geo.GetActiveCamera()
-    camera_cal = renderer_cal.GetActiveCamera()
-    camera_geo.Zoom(0.9)
-    camera_cal.Zoom(0.9)
+    camera_3d = renderer_3d.GetActiveCamera()
+    camera_geo.Zoom(1.4)  # Increased zoom further to reduce vertical white space (was 1.2)
+    camera_3d.Zoom(1.4)  # Increased zoom further to reduce vertical white space (was 1.2)
     # Sync camera positions
-    camera_cal.SetPosition(camera_geo.GetPosition())
-    camera_cal.SetFocalPoint(camera_geo.GetFocalPoint())
-    camera_cal.SetViewUp(camera_geo.GetViewUp())
+    camera_3d.SetPosition(camera_geo.GetPosition())
+    camera_3d.SetFocalPoint(camera_geo.GetFocalPoint())
+    camera_3d.SetViewUp(camera_geo.GetViewUp())
+    
+    if has_calibrated:
+        renderer_cal.ResetCamera()
+        camera_cal = renderer_cal.GetActiveCamera()
+        camera_cal.Zoom(1.4)  # Increased zoom further to reduce vertical white space (was 1.2)
+        # Sync camera positions
+        camera_cal.SetPosition(camera_geo.GetPosition())
+        camera_cal.SetFocalPoint(camera_geo.GetFocalPoint())
+        camera_cal.SetViewUp(camera_geo.GetViewUp())
     
     # Create temporary directory for frames
     temp_dir = tempfile.mkdtemp(prefix='zerod_viz_')
@@ -1071,6 +1326,7 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
     
     try:
         text_actor_geo = None
+        text_actor_3d = None
         text_actor_cal = None
         
         # Store previous 3D solution values (since 3D solution updates every 2nd frame)
@@ -1082,36 +1338,51 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
             
             # Clear previous node actors
             actors_to_remove_geo = []
+            actors_to_remove_3d = []
             actors_to_remove_cal = []
             for actor in renderer_geo.GetActors():
                 if actor != vasculature_actor:
                     actors_to_remove_geo.append(actor)
-            for actor in renderer_cal.GetActors():
-                if actor != vasculature_actor_cal:
-                    actors_to_remove_cal.append(actor)
+            for actor in renderer_3d.GetActors():
+                if actor != vasculature_actor_3d:
+                    actors_to_remove_3d.append(actor)
+            if has_calibrated:
+                for actor in renderer_cal.GetActors():
+                    if actor != vasculature_actor_cal:
+                        actors_to_remove_cal.append(actor)
             
             for actor in actors_to_remove_geo:
                 renderer_geo.RemoveActor(actor)
-            for actor in actors_to_remove_cal:
-                renderer_cal.RemoveActor(actor)
+            for actor in actors_to_remove_3d:
+                renderer_3d.RemoveActor(actor)
+            if has_calibrated:
+                for actor in actors_to_remove_cal:
+                    renderer_cal.RemoveActor(actor)
             
             # Remove previous text actors
             if text_actor_geo is not None:
                 renderer_geo.RemoveActor2D(text_actor_geo)
-            if text_actor_cal is not None:
+            if text_actor_3d is not None:
+                renderer_3d.RemoveActor2D(text_actor_3d)
+            if text_actor_cal is not None and has_calibrated:
                 renderer_cal.RemoveActor2D(text_actor_cal)
             
             # Flow plot overlay removed - using standalone movie instead
             
             # Add geometric solution nodes (updates every frame)
+            # Convert pressure from dynes/cm^2 to mmHg if field is pressure
             for vessel_name, locations in node_locations.items():
                 if vessel_name in results_geo and time in results_geo[vessel_name]:
                     if inlet_field_name in results_geo[vessel_name][time]:
                         inlet_value = results_geo[vessel_name][time][inlet_field_name]
+                        if field == 'pressure':
+                            inlet_value = inlet_value / 1333.0  # Convert to mmHg
                         inlet_actor = create_node_actor(locations['inlet'], inlet_value, color_range, field, node_radius, lut)
                         renderer_geo.AddActor(inlet_actor)
                     if outlet_field_name in results_geo[vessel_name][time]:
                         outlet_value = results_geo[vessel_name][time][outlet_field_name]
+                        if field == 'pressure':
+                            outlet_value = outlet_value / 1333.0  # Convert to mmHg
                         outlet_actor = create_node_actor(locations['outlet'], outlet_value, color_range, field, node_radius, lut)
                         renderer_geo.AddActor(outlet_actor)
             
@@ -1148,7 +1419,7 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
                             prev_3d_values[vessel_name]['inlet'] = obs_inlet_value
                             
                             inlet_actor = create_node_actor(locations['inlet'], obs_inlet_value, color_range, field, node_radius, lut)
-                            renderer_cal.AddActor(inlet_actor)
+                            renderer_3d.AddActor(inlet_actor)
                         
                         # Interpolate outlet observation
                         if obs['outlet'] is not None and len(obs['outlet']) > 0:
@@ -1165,7 +1436,7 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
                             prev_3d_values[vessel_name]['outlet'] = obs_outlet_value
                             
                             outlet_actor = create_node_actor(locations['outlet'], obs_outlet_value, color_range, field, node_radius, lut)
-                            renderer_cal.AddActor(outlet_actor)
+                            renderer_3d.AddActor(outlet_actor)
             else:
                 # Use previous 3D solution values (don't update this frame)
                 for vessel_name, locations in node_locations.items():
@@ -1174,11 +1445,75 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
                         
                         if 'inlet' in prev_vals:
                             inlet_actor = create_node_actor(locations['inlet'], prev_vals['inlet'], color_range, field, node_radius, lut)
-                            renderer_cal.AddActor(inlet_actor)
+                            renderer_3d.AddActor(inlet_actor)
                         
                         if 'outlet' in prev_vals:
                             outlet_actor = create_node_actor(locations['outlet'], prev_vals['outlet'], color_range, field, node_radius, lut)
-                            renderer_cal.AddActor(outlet_actor)
+                            renderer_3d.AddActor(outlet_actor)
+            
+            # Add calibrated solution nodes if available
+            # Convert pressure from dynes/cm^2 to mmHg if field is pressure
+            if has_calibrated:
+                calibrated_nodes_added = 0
+                for vessel_name, locations in node_locations.items():
+                    if vessel_name in results_cal:
+                        # Interpolate calibrated values to match current time
+                        # Find closest time or interpolate
+                        cal_times = sorted(results_cal[vessel_name].keys())
+                        if len(cal_times) > 0:
+                            # Check if exact time match exists
+                            if time in results_cal[vessel_name]:
+                                # Exact match
+                                cal_data = results_cal[vessel_name][time]
+                            elif len(cal_times) == 1:
+                                # Only one time point, use it
+                                cal_data = results_cal[vessel_name][cal_times[0]]
+                            else:
+                                # Interpolate
+                                if time <= cal_times[0]:
+                                    cal_data = results_cal[vessel_name][cal_times[0]]
+                                elif time >= cal_times[-1]:
+                                    cal_data = results_cal[vessel_name][cal_times[-1]]
+                                else:
+                                    # Find surrounding times
+                                    for i in range(len(cal_times) - 1):
+                                        if cal_times[i] <= time <= cal_times[i+1]:
+                                            t0, t1 = cal_times[i], cal_times[i+1]
+                                            alpha = (time - t0) / (t1 - t0) if (t1 - t0) > 0 else 0.0
+                                            
+                                            # Interpolate all fields
+                                            data0 = results_cal[vessel_name][t0]
+                                            data1 = results_cal[vessel_name][t1]
+                                            cal_data = {}
+                                            for key in set(data0.keys()) | set(data1.keys()):
+                                                val0 = data0.get(key, 0.0)
+                                                val1 = data1.get(key, 0.0)
+                                                cal_data[key] = val0 + alpha * (val1 - val0)
+                                            break
+                                    else:
+                                        # Fallback: use closest time
+                                        closest_time = min(cal_times, key=lambda t: abs(t - time))
+                                        cal_data = results_cal[vessel_name][closest_time]
+                            
+                            # Create actors from interpolated data
+                            if inlet_field_name in cal_data:
+                                inlet_value = cal_data[inlet_field_name]
+                                if field == 'pressure':
+                                    inlet_value = inlet_value / 1333.0  # Convert to mmHg
+                                inlet_actor = create_node_actor(locations['inlet'], inlet_value, color_range, field, node_radius, lut)
+                                renderer_cal.AddActor(inlet_actor)
+                                calibrated_nodes_added += 1
+                            if outlet_field_name in cal_data:
+                                outlet_value = cal_data[outlet_field_name]
+                                if field == 'pressure':
+                                    outlet_value = outlet_value / 1333.0  # Convert to mmHg
+                                outlet_actor = create_node_actor(locations['outlet'], outlet_value, color_range, field, node_radius, lut)
+                                renderer_cal.AddActor(outlet_actor)
+                                calibrated_nodes_added += 1
+                
+                # Debug output for first frame
+                if idx == 0:
+                    print(f"    Added {calibrated_nodes_added} calibrated nodes for frame 0")
             
             # Add text
             text_actor_geo = vtk.vtkTextActor()
@@ -1188,12 +1523,20 @@ def visualize_zerod_results_side_by_side(geometric_csv_path, calibration_input_p
             text_actor_geo.GetTextProperty().SetColor(0, 0, 0)
             renderer_geo.AddActor2D(text_actor_geo)
             
-            text_actor_cal = vtk.vtkTextActor()
-            text_actor_cal.SetInput(f"3D Solution\nTime: {time:.3f} s")
-            text_actor_cal.SetPosition(10, render_height - 60)
-            text_actor_cal.GetTextProperty().SetFontSize(20)
-            text_actor_cal.GetTextProperty().SetColor(0, 0, 0)
-            renderer_cal.AddActor2D(text_actor_cal)
+            text_actor_3d = vtk.vtkTextActor()
+            text_actor_3d.SetInput(f"3D Solution\nTime: {time:.3f} s")
+            text_actor_3d.SetPosition(10, render_height - 60)
+            text_actor_3d.GetTextProperty().SetFontSize(20)
+            text_actor_3d.GetTextProperty().SetColor(0, 0, 0)
+            renderer_3d.AddActor2D(text_actor_3d)
+            
+            if has_calibrated:
+                text_actor_cal = vtk.vtkTextActor()
+                text_actor_cal.SetInput(f"Calibrated\nTime: {time:.3f} s")
+                text_actor_cal.SetPosition(10, render_height - 60)
+                text_actor_cal.GetTextProperty().SetFontSize(20)
+                text_actor_cal.GetTextProperty().SetColor(0, 0, 0)
+                renderer_cal.AddActor2D(text_actor_cal)
             
             # Flow plot overlay removed - using standalone movie instead
             
@@ -1456,8 +1799,16 @@ def visualize_zerod_results(csv_path, geometric_input_path, centerline_path, mes
         scalar_bar.SetNumberOfLabels(5)
         scalar_bar.SetLookupTable(lut)
         # Increase font sizes significantly
-        scalar_bar.GetTitleTextProperty().SetFontSize(32)
-        scalar_bar.GetLabelTextProperty().SetFontSize(28)
+        title_prop = scalar_bar.GetTitleTextProperty()
+        title_prop.SetFontSize(32)
+        title_prop.SetColor(0, 0, 0)  # Black text
+        scalar_bar.SetTitleTextProperty(title_prop)
+        
+        label_prop = scalar_bar.GetLabelTextProperty()
+        label_prop.SetFontSize(28)
+        label_prop.SetColor(0, 0, 0)  # Black text
+        scalar_bar.SetLabelTextProperty(label_prop)
+        
         renderer.AddActor2D(scalar_bar)
         
         # Track text actor for removal
@@ -1687,8 +2038,19 @@ Examples:
         if csv_type == 'geometric':
             geometric_csv = csv_path
     
+    # Find calibrated CSV if available
+    calibrated_csv = None
+    for csv_type, csv_path in files['csv_files']:
+        if csv_type == 'calibrated':
+            calibrated_csv = csv_path
+    
+    if calibrated_csv:
+        print(f"\n  Calibrated CSV found: {calibrated_csv}")
+    else:
+        print(f"\n  Calibrated CSV: Not found")
+    
     if geometric_csv and calibration_input:
-        # Create side-by-side movies
+        # Create side-by-side movies (now with 3 panels if calibrated CSV is available)
         total_movies = len(fields)
         for field in fields:
             output_filename = f"{args.geo_name}_{field}_comparison.mp4"
@@ -1696,12 +2058,15 @@ Examples:
             
             print(f"\n{'='*60}")
             print(f"Creating side-by-side movie: {field}")
+            if calibrated_csv:
+                print(f"  Will include calibrated results from: {calibrated_csv}")
             print(f"{'='*60}")
             
             success = visualize_zerod_results_side_by_side(
                 geometric_csv, calibration_input, files['geometric_input'], 
                 files['centerline'], files['mesh'],
-                output_path, field, tuple(args.resolution), args.fps
+                output_path, field, tuple(args.resolution), args.fps,
+                calibrated_csv_path=calibrated_csv
             )
             
             if success:

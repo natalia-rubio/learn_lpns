@@ -86,7 +86,8 @@ def generate_single_tree(tree_id, set_name='test_set', domain_size=45.0, n_branc
         logger.info("Constructing 3D fluid simulation")
 
         sim.construct_3d_fluid_simulation(number_of_time_steps=time_steps, 
-                                         target_reynolds_number=reynolds_number)
+                                         target_reynolds_number=reynolds_number,
+                                         )
         
         sim.write_3d_fluid_simulation()
         
@@ -161,6 +162,7 @@ def generate_single_tree(tree_id, set_name='test_set', domain_size=45.0, n_branc
 
 def main():
     parser = argparse.ArgumentParser(description='Generate multiple vascular trees')
+
     parser.add_argument('--num-trees', type=int, default=5, 
                        help='Number of trees to generate (default: 5)')
     parser.add_argument('--set-name', type=str, default='test_set',

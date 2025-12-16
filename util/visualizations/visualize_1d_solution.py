@@ -227,7 +227,7 @@ def visualize_1d_solution(oned_soln_path, centerline_path, mesh_path, output_pat
     centerline_mapper.SetInputData(centerline_polydata)
     centerline_actor = vtk.vtkActor()
     centerline_actor.SetMapper(centerline_mapper)
-    centerline_actor.GetProperty().SetLineWidth(5.0)
+    centerline_actor.GetProperty().SetLineWidth(10.0)  # Increased from 5.0
     
     # Create renderer
     renderer = vtk.vtkRenderer()
@@ -238,7 +238,7 @@ def visualize_1d_solution(oned_soln_path, centerline_path, mesh_path, output_pat
     # Set up camera
     renderer.ResetCamera()
     camera = renderer.GetActiveCamera()
-    camera.Zoom(0.9)
+    camera.Zoom(1.3)  # Zoom in more (increased from 0.9)
     
     # Create render window
     render_window = vtk.vtkRenderWindow()
@@ -282,8 +282,17 @@ def visualize_1d_solution(oned_soln_path, centerline_path, mesh_path, output_pat
         scalar_bar.SetTitle(f"{field.capitalize()}")
         scalar_bar.SetNumberOfLabels(5)
         scalar_bar.SetLookupTable(lut)
-        scalar_bar.GetTitleTextProperty().SetFontSize(32)
-        scalar_bar.GetLabelTextProperty().SetFontSize(28)
+        
+        title_prop = scalar_bar.GetTitleTextProperty()
+        title_prop.SetFontSize(16)  # Half of original 32
+        title_prop.SetColor(0, 0, 0)  # Black text
+        scalar_bar.SetTitleTextProperty(title_prop)
+        
+        label_prop = scalar_bar.GetLabelTextProperty()
+        label_prop.SetFontSize(14)  # Half of original 28
+        label_prop.SetColor(0, 0, 0)  # Black text
+        scalar_bar.SetLabelTextProperty(label_prop)
+        
         renderer.AddActor2D(scalar_bar)
         
         # Track text actor
@@ -311,9 +320,9 @@ def visualize_1d_solution(oned_soln_path, centerline_path, mesh_path, output_pat
             normalized_time = timestep / (total_timesteps - 1) if total_timesteps > 1 else 0.0
             text_actor = vtk.vtkTextActor()
             text_actor.SetInput(f"Time: {normalized_time:.3f} s\nField: {field.capitalize()}")
-            text_actor.SetPosition(10, resolution[1] - 60)
+            text_actor.SetPosition(10, 50)  # Moved down from top (resolution[1] - 60) to bottom (50)
             text_prop = text_actor.GetTextProperty()
-            text_prop.SetFontSize(20)
+            text_prop.SetFontSize(40)  # 4x the current size (10 * 4 = 40)
             text_prop.SetColor(0.0, 0.0, 0.0)
             renderer.AddActor2D(text_actor)
             
