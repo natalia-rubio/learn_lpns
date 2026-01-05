@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def generate_single_tree(tree_id, set_name='test_set', domain_size=45.0, n_branches=5, 
                         root_pressure=2*1333.22, terminal_pressure=1*1333.22, 
                         terminal_flow=300, hsize=0.3, reynolds_number=5000, 
-                        time_steps=100, crease_angle=60.0):
+                        time_steps=200, crease_angle=60.0):
     """
     Generate a single vascular tree with the given parameters.
     
@@ -181,7 +181,7 @@ def main():
                        help='Mesh size parameter (default: 0.3)')
     parser.add_argument('--reynolds-number', type=float, default=5000,
                        help='Target Reynolds number (default: 5000)')
-    parser.add_argument('--time-steps', type=int, default=100,
+    parser.add_argument('--time-steps', type=int, default=200,
                        help='Number of time steps (default: 100)')
     parser.add_argument('--crease-angle', type=float, default=60.0,
                        help='Crease angle for face extraction (default: 60.0)')

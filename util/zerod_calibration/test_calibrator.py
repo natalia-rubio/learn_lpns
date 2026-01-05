@@ -21,7 +21,7 @@ from generate_zerod_inputs import (
     run_calibration,
     run_forward_simulation,
     modify_junction_types,
-    replace_inlet_bc_in_calibrated_output
+    refine_inlet_bc_for_forward_simulation
 )
 
 # Import plotting functions
@@ -257,13 +257,8 @@ def main():
     
     args = parser.parse_args()
     
-    # Extract test case name from file path (e.g., "sinusoidalFlow_dir_dep_junction" from path)
-    test_case_name = Path(args.test_case).stem
-    
-    # Create output directory structure similar to data/zeroD
-    # Structure: data/zeroD/test_set/test_case_name/
-    set_name = 'test_set'
-    output_dir = Path('data') / 'zeroD' / set_name / test_case_name
+    # Create output directory
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("=" * 80)
@@ -272,7 +267,6 @@ def main():
     print(f"Test case: {args.test_case}")
     print(f"Ground truth CSV: {args.results_csv}")
     print(f"Output directory: {output_dir}")
-    print(f"Test case name: {test_case_name}")
     print(f"Junction types: {args.junction_types}")
     print()
     
@@ -291,17 +285,17 @@ def main():
     print("\nExtracting observations from ground truth CSV...")
     observations = extract_observations_from_csv(args.results_csv, geometric_input_path)
     
-    # Single geometric results file (from original input, not modified by junction type)
-    geometric_results_path = output_dir / 'geometric_results.csv'
-    
-    # Process each junction type - all files in the same directory with junction type suffix
+    # Process each junction type
     junction_type_paths = {}
     for jtype in args.junction_types:
+        jtype_dir = output_dir / jtype
+        jtype_dir.mkdir(exist_ok=True)
+        
         junction_type_paths[jtype] = {
-            'calibration_input': output_dir / f'calibration_input_{jtype}.json',
-            'calibrated_output': output_dir / f'calibrated_output_{jtype}.json',
-            'calibrated_results': output_dir / f'calibrated_results_{jtype}.csv',
-            'geometric_input': output_dir / f'geometric_input_{jtype}.json',
+            'calibration_input': jtype_dir / 'calibration_input.json',
+            'calibrated_output': jtype_dir / 'calibrated_output.json',
+            'calibrated_results': jtype_dir / 'calibrated_results.csv',
+            'geometric_results': jtype_dir / 'geometric_results.csv',
         }
     
     # Step 1: Create calibration inputs for each junction type
@@ -316,7 +310,7 @@ def main():
         modified_input = modify_junction_types(test_case, jtype)
         
         # Save modified geometric input
-        modified_geo_path = junction_type_paths[jtype]['geometric_input']
+        modified_geo_path = output_dir / jtype / 'geometric_input.json'
         with open(modified_geo_path, 'w') as f:
             json.dump(modified_input, f, indent=4)
         
@@ -343,14 +337,6 @@ def main():
         try:
             run_calibration(calibration_input_path, calibrated_output_path)
             print(f"  ✓ Calibration completed for {jtype}")
-            
-            # Replace inlet BC in calibrated output with original ground truth BC
-            if calibrated_output_path.exists():
-                try:
-                    replace_inlet_bc_in_calibrated_output(calibrated_output_path, calibration_input_path)
-                    print(f"  ✓ Replaced inlet BC in calibrated output for {jtype}")
-                except Exception as e:
-                    print(f"  ⚠ Warning: Could not replace inlet BC for {jtype}: {e}")
         except Exception as e:
             print(f"  ✗ Calibration failed for {jtype}: {e}")
             import traceback
@@ -362,19 +348,21 @@ def main():
     print("Step 3: Running forward simulations")
     print("=" * 80)
     
-    # Run geometric simulation on original input (once, for all junction types)
-    print("\nRunning geometric forward simulation on original input...")
-    try:
-        run_forward_simulation(geometric_input_path, geometric_results_path)
-        print(f"  ✓ Geometric simulation completed")
-    except Exception as e:
-        print(f"  ✗ Geometric simulation failed: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    # Run calibrated simulations for each junction type
     for jtype in args.junction_types:
-        print(f"\nRunning calibrated forward simulation for {jtype}...")
+        print(f"\nRunning forward simulation for {jtype}...")
+        
+        # Run geometric simulation
+        modified_geo_path = output_dir / jtype / 'geometric_input.json'
+        geometric_results_path = junction_type_paths[jtype]['geometric_results']
+        try:
+            run_forward_simulation(modified_geo_path, geometric_results_path)
+            print(f"  ✓ Geometric simulation completed for {jtype}")
+        except Exception as e:
+            print(f"  ✗ Geometric simulation failed for {jtype}: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Run calibrated simulation
         calibrated_output_path = junction_type_paths[jtype]['calibrated_output']
         if calibrated_output_path.exists():
             calibrated_results_path = junction_type_paths[jtype]['calibrated_results']
@@ -391,100 +379,84 @@ def main():
     print("Step 4: Creating comparison plots")
     print("=" * 80)
     
-    # Create plots directory structure similar to results/inlet_comparison/set_name/geo_name/
-    plots_base_dir = Path('results')
-    inlet_plots_dir = plots_base_dir / 'inlet_comparison' / set_name / test_case_name
-    outlet_plots_dir = plots_base_dir / 'outlet_comparison' / set_name / test_case_name
-    inlet_plots_dir.mkdir(parents=True, exist_ok=True)
-    outlet_plots_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir = output_dir / 'plots'
+    plots_dir.mkdir(exist_ok=True)
     
-    # Collect all calibrated results for all junction types
-    # Use the first available calibration input (they should all have the same 3D observations)
-    calibration_input_path = None
     for jtype in args.junction_types:
-        if junction_type_paths[jtype]['calibration_input'].exists():
-            calibration_input_path = junction_type_paths[jtype]['calibration_input']
-            break
-    
-    if not calibration_input_path:
-        print("  ✗ No calibration input files found, skipping plots")
-    else:
-        # Build dictionary of calibrated CSV paths for all junction types
-        calibrated_csv_paths = {}
-        for jtype in args.junction_types:
-            calibrated_results_path = junction_type_paths[jtype]['calibrated_results']
-            if calibrated_results_path.exists():
-                calibrated_csv_paths[jtype] = str(calibrated_results_path)
-                print(f"  ✓ Found calibrated results for {jtype}")
-            else:
-                print(f"  ⚠ Missing calibrated results for {jtype} at {calibrated_results_path}")
+        print(f"\nCreating plots for {jtype}...")
         
-        if not calibrated_csv_paths:
-            print("  ✗ No calibrated results found, skipping plots")
-        else:
-            print(f"\n  Total junction types with results: {len(calibrated_csv_paths)}/{len(args.junction_types)}")
-            print(f"  Junction types: {list(calibrated_csv_paths.keys())}")
-            
-            # Create inlet comparison plot with all junction types
-            inlet_plot_path = inlet_plots_dir / f'{test_case_name}_inlet_comparison.png'
+        calibration_input_path = junction_type_paths[jtype]['calibration_input']
+        geometric_results_path = junction_type_paths[jtype]['geometric_results']
+        calibrated_results_path = junction_type_paths[jtype]['calibrated_results']
+        
+        # Check if files exist
+        if not calibration_input_path.exists():
+            print(f"  ✗ Calibration input not found: {calibration_input_path}")
+            continue
+        
+        # Pass calibrated CSV path as string or None (not a list)
+        calibrated_csv_path = None
+        if calibrated_results_path.exists():
+            calibrated_csv_path = str(calibrated_results_path)
+        
+        # Create inlet comparison plot
+        inlet_plot_path = plots_dir / f'{jtype}_inlet_comparison.png'
+        try:
+            plot_inlet_comparison(
+                str(calibration_input_path),
+                str(geometric_results_path),
+                calibrated_csv_path,  # Pass as string or None, not list
+                output_path=str(inlet_plot_path),
+                set_name='test_case',
+                geo_name=jtype,
+                time_period=None  # Will be determined from data
+            )
+            print(f"  ✓ Inlet comparison plot saved: {inlet_plot_path}")
+        except Exception as e:
+            print(f"  ✗ Failed to create inlet plot: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Create outlet comparison plots
+        if geometric_results_path.exists():
             try:
-                print(f"\nCreating inlet comparison plot with {len(calibrated_csv_paths)} junction types...")
-                plot_inlet_comparison(
-                    str(calibration_input_path),
-                    str(geometric_results_path),
-                    calibrated_csv_paths,  # Pass as dictionary
-                    output_path=str(inlet_plot_path),
-                    set_name=set_name,
-                    geo_name=test_case_name,
-                    time_period=None,  # Will be determined from data
-                    pressure_ymin=-0.02,
-                    pressure_ymax=0.02
-                )
-                print(f"  ✓ Inlet comparison plot saved: {inlet_plot_path}")
+                # Find all vessels with outlets (use modified geometric input)
+                modified_geo_path = output_dir / jtype / 'geometric_input.json'
+                vessel_outlets = find_all_vessels_with_outlets(modified_geo_path)
+                
+                outlet_plots_dir = plots_dir / jtype / 'outlets'
+                outlet_plots_dir.mkdir(parents=True, exist_ok=True)
+                
+                success_count = 0
+                for vessel_name, outlet_location in vessel_outlets:
+                    outlet_plot_path = outlet_plots_dir / f'{vessel_name}_{outlet_location}_outlet_comparison.png'
+                    try:
+                        plot_outlet_comparison(
+                            str(calibration_input_path),
+                            str(geometric_results_path),
+                            calibrated_csv_path,  # Pass as string or None, not list
+                            vessel_name,
+                            outlet_location,
+                            str(outlet_plot_path),
+                            set_name='test_case',
+                            geo_name=jtype,
+                            time_period=None
+                        )
+                        success_count += 1
+                    except Exception as e:
+                        print(f"    ✗ Failed to create outlet plot for {vessel_name} - {outlet_location}: {e}")
+                
+                print(f"  ✓ Created {success_count}/{len(vessel_outlets)} outlet comparison plots")
             except Exception as e:
-                print(f"  ✗ Failed to create inlet plot: {e}")
+                print(f"  ✗ Failed to create outlet plots: {e}")
                 import traceback
                 traceback.print_exc()
-            
-            # Create outlet comparison plots
-            if geometric_results_path.exists():
-                try:
-                    # Find all vessels with outlets (use original geometric input)
-                    vessel_outlets = find_all_vessels_with_outlets(geometric_input_path)
-                    
-                    success_count = 0
-                    for vessel_name, outlet_location in vessel_outlets:
-                        outlet_plot_path = outlet_plots_dir / f'{vessel_name}_{outlet_location}_outlet_comparison.png'
-                        try:
-                            plot_outlet_comparison(
-                                str(calibration_input_path),
-                                str(geometric_results_path),
-                                calibrated_csv_paths,  # Pass as dictionary
-                                vessel_name,
-                                outlet_location,
-                                str(outlet_plot_path),
-                                set_name=set_name,
-                                geo_name=test_case_name,
-                                time_period=None,
-                                pressure_ymin=-0.02,
-                                pressure_ymax=0.02
-                            )
-                            success_count += 1
-                        except Exception as e:
-                            print(f"    ✗ Failed to create outlet plot for {vessel_name} - {outlet_location}: {e}")
-                    
-                    print(f"  ✓ Created {success_count}/{len(vessel_outlets)} outlet comparison plots")
-                except Exception as e:
-                    print(f"  ✗ Failed to create outlet plots: {e}")
-                    import traceback
-                    traceback.print_exc()
     
     print("\n" + "=" * 80)
     print("Test completed!")
     print("=" * 80)
     print(f"Results saved to: {output_dir}")
-    print(f"Inlet plots saved to: {inlet_plots_dir}")
-    print(f"Outlet plots saved to: {outlet_plots_dir}")
+    print(f"Plots saved to: {plots_dir}")
 
 
 if __name__ == '__main__':

@@ -217,7 +217,10 @@ def main():
             caps = model.identify_caps()
             walls = [ids[i] for i,x in enumerate(caps) if not x]
             print(walls)
+        # Ensure ids and caps are up to date after wall combining
         ids = model.get_face_ids()
+        caps = model.identify_caps()
+        caps = model.identify_caps()
 
         num_caps = 7
         if len(ids) > 1 + num_caps:
@@ -240,6 +243,9 @@ def main():
                 #combined = mesh_utils.combine_faces(model.get_polydata(),target,lose)
                 #model.set_surface(combined)
                 print(remove_list)
+            # Re-get face IDs and caps after combining faces
+            ids = model.get_face_ids()
+            caps = model.identify_caps()
             print(model.get_face_ids())
         
         # Identify inlet and outlet faces

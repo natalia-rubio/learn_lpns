@@ -6,6 +6,7 @@ Helper functions for calibration workflow.
 import os
 import vtk
 import numpy as np
+import xml.etree.ElementTree as ET
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 
 
@@ -60,8 +61,6 @@ def timestep_from_1D(centerline_soln_path, geo_dir):
             - time_step_size: Time step size from XML (or None if not found)
             - bc_time: List of time values (or None if time_step_size not found)
     """
-    import xml.etree.ElementTree as ET
-    
     # Read centerline solution
     centerline_data, _ = read_centerline_vtp(centerline_soln_path)
     flow_timesteps = [key for key in centerline_data.keys() if key.startswith('velocity_') or key.startswith('flow_')]
