@@ -469,6 +469,95 @@ def create_geometric_zerod_input_rom(geo_dir, centerline_path, output_path,
     # Make centerline path relative to script location or absolute
     centerline_abs = os.path.abspath(centerline_path)
     
+    # Strip .vtp extension from face names for SimVascular (XML uses base names)
+    inlet_cap_base = inlet_cap.replace('.vtp', '') if inlet_cap.endswith('.vtp') else inlet_cap
+    outlet_caps_base = [cap.replace('.vtp', '') if cap.endswith('.vtp') else cap for cap in outlet_caps]
+    
+    # Format outlet_caps_base as a Python list literal for the script
+    outlet_caps_base_str = '[' + ', '.join([f"'{cap}'" for cap in outlet_caps_base]) + ']'
+    
+    # Extract outlet resistances from XML file
+    print(f"\nExtracting outlet resistances from XML file...")
+    print(f"  Looking for outlet caps: {outlet_caps}")
+    # Create mapping from base names (without .vtp) to full names (with .vtp)
+    # XML BC names don't include .vtp extension
+    outlet_caps_base = {}
+    for cap in outlet_caps:
+        base_name = cap.replace('.vtp', '') if cap.endswith('.vtp') else cap
+        outlet_caps_base[base_name] = cap
+    print(f"  Outlet caps base names (for XML matching): {list(outlet_caps_base.keys())}")
+    
+    outlet_resistances = {}
+    xml_files = [
+        os.path.join(geo_dir, 'fluid_simulation_0-0.xml'),
+        os.path.join(geo_dir, 'fluid_simulation.xml'),
+    ]
+    xml_path = None
+    for path in xml_files:
+        print(f"  Checking for XML file: {path}")
+        if os.path.exists(path):
+            xml_path = path
+            print(f"  Found XML file: {xml_path}")
+            break
+    
+    if xml_path:
+        try:
+            print(f"  Parsing XML file...")
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            add_equation = root.find('Add_equation')
+            if add_equation is None:
+                print(f"  Warning: No 'Add_equation' element found in XML")
+            else:
+                print(f"  Found 'Add_equation' element, searching for boundary conditions...")
+                all_bcs = add_equation.findall('Add_BC')
+                print(f"  Found {len(all_bcs)} boundary condition(s) in XML")
+                
+                for bc in all_bcs:
+                    bc_name = bc.get('name')
+                    bc_type = bc.find('Type')
+                    value_elem = bc.find('Value')
+                    
+                    print(f"    BC name: {bc_name}, type: {bc_type.text if bc_type is not None else 'None'}, value: {value_elem.text if value_elem is not None else 'None'}")
+                    
+                    # Outlet BCs are Neumann type with a Value (resistance)
+                    # XML BC names don't have .vtp extension, so compare against base names
+                    if bc_name:
+                        print(f"      Checking if '{bc_name}' is in outlet_caps_base: {bc_name in outlet_caps_base}")
+                        if bc_name in outlet_caps_base:
+                            print(f"      '{bc_name}' is an outlet cap")
+                            if bc_type is not None:
+                                print(f"      BC type is: '{bc_type.text}'")
+                                if bc_type.text == 'Neumann':
+                                    print(f"      BC type matches 'Neumann'")
+                                    if value_elem is not None:
+                                        print(f"      Value element found: '{value_elem.text}'")
+                                        try:
+                                            resistance = float(value_elem.text)
+                                            # Store using base name (without .vtp) to match XML BC names
+                                            outlet_resistances[bc_name] = resistance
+                                            print(f"      ✓ Found resistance for {bc_name}: {resistance}")
+                                        except (ValueError, TypeError) as e:
+                                            print(f"      ✗ Could not parse resistance value for {bc_name}: {e}, using default 1.0")
+                                    else:
+                                        print(f"      ✗ No Value element found for {bc_name}")
+                                else:
+                                    print(f"      ✗ BC type is not 'Neumann' (it's '{bc_type.text}')")
+                            else:
+                                print(f"      ✗ No Type element found for {bc_name}")
+                        else:
+                            print(f"      '{bc_name}' is not in outlet_caps list")
+                    else:
+                        print(f"      ✗ BC has no name attribute")
+        except Exception as e:
+            print(f"  ✗ Error parsing XML for outlet resistances: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"  ✗ No XML file found. Tried: {xml_files}")
+    
+    print(f"  Final outlet resistances dictionary: {outlet_resistances}")
+    
     script_content = f"""import os
 from pathlib import Path
 import sv
@@ -487,8 +576,8 @@ mesh_params = params.MeshParameters()
 ## Model parameters.
 model_params = params.ModelParameters()
 model_params.name = '{geo_name}'
-model_params.inlet_face_names = ['{inlet_cap}']
-model_params.outlet_face_names = {outlet_caps}
+model_params.inlet_face_names = ['{inlet_cap_base}']
+model_params.outlet_face_names = {outlet_caps_base_str}
 model_params.centerlines_file_name = '{centerline_abs}'
 
 ## Fluid properties.
@@ -500,12 +589,18 @@ material = params.WallProperties.OlufsenMaterial()
 
 ## Set boundary conditions.
 bcs = params.BoundaryConditions()
-bcs.add_velocities(face_name='{inlet_cap}', file_name='{os.path.abspath(inflow_flow_file)}')
+bcs.add_velocities(face_name='{inlet_cap_base}', file_name='{os.path.abspath(inflow_flow_file)}')
 """
     
-    # Add resistance BCs for outlets
+    # Add resistance BCs for outlets using values from XML
+    # Note: SimVascular expects face names without .vtp extension
+    # Resistances are stored using base names (without .vtp) to match XML BC names
     for outlet_cap in outlet_caps:
-        script_content += f"bcs.add_resistance(face_name='{outlet_cap}', resistance=1.0)\n"
+        # Get base name (without .vtp) for lookup and script
+        outlet_cap_base = outlet_cap.replace('.vtp', '') if outlet_cap.endswith('.vtp') else outlet_cap
+        resistance = outlet_resistances.get(outlet_cap_base, 1.0)  # Default to 1.0 if not found
+        print(f"  Using resistance {resistance} for {outlet_cap} (face_name: {outlet_cap_base})")
+        script_content += f"bcs.add_resistance(face_name='{outlet_cap_base}', resistance={1+0*resistance})\n"
     
     script_content += f"""solution_params = params.Solution()
 solution_params.time_step = {dt}
@@ -568,6 +663,12 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
     with open(generated_json, 'r') as f:
         zerod_input = json.load(f)
     
+    # Set capacitances to cap_val
+    cap_value = 1e-10
+    for vessel in zerod_input['vessels']:
+        vessel['zero_d_element_values']['C'] = cap_value
+    # Set number of cardiac cycles to 1
+    zerod_input['simulation_parameters']['number_of_cardiac_cycles'] = 1
     # Fix junction types and validate junction structure
     if 'junctions' in zerod_input:
         for junc in zerod_input['junctions']:
@@ -581,7 +682,7 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
                 print(f"    BloodVessel junction only supports 1 inlet. Keeping first inlet only.")
                 # Keep only the first inlet
                 junc['inlet_vessels'] = [inlet_vessels[0]]
-    
+    zerod_input['simulation_parameters']['number_of_cardiac_cycles'] = 1
     # Move to final output location
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w') as f:
@@ -715,6 +816,7 @@ def update_geometric_input_from_simulation(geo_dir, json_path, inlet_cap_name, n
     if len(flows) != num_time_steps or len(times) != len(flows):
         # Need to interpolate
         # Handle case where times might not be sorted
+        print("Interpolating")
         times_array = np.array(times)
         flows_array = np.array(flows)
         sort_idx = np.argsort(times_array)
@@ -773,6 +875,9 @@ def update_geometric_input_from_simulation(geo_dir, json_path, inlet_cap_name, n
         if 'zero_d_element_values' in vessel and 'C' in vessel['zero_d_element_values']:
             vessel['zero_d_element_values']['C'] = capacitance_value
             vessels_updated += 1
+        if 'zero_d_element_values' in vessel and 'stenosis_coefficient' in vessel['zero_d_element_values']:
+            vessel['zero_d_element_values']['stenosis_coefficient'] = 0.0
+
     print(f"  Set capacitance (C) to {capacitance_value} for {vessels_updated} vessels")
     
     # Write updated JSON
@@ -793,7 +898,7 @@ def update_geometric_input_from_simulation(geo_dir, json_path, inlet_cap_name, n
                 break
 
 
-def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None):
+def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0):
     """
     Extract observation data from 1D centerline solution VTP file.
     Extracts observations at boundaries and junctions following the format expected by svZeroDCalibrator.
@@ -802,6 +907,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
         centerline_soln_path: Path to centerline solution VTP (with pressure/velocity arrays)
         geometric_input_path: Path to geometric 0D input JSON (to understand vessel/junction structure)
         geo_dir: Geometry directory containing XML file (optional, will try to infer from paths)
+        start_idx: Starting index for observations (default: 0). Observations will be sliced from this index.
         
     Returns:
         Dictionary with observation data (y, dy) for calibration
@@ -822,6 +928,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     # Find all timestep arrays
     pressure_timesteps = []
     flow_timesteps = []
+    end_idx = -50
     
     for key in centerline_data.keys():
         if key.startswith('pressure_'):
@@ -936,10 +1043,10 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     if inlet_idx is not None:
         p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt)
         if p_ref is not None:
-            observations["y"][f"pressure:INFLOW:branch0_seg0"] = p_ref
-            observations["dy"][f"pressure:INFLOW:branch0_seg0"] = p_der
-            observations["y"][f"flow:INFLOW:branch0_seg0"] = f_ref
-            observations["dy"][f"flow:INFLOW:branch0_seg0"] = f_der
+            observations["y"][f"pressure:INFLOW:branch0_seg0"] = p_ref[start_idx:end_idx]
+            observations["dy"][f"pressure:INFLOW:branch0_seg0"] = p_der[start_idx:end_idx]
+            observations["y"][f"flow:INFLOW:branch0_seg0"] = f_ref[start_idx:end_idx]
+            observations["dy"][f"flow:INFLOW:branch0_seg0"] = f_der[start_idx:end_idx]
     
     # Outlet BCs - find vessels connected to outlets
     for vessel in vessels:
@@ -969,26 +1076,28 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 if outlet_point_idx is not None:
                     p_ref, p_der, f_ref, f_der = extract_at_point(outlet_point_idx, times, dt)
                     if p_ref is not None:
-                        observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = p_ref
-                        observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = p_der
-                        observations["y"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = f_ref
-                        observations["dy"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = f_der
+                        observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = p_ref[start_idx:end_idx]
+                        observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = p_der[start_idx:end_idx]
+                        observations["y"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = f_ref[start_idx:end_idx]
+                        observations["dy"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = f_der[start_idx:end_idx]
                     else:
                         # Create zero observations if extraction failed
                         print(f"  Warning: Could not extract observations for {vessel['vessel_name']}:{bc_outlet}, using zeros")
-                        zero_obs = [0.0] * obs_len
-                        observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
-                        observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
-                        observations["y"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
-                        observations["dy"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
+                        raise ValueError(f"Could not extract observations for {vessel['vessel_name']}:{bc_outlet}")
+                        # zero_obs = [0.0] * obs_len
+                        # observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
+                        # observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
+                        # observations["y"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
+                        # observations["dy"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
                 else:
                     # Create zero observations if outlet point not found
                     print(f"  Warning: Could not find outlet point for {vessel['vessel_name']}:{bc_outlet}, using zeros")
-                    zero_obs = [0.0] * obs_len
-                    observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
-                    observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
-                    observations["y"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
-                    observations["dy"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
+                    raise ValueError(f"Could not find outlet point for {vessel['vessel_name']}:{bc_outlet}")
+                    # zero_obs = [0.0] * obs_len
+                    # observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
+                    # observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
+                    # observations["y"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
+                    # observations["dy"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
     
     # Extract observations at junctions
     # For each junction, extract data for vessels connected to it
@@ -1010,10 +1119,10 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                     if branch_id[i] == vessel_branch:
                         p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt)
                         if p_ref is not None:
-                            observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref
-                            observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der
-                            observations["y"][f"flow:{vessel_name}:{junc_name}"] = f_ref
-                            observations["dy"][f"flow:{vessel_name}:{junc_name}"] = f_der
+                            observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref[start_idx:end_idx]
+                            observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der[start_idx:end_idx]
+                            observations["y"][f"flow:{vessel_name}:{junc_name}"] = f_ref[start_idx:end_idx]
+                            observations["dy"][f"flow:{vessel_name}:{junc_name}"] = f_der[start_idx:end_idx]
                         break
         
         # For outlet vessels: format is "flow:junction_name:vessel_name"
@@ -1028,10 +1137,11 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                     if branch_id[i] == vessel_branch:
                         p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt)
                         if p_ref is not None:
-                            observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref
-                            observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der
-                            observations["y"][f"flow:{junc_name}:{vessel_name}"] = f_ref
-                            observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der
+                            observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref[start_idx:end_idx]
+                            observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der[start_idx:end_idx]
+                            observations["y"][f"flow:{junc_name}:{vessel_name}"] = f_ref[start_idx:end_idx]
+                            observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
+                            
                         break
     
     return observations
@@ -1072,6 +1182,7 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
             bc_flow = bc_flow.tolist()
     else:
         raise ValueError("No inflow flow data found in observations")
+        
     bc_time = np.linspace(0.0, len(bc_flow) * time_step_size, len(bc_flow), endpoint=False).tolist()
 
     
@@ -1099,7 +1210,7 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         "tolerance_increment": 1e-10,
         "maximum_iterations": 100,
         "calibrate_stenosis_coefficient":True,
-        "set_capacitance_to_zero": True,
+        "set_capacitance_to_zero": False,
     }
     
     
@@ -1108,6 +1219,7 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     inp["simulation_parameters"]["steady_initial"] = False
     inp["simulation_parameters"]["absolute_tolerance"] = 1e-5
     inp["simulation_parameters"]["maximum_nonlinear_iterations"] = 50
+    inp["simulation_parameters"]["num_cardiac_cycles"] = 1
     
     # Convert numpy arrays in observations to lists for JSON serialization
     observations_list = convert_numpy_to_list(observations)
@@ -1135,6 +1247,203 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     
     print(f"Calibration input saved to: {output_path}")
     return inp
+
+
+def fit_outlet_resistances_from_3d(geometric_input_path, observations):
+    """
+    Fit outlet boundary condition resistances and distal pressures from 3D solution observations.
+    Fits linear relationship: P = R*Q + Pd using least squares regression.
+    
+    Args:
+        geometric_input_path: Path to geometric 0D input JSON (will be updated)
+        observations: Dictionary with observation data (y, dy) containing outlet pressure and flow
+    
+    Returns:
+        Dictionary mapping outlet BC names to fitted (R, Pd) tuples
+    """
+    print(f"\nFitting outlet resistances and distal pressures from 3D solution...")
+    
+    # Load geometric input
+    with open(geometric_input_path, 'r') as f:
+        inp = json.load(f)
+    
+    # Extract outlet resistances and distal pressures
+    outlet_params = {}
+    
+    # Find all outlet BCs in geometric input
+    outlet_bcs = {}
+    for bc in inp.get('boundary_conditions', []):
+        if bc.get('bc_type') == 'RESISTANCE':
+            bc_name = bc.get('bc_name')
+            if bc_name:
+                outlet_bcs[bc_name] = bc
+    
+    # Find vessels with outlet BCs
+    vessels = inp.get('vessels', [])
+    vessel_to_bc = {}
+    for vessel in vessels:
+        if 'boundary_conditions' in vessel and 'outlet' in vessel['boundary_conditions']:
+            bc_name = vessel['boundary_conditions']['outlet']
+            vessel_name = vessel['vessel_name']
+            vessel_to_bc[vessel_name] = bc_name
+    
+    print(f"  Found {len(outlet_bcs)} outlet boundary conditions")
+    
+    # Extract pressure and flow for each outlet
+    obs_y = observations.get('y', {})
+    
+    for vessel_name, bc_name in vessel_to_bc.items():
+        if bc_name not in outlet_bcs:
+            print(f"  Warning: BC {bc_name} not found in boundary_conditions")
+            continue
+        
+        # Look for pressure and flow observations
+        # Pattern: "pressure:{vessel_name}:{bc_name}" and "flow:{vessel_name}:{bc_name}"
+        pressure_key = f"pressure:{vessel_name}:{bc_name}"
+        flow_key = f"flow:{vessel_name}:{bc_name}"
+        
+        if pressure_key not in obs_y:
+            print(f"  Warning: No pressure observation found for {vessel_name}:{bc_name}")
+            continue
+        
+        if flow_key not in obs_y:
+            print(f"  Warning: No flow observation found for {vessel_name}:{bc_name}")
+            continue
+        
+        pressures = np.array(obs_y[pressure_key])
+        flows = np.array(obs_y[flow_key])
+        
+        # Convert to numpy arrays if needed
+        if isinstance(pressures, list):
+            pressures = np.array(pressures)
+        if isinstance(flows, list):
+            flows = np.array(flows)
+        
+        # Filter out invalid values (inf, nan)
+        valid_mask = np.isfinite(pressures) & np.isfinite(flows)
+        
+        if not np.any(valid_mask):
+            print(f"  Warning: No valid data points for {vessel_name}:{bc_name}")
+            print(f"    Pressure range: [{np.min(pressures):.2f}, {np.max(pressures):.2f}]")
+            print(f"    Flow range: [{np.min(flows):.2f}, {np.max(flows):.2f}]")
+            continue
+        
+        valid_pressures = pressures[valid_mask]
+        valid_flows = flows[valid_mask]
+        
+        if len(valid_pressures) < 2:
+            print(f"  Warning: Insufficient data points for {vessel_name}:{bc_name} (need at least 2)")
+            continue
+        
+        # Fit linear relationship: P = R*Q + Pd
+        # Using least squares: [R, Pd] = (Q^T * Q)^(-1) * Q^T * P
+        # Where Q is the design matrix: [flows, ones]
+        try:
+            # Create design matrix: [flows, ones] for [R, Pd]
+            A = np.vstack([valid_flows, np.ones(len(valid_flows))]).T
+            b = valid_pressures
+            
+            # Solve least squares: [R, Pd] = (A^T * A)^(-1) * A^T * b
+            params, residuals, rank, s = np.linalg.lstsq(A, b, rcond=None)
+            
+            fitted_resistance = float(params[0])
+            fitted_pd = float(params[1])
+            
+            # Check if fit is reasonable
+            if not np.isfinite(fitted_resistance) or not np.isfinite(fitted_pd):
+                print(f"  Warning: Invalid fit parameters for {vessel_name}:{bc_name}")
+                continue
+            
+            # Check if resistance is positive (should be for physical validity)
+            if fitted_resistance < 0:
+                print(f"  Warning: Negative resistance fitted for {vessel_name}:{bc_name} ({fitted_resistance:.4f}), using absolute value")
+                fitted_resistance = abs(fitted_resistance)
+            
+            outlet_params[bc_name] = (fitted_resistance, fitted_pd)
+            
+            # Calculate R-squared for quality assessment
+            predicted_pressures = fitted_resistance * valid_flows + fitted_pd
+            ss_res = np.sum((valid_pressures - predicted_pressures) ** 2)
+            ss_tot = np.sum((valid_pressures - np.mean(valid_pressures)) ** 2)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+            
+            print(f"  {bc_name} ({vessel_name}):")
+            print(f"    Pressure range: [{np.min(valid_pressures):.2f}, {np.max(valid_pressures):.2f}] dynes/cm²")
+            print(f"    Flow range: [{np.min(valid_flows):.2f}, {np.max(valid_flows):.2f}] cm³/s")
+            print(f"    Fitted R: {fitted_resistance:.4f}")
+            print(f"    Fitted Pd: {fitted_pd:.4f}")
+            print(f"    R²: {r_squared:.4f}")
+            
+        except np.linalg.LinAlgError as e:
+            print(f"  Warning: Linear regression failed for {vessel_name}:{bc_name}: {e}")
+            continue
+    
+    # Update geometric input with fitted resistances and distal pressures
+    print(f"\n  Updating geometric input with fitted parameters...")
+    for bc_name, (resistance, pd) in outlet_params.items():
+        if bc_name in outlet_bcs:
+            old_resistance = outlet_bcs[bc_name]['bc_values'].get('R', 1.0)
+            old_pd = outlet_bcs[bc_name]['bc_values'].get('Pd', 0.0)
+            outlet_bcs[bc_name]['bc_values']['R'] = resistance
+            outlet_bcs[bc_name]['bc_values']['Pd'] = pd
+            print(f"    {bc_name}: R {old_resistance:.4f} -> {resistance:.4f}, Pd {old_pd:.4f} -> {pd:.4f}")
+    
+    # Save updated geometric input
+    with open(geometric_input_path, 'w') as f:
+        json.dump(inp, f, indent=4)
+    
+    print(f"  ✓ Updated geometric input saved to: {geometric_input_path}")
+    
+    return outlet_params
+
+
+def update_outlet_bcs_in_file(file_path, outlet_params, file_type="calibration input"):
+    """
+    Update outlet boundary conditions (R and Pd) in a JSON file using fitted parameters.
+    
+    Args:
+        file_path: Path to JSON file to update (calibration input or calibrated output)
+        outlet_params: Dictionary mapping BC names to (R, Pd) tuples
+        file_type: String describing file type (for logging)
+    
+    Returns:
+        True if file was updated, False otherwise
+    """
+    if not os.path.exists(file_path):
+        print(f"  Warning: {file_type} file not found: {file_path}")
+        return False
+    
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+        
+        updated_count = 0
+        # Find and update outlet BCs
+        for bc in data.get('boundary_conditions', []):
+            if bc.get('bc_type') == 'RESISTANCE':
+                bc_name = bc.get('bc_name')
+                if bc_name in outlet_params:
+                    resistance, pd = outlet_params[bc_name]
+                    old_r = bc['bc_values'].get('R', 1.0)
+                    old_pd = bc['bc_values'].get('Pd', 0.0)
+                    bc['bc_values']['R'] = resistance
+                    bc['bc_values']['Pd'] = pd
+                    updated_count += 1
+                    print(f"    {bc_name}: R {old_r:.4f} -> {resistance:.4f}, Pd {old_pd:.4f} -> {pd:.4f}")
+        
+        if updated_count > 0:
+            # Write updated file
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=4)
+            print(f"  ✓ Updated {updated_count} outlet BC(s) in {file_type}: {file_path}")
+            return True
+        else:
+            print(f"  No outlet BCs found to update in {file_type}: {file_path}")
+            return False
+            
+    except Exception as e:
+        print(f"  Warning: Could not update {file_type} file {file_path}: {e}")
+        return False
 
 
 def replace_inlet_bc_in_calibrated_output(calibrated_output_path, calibration_input_path):
@@ -1198,6 +1507,7 @@ def replace_inlet_bc_in_calibrated_output(calibrated_output_path, calibration_in
         print(f"  Added INFLOW BC with original observed BC")
         print(f"    Time points: {len(calibrated_output['boundary_conditions'][-1]['bc_values']['t'])}")
     
+
     # Write updated calibrated output
     with open(calibrated_output_path, 'w') as f:
         json.dump(calibrated_output, f, indent=4)
@@ -1246,7 +1556,7 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
         geo_input = json.load(f)
     
     # Refine inlet BC for forward simulation (halve timestep size, interpolate flow)
-    refined_bc = refine_inlet_bc_for_forward_simulation(calib_inflow_bc)
+    refined_bc = calib_inflow_bc #  refine_inlet_bc_for_forward_simulation(calib_inflow_bc)
     
     # Update inflow BC
     geo_updated = False
@@ -1268,6 +1578,7 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
     # matches the length of the refined inflow BC time series
     if geo_updated and 'simulation_parameters' in geo_input:
         geo_input['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = n_pts_inflow
+        
         print(f"  Updated simulation_parameters.number_of_time_pts_per_cardiac_cycle to {n_pts_inflow}")
     
     if geo_updated:
@@ -1543,7 +1854,7 @@ def modify_junction_types(config, junction_type):
     
     Args:
         config: Dictionary with 0D input configuration
-        junction_type: String specifying junction type ('BloodVesselJunction', 'DirDepJunction', 'DirIndepJunction', 'HybridJunction')
+        junction_type: String specifying junction type ('BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction')
         
     Returns:
         Modified config dictionary
@@ -1570,7 +1881,7 @@ def modify_junction_types(config, junction_type):
             junc['junction_type'] = junction_type
             
             # For special junction types, we need to provide junction_values
-            if junction_type in ['BloodVesselJunction', 'DirDepJunction', 'DirIndepJunction', 'HybridJunction']:
+            if junction_type in ['BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction']:
                 num_outlets = len(junc.get('outlet_vessels', []))
                 
                 if num_outlets > 0:
@@ -1579,7 +1890,7 @@ def modify_junction_types(config, junction_type):
                         junc['junction_values'] = {}
                     
                     # Determine which parameters are needed based on junction type
-                    # BloodVesselJunction, DirDepJunction and DirIndepJunction: R_poiseuille, L, stenosis_coefficient
+                    # BloodVesselJunction, NORMAL_JUNCTION and DirIndepJunction: R_poiseuille, L, stenosis_coefficient
                     # HybridJunction: R_poiseuille, L, stenosis_coefficient, pressure_recovery_coefficient
                     required_params = ['R_poiseuille', 'L', 'stenosis_coefficient']
                     if junction_type == 'HybridJunction':
@@ -1816,8 +2127,10 @@ def main():
     parser.add_argument('--timestep-scale-factor', type=float, default=0.25,
                        help='Scaling factor for 0D simulation timestep relative to 1D/3D timestep (default: 0.25, i.e., quarter the timestep)')
     parser.add_argument('--junction-types', nargs='+', 
-                       default=['BloodVesselJunction', 'DirDepJunction', 'DirIndepJunction', 'HybridJunction'],
+                       default=['BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction'],
                        help='Junction types to generate calibration files for (default: all four types)')
+    parser.add_argument('--start-idx', type=int, default=0,
+                       help='Starting index for observations (default: 0). Observations will be sliced from this index.')
     
     args = parser.parse_args()
     
@@ -1882,7 +2195,7 @@ def main():
         print("="*60)
         
         if args.one_d_soln:
-            observations = extract_observations_from_1d(args.one_d_soln, geometric_input_path, geo_dir=geo_dir)
+            observations = extract_observations_from_1d(args.one_d_soln, geometric_input_path, geo_dir=geo_dir, start_idx=args.start_idx)
         elif args.three_d_soln_dir:
             raise NotImplementedError("3D solution extraction not yet implemented")
         else:
@@ -1904,7 +2217,7 @@ def main():
                     soln_path = alt_soln_path
             
             if os.path.exists(soln_path):
-                observations = extract_observations_from_1d(soln_path, geometric_input_path, geo_dir=geo_dir)
+                observations = extract_observations_from_1d(soln_path, geometric_input_path, geo_dir=geo_dir, start_idx=args.start_idx)
             else:
                 print("Warning: No 1D or 3D solution found. Skipping calibration.")
                 print(f"  Looked for:")
@@ -1939,11 +2252,16 @@ def main():
             
             # Create calibration input with time computation from 1D solution
             create_calibration_input(geometric_input_path, observations, calibration_input_path,
-                                   centerline_soln_path=soln_path, geo_dir=geo_dir,
-                                   num_cardiac_cycles=args.num_cardiac_cycles,
-                                   timestep_scale_factor=args.timestep_scale_factor)
+                                   centerline_soln_path=soln_path, geo_dir=geo_dir)
             
             print(f"    ✓ Base calibration input saved to: {calibration_input_path}")
+            
+            # Fit outlet resistances from 3D solution
+            fitted_resistances = fit_outlet_resistances_from_3d(geometric_input_path, observations)
+            
+            # Update base calibration input with fitted outlet BCs
+            print(f"\n  Updating base calibration input with fitted outlet BCs...")
+            update_outlet_bcs_in_file(calibration_input_path, fitted_resistances, "base calibration input")
             
             # Update geometric input with BC from calibration input
             update_geometric_input_with_calibration_bc(geometric_input_path, calibration_input_path)
@@ -1963,6 +2281,9 @@ def main():
                 with open(jtype_input_path, 'w') as f:
                     json.dump(jtype_config, f, indent=4)
                 
+                # Update with fitted outlet BCs (after writing, to ensure they're in the file)
+                update_outlet_bcs_in_file(jtype_input_path, fitted_resistances, f"{jtype} calibration input")
+                
                 print(f"      ✓ Saved to: {jtype_input_path}")
             
             # Step 3: Run calibration for each junction type
@@ -1978,6 +2299,8 @@ def main():
                 print(f"  ✓ Base calibration completed")
                 # Replace inlet BC with original observed BC
                 replace_inlet_bc_in_calibrated_output(calibrated_output_path, calibration_input_path)
+                # Update outlet BCs with fitted values
+                update_outlet_bcs_in_file(calibrated_output_path, fitted_resistances, "base calibrated output")
             except Exception as e:
                 print(f"  ✗ Base calibration failed: {e}")
                 import traceback
@@ -1994,6 +2317,8 @@ def main():
                     print(f"    ✓ Calibration completed for {jtype}")
                     # Replace inlet BC with original observed BC
                     replace_inlet_bc_in_calibrated_output(jtype_output_path, jtype_input_path)
+                    # Update outlet BCs with fitted values
+                    update_outlet_bcs_in_file(jtype_output_path, fitted_resistances, f"{jtype} calibrated output")
                 except Exception as e:
                     print(f"    ✗ Calibration failed for {jtype}: {e}")
                     import traceback

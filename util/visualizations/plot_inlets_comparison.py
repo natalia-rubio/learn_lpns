@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Script to plot inlet pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models.
+Script to plot inlet pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models
+for each vessel in the network.
 """
 
 import os
@@ -38,7 +39,7 @@ try:
         plt.rcParams['mathtext.fontset'] = 'cm'
         LATEX_AVAILABLE = False
     
-    # Set font sizes (doubled from original)
+    # Set font sizes
     plt.rcParams['axes.labelsize'] = 28
     plt.rcParams['axes.titlesize'] = 32
     plt.rcParams['xtick.labelsize'] = 24
@@ -100,9 +101,9 @@ def read_zerod_csv(csv_path):
     return results, sorted(times)
 
 
-def extract_inlet_data_from_csv(csv_path, vessel_name='branch0_seg0'):
+def extract_inlet_data_from_csv(csv_path, vessel_name):
     """
-    Extract inlet pressure and flow data from 0D CSV results.
+    Extract inlet pressure and flow data from 0D CSV results for a specific vessel.
     
     Returns:
         times: Time array
@@ -150,59 +151,96 @@ def extract_inlet_data_from_csv(csv_path, vessel_name='branch0_seg0'):
     return times_array, pressures, flows
 
 
-def extract_inlet_data_from_calibration_input(calibration_input_path):
+def extract_inlet_data_from_calibration_input(calibration_input_path, vessel_name):
     """
-    Extract inlet pressure and flow data from calibration input observations.
+    Extract inlet pressure and flow data from calibration input observations for a specific vessel.
     
     Returns:
         times: Time array (normalized [0, 1])
         pressures: Pressure values (in dynes/cm^2, will be converted to mmHg)
         flows: Flow values (in cm³/s)
+        inlet_label: Label for the inlet (BC name or junction name)
     """
     with open(calibration_input_path, 'r') as f:
         calib_data = json.load(f)
     
     if 'y' not in calib_data:
-        return None, None, None
+        return None, None, None, None
     
     observations = calib_data['y']
     
-    # Find inlet pressure and flow
+    # Find inlet pressure and flow for this vessel
+    # Look for patterns: 
+    # 1. Inlet BC: "pressure:INFLOW:{vessel_name}" (e.g., "pressure:INFLOW:branch0_seg0")
+    # 2. Junction inlet (for outlet vessels): "pressure:{junc_name}:{vessel_name}" (e.g., "pressure:J0:branch1_seg0")
+    # 3. Junction outlet (for inlet vessels): "pressure:{vessel_name}:{junc_name}" (e.g., "pressure:branch0_seg0:J0")
     pressure_key = None
     flow_key = None
+    inlet_label = None
     
     for key in observations.keys():
-        if key.startswith('pressure:INFLOW:'):
+        if not key.startswith('pressure:'):
+            continue
+        
+        parts = key.split(':')
+        if len(parts) != 3:
+            continue
+        
+        # Check pattern 1: "pressure:INFLOW:{vessel_name}" (inlet BC)
+        if parts[0] == 'pressure' and parts[1] == 'INFLOW' and parts[2] == vessel_name:
             pressure_key = key
-        elif key.startswith('flow:INFLOW:'):
-            flow_key = key
+            # Full second part of the key (parts[1]:parts[2]) for title
+            inlet_label = f'{parts[1]}:{parts[2]}'
+            # Find corresponding flow key
+            flow_key = f'flow:INFLOW:{vessel_name}'
+            if flow_key not in observations:
+                flow_key = None
+            break
+        # Check pattern 2: "pressure:{junc_name}:{vessel_name}" (junction inlet for outlet vessel)
+        elif parts[2] == vessel_name and parts[1].startswith('J'):
+            pressure_key = key
+            # Full second part of the key (parts[1]:parts[2]) for title
+            inlet_label = f'{parts[1]}:{parts[2]}'
+            # Find corresponding flow key
+            flow_key = f'flow:{parts[1]}:{vessel_name}'
+            if flow_key not in observations:
+                flow_key = None
+            break
+        # Check pattern 3: "pressure:{vessel_name}:{junc_name}" (junction outlet for inlet vessel)
+        elif parts[1] == vessel_name and parts[2].startswith('J'):
+            # This is actually the outlet of the vessel at the junction, not the inlet
+            # Skip this pattern for inlet extraction
+            continue
     
-    if pressure_key is None and flow_key is None:
-        return None, None, None
+    if pressure_key is None:
+        return None, None, None, None
     
     # Get number of observations
-    if pressure_key:
-        num_obs = len(observations[pressure_key])
-    elif flow_key:
-        num_obs = len(observations[flow_key])
-    else:
-        return None, None, None
+    num_obs = len(observations[pressure_key])
     
     times = np.linspace(0.0, 1.0, num_obs)
     
     # Extract pressure (in dynes/cm^2)
-    if pressure_key:
-        pressures = np.array(observations[pressure_key])
-    else:
-        pressures = None
+    pressures = np.array(observations[pressure_key])
     
     # Extract flow
-    if flow_key:
+    if flow_key and flow_key in observations:
         flows = np.array(observations[flow_key])
     else:
         flows = None
     
-    return times, pressures, flows
+    return times, pressures, flows, inlet_label
+
+
+def get_all_vessels_from_csv(csv_path):
+    """
+    Get list of all vessel names from CSV file.
+    
+    Returns:
+        List of vessel names
+    """
+    results, _ = read_zerod_csv(csv_path)
+    return sorted(results.keys())
 
 
 def get_time_period(set_name, geo_name):
@@ -243,23 +281,66 @@ def get_time_period(set_name, geo_name):
     return None
 
 
-def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated_csv_paths,
-                         output_path, set_name=None, geo_name=None, time_period=None):
+def is_root_vessel(vessel_name, geometric_input_path=None, calibration_input_path=None):
     """
-    Plot inlet pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models.
+    Check if a vessel is the root vessel (has inlet boundary condition).
+    
+    Args:
+        vessel_name: Name of the vessel (e.g., 'branch0_seg0')
+        geometric_input_path: Path to geometric input JSON (optional)
+        calibration_input_path: Path to calibration input JSON (optional, used as fallback)
+    
+    Returns:
+        True if vessel is root (has inlet BC), False otherwise
+    """
+    # Try geometric input first
+    if geometric_input_path and os.path.exists(geometric_input_path):
+        try:
+            with open(geometric_input_path, 'r') as f:
+                data = json.load(f)
+            vessels = data.get('vessels', [])
+            for vessel in vessels:
+                if vessel.get('vessel_name') == vessel_name:
+                    if 'boundary_conditions' in vessel and 'inlet' in vessel['boundary_conditions']:
+                        return True
+        except Exception:
+            pass
+    
+    # Try calibration input as fallback
+    if calibration_input_path and os.path.exists(calibration_input_path):
+        try:
+            with open(calibration_input_path, 'r') as f:
+                data = json.load(f)
+            vessels = data.get('vessels', [])
+            for vessel in vessels:
+                if vessel.get('vessel_name') == vessel_name:
+                    if 'boundary_conditions' in vessel and 'inlet' in vessel['boundary_conditions']:
+                        return True
+        except Exception:
+            pass
+    
+    return False
+
+
+def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated_csv_paths,
+                          vessel_name, output_path, set_name=None, geo_name=None, time_period=None,
+                          geometric_input_path=None):
+    """
+    Plot inlet pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models
+    for a specific vessel.
     
     Args:
         calibration_input_path: Path to calibration input JSON (for 3D observations)
         geometric_csv_path: Path to geometric 0D results CSV
         calibrated_csv_paths: Dictionary mapping junction type names to CSV paths, or single CSV path
+        vessel_name: Name of the vessel to plot
         output_path: Path to save plot
         set_name: Set name (for finding time period)
         geo_name: Geometry name (for finding time period)
         time_period: Time period in seconds (if None, will try to find from XML)
+        geometric_input_path: Path to geometric input JSON (for checking if root vessel)
     """
-    print("="*60)
-    print("Plotting Inlet Comparison")
-    print("="*60)
+    print(f"Plotting inlet comparison for {vessel_name}...")
     
     if not HAS_MATPLOTLIB:
         print("Error: matplotlib is required but not available.")
@@ -275,11 +356,11 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
     else:
         print(f"  Time period: {time_period:.4f} s")
     
-    # Extract geometric 0D results first (to get the correct time array)
-    print("\nExtracting geometric 0D results...")
-    times_geo, pressures_geo, flows_geo = extract_inlet_data_from_csv(geometric_csv_path)
+    # Extract geometric 0D results
+    print(f"\nExtracting geometric 0D results for {vessel_name}...")
+    times_geo, pressures_geo, flows_geo = extract_inlet_data_from_csv(geometric_csv_path, vessel_name)
     if times_geo is None:
-        print("  Error: Could not extract geometric 0D results")
+        print(f"  Error: Could not extract geometric 0D results for {vessel_name}")
         return False
     
     # Convert pressure to mmHg
@@ -294,8 +375,10 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
         print(f"    Flow range: [{np.min(flows_geo):.2f}, {np.max(flows_geo):.2f}] cm³/s")
     
     # Extract 3D observations (from calibration input)
-    print("\nExtracting 3D observations...")
-    times_3d_norm, pressures_3d, flows_3d = extract_inlet_data_from_calibration_input(calibration_input_path)
+    print(f"\nExtracting 3D observations for {vessel_name}...")
+    times_3d_norm, pressures_3d, flows_3d, inlet_label = extract_inlet_data_from_calibration_input(
+        calibration_input_path, vessel_name)
+    
     if times_3d_norm is not None:
         # Use the same times as the 1D solution (geometric 0D results)
         # Interpolate 3D observations to match 1D solution time points
@@ -324,23 +407,25 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
             print(f"    Pressure range: [{np.min(pressures_3d_mmhg):.2f}, {np.max(pressures_3d_mmhg):.2f}] mmHg")
         if flows_3d is not None:
             print(f"    Flow range: [{np.min(flows_3d):.2f}, {np.max(flows_3d):.2f}] cm³/s")
+        if inlet_label:
+            print(f"    Inlet label: {inlet_label}")
     else:
-        print("  Error: Could not extract 3D observations")
-        return False
+        print(f"  Warning: Could not extract 3D observations for {vessel_name}")
+        pressures_3d_mmhg = None
+        flows_3d = None
+        times_3d_sec = times_geo
     
     # Extract calibrated 0D results (if available)
-    # Support both single CSV path (backward compatibility) and dictionary of junction types
     calibrated_results = {}
     
     if calibrated_csv_paths is None:
         print("\nNote: No calibrated CSV files provided")
     elif isinstance(calibrated_csv_paths, dict):
         # Multiple junction types
-        print("\nExtracting calibrated 0D results for each junction type...")
+        print(f"\nExtracting calibrated 0D results for {vessel_name}...")
         for jtype, csv_path in calibrated_csv_paths.items():
             if csv_path and os.path.exists(csv_path):
-                print(f"\n  {jtype}:")
-                times_cal, pressures_cal, flows_cal = extract_inlet_data_from_csv(csv_path)
+                times_cal, pressures_cal, flows_cal = extract_inlet_data_from_csv(csv_path, vessel_name)
                 if times_cal is not None:
                     # Convert pressure to mmHg
                     pressures_cal_mmhg = pressures_cal / 1333.0 if pressures_cal is not None else None
@@ -351,19 +436,11 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
                         'flows': flows_cal
                     }
                     
-                    print(f"    Found {len(times_cal)} time points")
-                    if pressures_cal_mmhg is not None:
-                        print(f"    Pressure range: [{np.min(pressures_cal_mmhg):.2f}, {np.max(pressures_cal_mmhg):.2f}] mmHg")
-                    if flows_cal is not None:
-                        print(f"    Flow range: [{np.min(flows_cal):.2f}, {np.max(flows_cal):.2f}] cm³/s")
-                else:
-                    print(f"    Warning: Could not extract calibrated 0D results for {jtype}")
-            else:
-                print(f"\n  {jtype}: CSV not found at {csv_path}")
+                    print(f"  {jtype}: Found {len(times_cal)} time points")
     else:
         # Single CSV path (backward compatibility)
         print("  Warning: Could not extract calibrated 0D results")
-
+    
     # Create plot with 4 subplots: 2 zoomed (top) and 2 full range (bottom)
     print("\nCreating plot...")
     fig, axes = plt.subplots(4, 1, figsize=(12, 14), sharex=False)
@@ -391,11 +468,11 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
         """Plot pressure data on given axis"""
         # Plot 3D observations (black)
         if pressures_3d_data is not None:
-            ax.plot(times_data, pressures_3d_data, 'k-', linestyle='-',linewidth=8, label='3D Model', alpha=1)
+            ax.plot(times_data, pressures_3d_data, 'k-', linestyle='-', linewidth=8, label='3D Model', alpha=1)
         
         # Plot geometric 0D (green dotted line)
         if pressures_geo_data is not None:
-            ax.plot(times_geo_data, pressures_geo_data, 'g', linestyle='--',linewidth=3, label='Geometric 0D', alpha=1)
+            ax.plot(times_geo_data, pressures_geo_data, 'g', linestyle='--', linewidth=3, label='Geometric 0D', alpha=1)
         
         # Plot all calibrated 0D results
         for jtype, data in calibrated_data_dict.items():
@@ -436,6 +513,15 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
                 ax.set_ylim(-20, 20)
         else:
             ax.set_ylim(-20, 20)
+        
+        # Set more y-axis ticks and labels
+        y_min, y_max = ax.get_ylim()
+        y_range = y_max - y_min
+        # Create approximately 8-10 ticks
+        num_ticks = max(8, min(12, int(y_range / 2) + 1))  # Adaptive number of ticks
+        y_ticks = np.linspace(y_min, y_max, num_ticks)
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels([f'{y:.2f}' for y in y_ticks], fontsize=18)
     
     # Helper function to plot flow data on an axis
     def plot_flow_data(ax, times_data, flows_3d_data, times_geo_data, flows_geo_data, 
@@ -484,9 +570,17 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
                     ax.set_ylim(flow_min - 0.1 * flow_range, flow_max + 0.1 * flow_range)
                 else:
                     ax.set_ylim(flow_min - 0.1, flow_max + 0.1)
+        
+        # Set more y-axis ticks and labels
+        y_min, y_max = ax.get_ylim()
+        y_range = y_max - y_min
+        # Create approximately 8-10 ticks
+        num_ticks = max(8, min(12, int(y_range / 2) + 1))  # Adaptive number of ticks
+        y_ticks = np.linspace(y_min, y_max, num_ticks)
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels([f'{y:.2f}' for y in y_ticks], fontsize=18)
     
     # Prepare zoomed data (last 200 time steps)
-    # Use time range to extract data (more robust than index-based)
     time_zoom_start = zoom_times[0] if len(zoom_times) > 0 else times_geo[0]
     time_zoom_end = zoom_times[-1] if len(zoom_times) > 0 else times_geo[-1]
     
@@ -519,15 +613,14 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
                       calibrated_results_zoom, junction_styles, set_ylim_from_3d=False)
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
     ax.set_xlim(zoom_times[0] if len(zoom_times) > 0 else None, zoom_times[-1] if len(zoom_times) > 0 else None)
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Plot 2: Zoomed flow
     ax = axes[1]
     plot_flow_data(ax, zoom_times, flows_3d_zoom, zoom_times, flows_geo_zoom, 
                    calibrated_results_zoom, junction_styles, set_ylim_from_3d=False)
     ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
-    # xlim set automatically via sharex with axes[0]
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Plot 3: Full pressure
     ax = axes[2]
@@ -537,7 +630,7 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
     plot_pressure_data(ax, times_3d_sec, pressures_3d_mmhg, times_geo, pressures_geo_mmhg, 
                       calibrated_results, junction_styles, set_ylim_from_3d=True)
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Plot 4: Full flow (bottom)
     ax = axes[3]
@@ -548,7 +641,7 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
                   calibrated_results, junction_styles, set_ylim_from_3d=True)
     ax.set_xlabel(r'Time (s)', fontsize=24)
     ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Create single legend above the top subplot title
     # Collect handles and labels from the full-range pressure plot (has all series)
@@ -563,13 +656,28 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
             unique_handles.append(handle)
             unique_labels.append(label)
     
+    # Check if vessel is root (has inlet BC)
+    is_root = is_root_vessel(vessel_name, geometric_input_path, calibration_input_path)
+    
+    # Create title using the full second part of the 3D observation key
+    if inlet_label:
+        title_text = inlet_label
+    else:
+        title_text = vessel_name
+        if is_root:
+            title_text += " - inlet (BC)"
+    
     # Apply tight layout first
-    plt.tight_layout(rect=[0, 0, 1, 0.88])  # Leave space at top for legend
+    plt.tight_layout(rect=[0, 0, 1, 0.85])  # Leave space at top for legend and title
+    
+    # Add title above legend
+    fig.suptitle(title_text, fontsize=28, weight='bold', y=0.995)
     
     # Create figure-level legend above the top subplot title
     # Position it above the top subplot title, arranged in 2 rows of 3 entries
+    # Position legend slightly below the title
     fig.legend(unique_handles, unique_labels, loc='upper center', ncol=3, 
-               bbox_to_anchor=(0.5, 0.99), fontsize=24, frameon=True)
+               bbox_to_anchor=(0.5, 0.97), fontsize=24, frameon=True)
     
     # Save plot
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
@@ -581,19 +689,19 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot inlet pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models"
+        description="Plot inlet pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models for each vessel"
     )
     parser.add_argument('--set-name', required=True, help='Set name (e.g., set_3)')
     parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., tree_007)')
+    parser.add_argument('--vessel-name', help='Specific vessel name to plot (default: plot all vessels)')
     parser.add_argument('--calibration-input', help='Path to calibration input JSON (default: auto-detect)')
     parser.add_argument('--geometric-csv', help='Path to geometric 0D results CSV (default: auto-detect)')
     parser.add_argument('--calibrated-csv', help='Path to calibrated 0D results CSV (default: auto-detect, supports multiple junction types)')
     parser.add_argument('--junction-types', nargs='+', 
                        default=['BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction'],
                        help='Junction types to plot (default: all four types)')
-    parser.add_argument('--output', help='Output plot path (default: auto-generate)')
-    parser.add_argument('--output-dir', default='results/inlet_comparison', 
-                        help='Output directory for plots (default: results/inlet_comparison)')
+    parser.add_argument('--output-dir', default='results/inlets_comparison', 
+                        help='Output directory for plots (default: results/inlets_comparison)')
     parser.add_argument('--data-dir', default='data/zeroD', 
                         help='Data directory for input files (default: data/zeroD)')
     parser.add_argument('--time-period', type=float, default=None,
@@ -638,41 +746,52 @@ def main():
         print(f"Error: Geometric CSV file not found: {geometric_csv_path}")
         sys.exit(1)
     
-    # Auto-generate output path
-    if args.output:
-        output_path = args.output
+    # Get list of vessels
+    if args.vessel_name:
+        vessel_names = [args.vessel_name]
     else:
-        output_dir = os.path.join(args.output_dir, args.set_name, args.geo_name)
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f"{args.geo_name}_inlet_comparison.png")
+        vessel_names = get_all_vessels_from_csv(geometric_csv_path)
+        print(f"\nFound {len(vessel_names)} vessels: {vessel_names}")
     
-    print(f"\nPlotting inlet comparison for {args.set_name}/{args.geo_name}")
-    print(f"  Calibration input: {calibration_input_path}")
-    print(f"  Geometric CSV: {geometric_csv_path}")
-    if isinstance(calibrated_csv_paths, dict):
-        print(f"  Calibrated CSVs:")
-        for jtype, csv_path in calibrated_csv_paths.items():
-            print(f"    {jtype}: {csv_path}")
-    else:
-        print(f"  Calibrated CSV: {calibrated_csv_paths}")
-    print(f"  Output: {output_path}")
+    # Create output directory
+    output_dir = os.path.join(args.output_dir, args.set_name, args.geo_name)
+    os.makedirs(output_dir, exist_ok=True)
     
-    success = plot_inlet_comparison(
-        calibration_input_path, geometric_csv_path, calibrated_csv_paths,
-        output_path, set_name=args.set_name, geo_name=args.geo_name,
-        time_period=args.time_period
-    )
+    # Plot for each vessel
+    success_count = 0
+    for vessel_name in vessel_names:
+        # Generate output path
+        output_path = os.path.join(output_dir, f"{vessel_name}_inlet_comparison.png")
+        
+        print(f"\n{'='*60}")
+        print(f"Processing vessel: {vessel_name}")
+        print(f"{'='*60}")
+        
+        # Find geometric input path
+        geometric_input_path = os.path.join(data_dir, 'geometric_input.json')
+        if not os.path.exists(geometric_input_path):
+            geometric_input_path = None
+        
+        success = plot_inlet_comparison(
+            calibration_input_path, geometric_csv_path, calibrated_csv_paths,
+            vessel_name, output_path, set_name=args.set_name, geo_name=args.geo_name,
+            time_period=args.time_period, geometric_input_path=geometric_input_path
+        )
+        
+        if success:
+            success_count += 1
     
-    if success:
-        print(f"\n✓ Successfully created comparison plot: {output_path}")
+    print(f"\n\n{'='*60}")
+    print(f"Summary: Created {success_count}/{len(vessel_names)} inlet comparison plots")
+    print(f"Output directory: {output_dir}")
+    print(f"{'='*60}")
+    
+    if success_count == len(vessel_names):
         sys.exit(0)
     else:
-        print(f"\n✗ Failed to create plot")
         sys.exit(1)
 
 
 if __name__ == '__main__':
     main()
-
-# python3 util/visualizations/plot_inlet_comparison.py --set-name set_3 --geo-name tree_007
 
