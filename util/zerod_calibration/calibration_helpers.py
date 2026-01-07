@@ -212,7 +212,7 @@ def update_outlet_bcs_in_file(file_path, outlet_params, file_type="calibration i
         print(f"  Warning: Could not update {file_type} file {file_path}: {e}")
         return False
 
-def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0):
+def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0, derivative_method='backward'):
     """
     Extract observation data from 1D centerline solution VTP file.
     Extracts observations at boundaries and junctions following the format expected by svZeroDCalibrator.
@@ -222,6 +222,10 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
         geometric_input_path: Path to geometric 0D input JSON (to understand vessel/junction structure)
         geo_dir: Geometry directory containing XML file (optional, will try to infer from paths)
         start_idx: Starting index for observations (default: 0). Observations will be sliced from this index.
+        derivative_method: Method for computing derivatives ('central', 'forward', or 'backward', default: 'forward').
+                          'central' uses central differences (np.gradient), 
+                          'forward' uses forward differences (f[i+1] - f[i]) / dt,
+                          'backward' uses backward differences (f[i] - f[i-1]) / dt.
         
     Returns:
         Dictionary with observation data (y, dy) for calibration
@@ -229,6 +233,8 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     print(f"Reading 1D solution from: {centerline_soln_path}")
     centerline_data, _ = read_centerline_vtp(centerline_soln_path)
     
+    # print the start index
+    print(f"  Start index for observations: {start_idx}")
     # Read geometric input to understand vessel/junction structure
     with open(geometric_input_path, 'r') as f:
         geometric_input = json.load(f)
@@ -328,7 +334,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     observations = {"y": {}, "dy": {}}
     
     # Helper function to extract and refine data at a point
-    def extract_at_point(point_idx, times, dt):
+    def extract_at_point(point_idx, times, dt, deriv_method='backward', verbose=False):
         if point_idx is None or point_idx >= len(branch_id):
             return None, None, None, None
         
@@ -342,10 +348,52 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
         pressure_refined = pressure_data.tolist()
         flow_refined = flow_data.tolist()
         
-        # Compute derivatives using numpy gradient with correct dt
+        # Compute derivatives
         if len(times) > 1:
-            pressure_der = np.gradient(pressure_data, dt).tolist()
-            flow_der = np.gradient(flow_data, dt).tolist()
+            if deriv_method == 'forward':
+                # Forward differences: df/dt ≈ (f[i+1] - f[i]) / dt
+                # For last point, use backward difference
+                if verbose:
+                    print(f"  Using forward difference method for derivatives")
+                pressure_der = np.zeros_like(pressure_data)
+                flow_der = np.zeros_like(flow_data)
+                
+                # Forward differences for all but last point
+                pressure_der[:-1] = (pressure_data[1:] - pressure_data[:-1]) / dt
+                flow_der[:-1] = (flow_data[1:] - flow_data[:-1]) / dt
+                
+                # Backward difference for last point
+                if len(pressure_data) > 1:
+                    pressure_der[-1] = (pressure_data[-1] - pressure_data[-2]) / dt
+                    flow_der[-1] = (flow_data[-1] - flow_data[-2]) / dt
+                
+                pressure_der = pressure_der.tolist()
+                flow_der = flow_der.tolist()
+            elif deriv_method == 'backward':
+                # Backward differences: df/dt ≈ (f[i] - f[i-1]) / dt
+                # For first point, use forward difference
+                if verbose:
+                    print(f"  Using backward difference method for derivatives")
+                pressure_der = np.zeros_like(pressure_data)
+                flow_der = np.zeros_like(flow_data)
+                
+                # Backward differences for all but first point
+                pressure_der[1:] = (pressure_data[1:] - pressure_data[:-1]) / dt
+                flow_der[1:] = (flow_data[1:] - flow_data[:-1]) / dt
+                
+                # Forward difference for first point
+                if len(pressure_data) > 1:
+                    pressure_der[0] = (pressure_data[1] - pressure_data[0]) / dt
+                    flow_der[0] = (flow_data[1] - flow_data[0]) / dt
+                
+                pressure_der = pressure_der.tolist()
+                flow_der = flow_der.tolist()
+            else:
+                # Central differences (default): uses np.gradient
+                if verbose:
+                    print(f"  Using central difference method for derivatives")
+                pressure_der = np.gradient(pressure_data, dt).tolist()
+                flow_der = np.gradient(flow_data, dt).tolist()
         else:
             pressure_der = [0.0] * len(pressure_refined)
             flow_der = [0.0] * len(flow_refined)
@@ -355,7 +403,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     # Extract observations at boundaries (inlet and outlets)
     # Inflow BC
     if inlet_idx is not None:
-        p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt)
+        p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt, derivative_method, verbose=False)
         if p_ref is not None:
             observations["y"][f"pressure:INFLOW:branch0_seg0"] = p_ref[start_idx:end_idx]
             observations["dy"][f"pressure:INFLOW:branch0_seg0"] = p_der[start_idx:end_idx]
@@ -388,7 +436,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                             break
                 
                 if outlet_point_idx is not None:
-                    p_ref, p_der, f_ref, f_der = extract_at_point(outlet_point_idx, times, dt)
+                    p_ref, p_der, f_ref, f_der = extract_at_point(outlet_point_idx, times, dt, derivative_method, verbose=False)
                     if p_ref is not None:
                         observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = p_ref[start_idx:end_idx]
                         observations["dy"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = p_der[start_idx:end_idx]
@@ -431,7 +479,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 # This is approximate - ideally we'd find the exact junction point
                 for i in range(len(branch_id) - 1, -1, -1):
                     if branch_id[i] == vessel_branch:
-                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt)
+                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt, derivative_method, verbose=False)
                         if p_ref is not None:
                             observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref[start_idx:end_idx]
                             observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der[start_idx:end_idx]
@@ -449,7 +497,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 # Find a point on this vessel near the junction (use first point of branch)
                 for i in range(len(branch_id)):
                     if branch_id[i] == vessel_branch:
-                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt)
+                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt, derivative_method, verbose=False)
                         if p_ref is not None:
                             observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref[start_idx:end_idx]
                             observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der[start_idx:end_idx]
@@ -457,7 +505,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                             observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
                             
                         break
-    
+
     return observations
 
 def find_inlet_outlet_caps(geo_dir):
