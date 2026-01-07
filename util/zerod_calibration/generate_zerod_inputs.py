@@ -503,10 +503,10 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     
     # Add calibration parameters
     inp["calibration_parameters"] = {
-        "tolerance_gradient": 1e-10,
+        "tolerance_gradient": 1e-4,
         "tolerance_increment": 1e-10,
         "maximum_iterations": 100,
-        "calibrate_stenosis_coefficient":True,
+        "calibrate_stenosis_coefficient":False,
         "set_capacitance_to_zero": False,
     }
     
@@ -1095,9 +1095,9 @@ def read_zerod_csv(csv_path):
     return results, sorted(times)
 
 
-def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, output_csv_path=None):
+def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, output_csv_path=None, verbose=False):
     """
-    Calculate and print Mean Absolute Error (MAE) between 3D observations and 0D solutions.
+    Calculate and print Mean Squared Error (MSE) between 3D observations and 0D solutions.
     Optionally saves results to a CSV file.
     
     Args:
@@ -1108,13 +1108,14 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         geometric_input_path: Optional path to geometric input JSON (for understanding structure)
         zoom_start_idx: Start index for zoom window (default: 599)
         zoom_end_idx: End index for zoom window (default: 699)
-        output_csv_path: Optional path to save MAE results CSV (default: auto-generate based on calibration_input_path)
+        output_csv_path: Optional path to save MSE results CSV (default: auto-generate based on calibration_input_path)
+        verbose: If True, print detailed comparison table. If False, only print summary.
     
     Returns:
-        Dictionary mapping modality names to MAE results
+        Dictionary mapping modality names to MSE results
     """
     print("\n" + "="*80)
-    print("Calculating Mean Absolute Error (MAE) between 3D and 0D solutions")
+    print("Calculating Mean Squared Error (MSE) between 3D and 0D solutions")
     print("="*80)
     
     # Read 3D observations from calibration input
@@ -1145,8 +1146,8 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         vessels = geo_input.get('vessels', [])
         junctions = geo_input.get('junctions', [])
     
-    # Calculate MAE for each modality
-    mae_results = {}
+    # Calculate MSE for each modality
+    mse_results = {}
     
     for modality_name, csv_path in csv_results_dict.items():
         if not csv_path or not os.path.exists(csv_path):
@@ -1167,11 +1168,6 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         
         # Determine zoom window - matching the shaded region in plots
         # This corresponds to the zoom window used in plot_inlet_comparison.py and plot_outlet_comparison.py
-        # Use provided values or default to hardcoded values
-        if zoom_start_idx is None:
-            zoom_start_idx = 599
-        if zoom_end_idx is None:
-            zoom_end_idx = 699
         
         # Find the maximum length of 3D observations to validate zoom window
         max_3d_length = 0
@@ -1196,10 +1192,10 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         num_zoom_timesteps = zoom_end_idx - zoom_start_idx
         print(f"    Using zoom window: timesteps {zoom_start_idx} to {zoom_end_idx-1} ({num_zoom_timesteps} timesteps)")
         
-        # Calculate MAE for each observation
-        modality_mae = {}
-        total_mae_pressure = []
-        total_mae_flow = []
+        # Calculate MSE for each observation
+        modality_mse = {}
+        total_mse_pressure = []
+        total_mse_flow = []
         
         for obs_key, obs_values_3d in obs_3d.items():
             if not isinstance(obs_values_3d, list):
@@ -1331,110 +1327,172 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             obs_values_0d_clean = obs_values_0d_clean[:min_len]
             obs_values_3d_clean = obs_values_3d_clean[:min_len]
             
-            # Calculate MAE
-            mae = np.mean(np.abs(obs_values_0d_clean - obs_values_3d_clean))
+            # Calculate MSE
+            diff = obs_values_0d_clean - obs_values_3d_clean
             
-            modality_mae[obs_key] = {
-                'mae': mae,
+            mse = np.mean(diff**2)
+            mae = np.mean(np.abs(diff))
+            
+            # Save comparison plot for debugging
+            try:
+                import matplotlib
+                matplotlib.use('Agg')  # Use non-interactive backend
+                import matplotlib.pyplot as plt
+                
+                # Create output directory for debug plots
+                base_dir = os.path.dirname(calibration_input_path)
+                debug_plots_dir = os.path.join(base_dir, 'mse_debug_plots')
+                os.makedirs(debug_plots_dir, exist_ok=True)
+                
+                # Create safe filename from observation key
+                safe_obs_key = obs_key.replace(':', '_').replace('/', '_')
+                plot_filename = f"{modality_name}_{safe_obs_key}_comparison.png"
+                plot_path = os.path.join(debug_plots_dir, plot_filename)
+                
+                # Create comparison plot
+                fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+                
+                # Plot 0D vs 3D as scatter or line plot
+                if len(obs_values_0d_clean) > 50:
+                    # For many points, use scatter
+                    ax.scatter(obs_values_3d_clean, obs_values_0d_clean, alpha=0.5, s=10, label='Data points')
+                else:
+                    # For fewer points, use line plot
+                    ax.plot(obs_values_3d_clean, obs_values_0d_clean, 'o-', alpha=0.7, markersize=4, label='Data points')
+                
+                # Add diagonal line (perfect match)
+                min_val = min(np.min(obs_values_3d_clean), np.min(obs_values_0d_clean))
+                max_val = max(np.max(obs_values_3d_clean), np.max(obs_values_0d_clean))
+                ax.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect match', alpha=0.5)
+                
+                ax.set_xlabel('3D Observations', fontsize=12)
+                ax.set_ylabel('0D Results', fontsize=12)
+                # Format MSE and MAE in engineering notation
+                ax.set_title(f'{modality_name}: {obs_key}\nMSE={mse:.3E}, MAE={mae:.3E}, n={min_len}', fontsize=10)
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+                
+                plt.tight_layout()
+                plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+                plt.close()
+            except Exception as e:
+                pass  # Silently fail if plotting is not available
+            
+            modality_mse[obs_key] = {
+                'mse': mse,
                 'type': obs_type,
                 'vessel': vessel_name,
                 'n_points': min_len
             }
             
             if obs_type == 'pressure':
-                total_mae_pressure.append(mae)
+                total_mse_pressure.append(mse)
             else:
-                total_mae_flow.append(mae)
+                total_mse_flow.append(mse)
         
         # Store results
-        mae_results[modality_name] = {
-            'individual': modality_mae,
-            'mean_pressure_mae': np.mean(total_mae_pressure) if total_mae_pressure else np.nan,
-            'mean_flow_mae': np.mean(total_mae_flow) if total_mae_flow else np.nan,
-            'overall_mae': np.mean(total_mae_pressure + total_mae_flow) if (total_mae_pressure or total_mae_flow) else np.nan
+        mse_results[modality_name] = {
+            'individual': modality_mse,
+            'mean_pressure_mse': np.mean(total_mse_pressure) if total_mse_pressure else np.nan,
+            'mean_flow_mse': np.mean(total_mse_flow) if total_mse_flow else np.nan,
+            'overall_mse': np.mean(total_mse_pressure + total_mse_flow) if (total_mse_pressure or total_mse_flow) else np.nan
         }
         
-        # Print summary
-        print(f"    Calculated MAE for {len(modality_mae)} observation series")
-        if total_mae_pressure:
-            print(f"    Mean Pressure MAE: {np.mean(total_mae_pressure):.6f}")
-        if total_mae_flow:
-            print(f"    Mean Flow MAE: {np.mean(total_mae_flow):.6f}")
-        if total_mae_pressure or total_mae_flow:
-            print(f"    Overall MAE: {np.mean(total_mae_pressure + total_mae_flow):.6f}")
+        # Print summary (only in verbose mode)
+        if verbose:
+            print(f"    Calculated MSE for {len(modality_mse)} observation series")
+            if total_mse_pressure:
+                print(f"    Mean Pressure MSE: {np.mean(total_mse_pressure):.3E}")
+            if total_mse_flow:
+                print(f"    Mean Flow MSE: {np.mean(total_mse_flow):.3E}")
+            if total_mse_pressure or total_mse_flow:
+                print(f"    Overall MSE: {np.mean(total_mse_pressure + total_mse_flow):.3E}")
     
-    # Print detailed comparison table
-    print("\n" + "="*80)
-    print("Detailed MAE Comparison")
-    print("="*80)
-    
-    # Get all observation keys
+    # Get all observation keys and modalities for summary
     all_obs_keys = set()
-    for modality_results in mae_results.values():
+    for modality_results in mse_results.values():
         all_obs_keys.update(modality_results['individual'].keys())
     
     if not all_obs_keys:
-        print("  No observations found for comparison")
-        return mae_results
+        if verbose:
+            print("  No observations found for comparison")
+        return mse_results
     
-    # Print header
     modalities = list(csv_results_dict.keys())
-    print(f"\n{'Observation':<40} {'Type':<10} ", end="")
+    
+    # Print detailed comparison table (only in verbose mode)
+    if verbose:
+        print("\n" + "="*80)
+        print("Detailed MSE Comparison")
+        print("="*80)
+        
+        # Print header
+        print(f"\n{'Observation':<40} {'Type':<10} ", end="")
+        for mod in modalities:
+            if mod in mse_results:
+                print(f"{mod:<15} ", end="")
+        print()
+        print("-" * (50 + 15 * len([m for m in modalities if m in mse_results])))
+        
+        # Print each observation
+        for obs_key in sorted(all_obs_keys):
+            # Truncate long keys for display
+            display_key = obs_key[:38] + ".." if len(obs_key) > 40 else obs_key
+            
+            # Get type from first available result
+            obs_type = "unknown"
+            for modality_results in mse_results.values():
+                if obs_key in modality_results['individual']:
+                    obs_type = modality_results['individual'][obs_key]['type']
+                    break
+            
+            print(f"{display_key:<40} {obs_type:<10} ", end="")
+            for mod in modalities:
+                if mod in mse_results and obs_key in mse_results[mod]['individual']:
+                    mse_val = mse_results[mod]['individual'][obs_key]['mse']
+                    print(f"{mse_val:>13.3E}  ", end="")
+                else:
+                    print(f"{'N/A':>13}  ", end="")
+            print()
+        
+        print("\n" + "-" * (50 + 15 * len([m for m in modalities if m in mse_results])))
+    
+    # Always print summary statistics with column headers
+    # Print header row
+    print(f"{'':<40} {'':<10} ", end="")
     for mod in modalities:
-        if mod in mae_results:
+        if mod in mse_results:
             print(f"{mod:<15} ", end="")
     print()
-    print("-" * (50 + 15 * len([m for m in modalities if m in mae_results])))
+    print("-" * (50 + 15 * len([m for m in modalities if m in mse_results])))
     
-    # Print each observation
-    for obs_key in sorted(all_obs_keys):
-        # Truncate long keys for display
-        display_key = obs_key[:38] + ".." if len(obs_key) > 40 else obs_key
-        
-        # Get type from first available result
-        obs_type = "unknown"
-        for modality_results in mae_results.values():
-            if obs_key in modality_results['individual']:
-                obs_type = modality_results['individual'][obs_key]['type']
-                break
-        
-        print(f"{display_key:<40} {obs_type:<10} ", end="")
-        for mod in modalities:
-            if mod in mae_results and obs_key in mae_results[mod]['individual']:
-                mae_val = mae_results[mod]['individual'][obs_key]['mae']
-                print(f"{mae_val:>13.6f}  ", end="")
-            else:
-                print(f"{'N/A':>13}  ", end="")
-        print()
-    
-    # Print summary statistics
-    print("\n" + "-" * (50 + 15 * len([m for m in modalities if m in mae_results])))
+    # Print summary rows
     print(f"{'SUMMARY':<40} {'':<10} ", end="")
     for mod in modalities:
-        if mod in mae_results:
-            overall = mae_results[mod]['overall_mae']
+        if mod in mse_results:
+            overall = mse_results[mod]['overall_mse']
             if not np.isnan(overall):
-                print(f"{overall:>13.6f}  ", end="")
+                print(f"{overall:>13.3E}  ", end="")
             else:
                 print(f"{'N/A':>13}  ", end="")
     print()
     
-    print(f"{'Mean Pressure MAE':<40} {'':<10} ", end="")
+    print(f"{'Mean Pressure MSE':<40} {'':<10} ", end="")
     for mod in modalities:
-        if mod in mae_results:
-            mae_p = mae_results[mod]['mean_pressure_mae']
-            if not np.isnan(mae_p):
-                print(f"{mae_p:>13.6f}  ", end="")
+        if mod in mse_results:
+            mse_p = mse_results[mod]['mean_pressure_mse']
+            if not np.isnan(mse_p):
+                print(f"{mse_p:>13.3E}  ", end="")
             else:
                 print(f"{'N/A':>13}  ", end="")
     print()
     
-    print(f"{'Mean Flow MAE':<40} {'':<10} ", end="")
+    print(f"{'Mean Flow MSE':<40} {'':<10} ", end="")
     for mod in modalities:
-        if mod in mae_results:
-            mae_f = mae_results[mod]['mean_flow_mae']
-            if not np.isnan(mae_f):
-                print(f"{mae_f:>13.6f}  ", end="")
+        if mod in mse_results:
+            mse_f = mse_results[mod]['mean_flow_mse']
+            if not np.isnan(mse_f):
+                print(f"{mse_f:>13.3E}  ", end="")
             else:
                 print(f"{'N/A':>13}  ", end="")
     print()
@@ -1444,7 +1502,7 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         # Auto-generate CSV path based on calibration input path
         base_dir = os.path.dirname(calibration_input_path)
         base_name = os.path.basename(calibration_input_path).replace('.json', '')
-        output_csv_path = os.path.join(base_dir, f'{base_name}_mae_comparison.csv')
+        output_csv_path = os.path.join(base_dir, f'{base_name}_mse_comparison.csv')
     
     try:
         os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
@@ -1454,7 +1512,7 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             writer = csv.writer(f)
             
             # Write header
-            writer.writerow(['MAE Comparison Results'])
+            writer.writerow(['MSE Comparison Results'])
             writer.writerow(['Zoom Window', f'{zoom_start_idx} to {zoom_end_idx-1}'])
             writer.writerow([])
             
@@ -1462,39 +1520,39 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             writer.writerow(['Summary Statistics'])
             writer.writerow(['Metric'] + modalities)
             
-            # Overall MAE
-            row = ['Overall MAE']
+            # Overall MSE
+            row = ['Overall MSE']
             for mod in modalities:
-                if mod in mae_results:
-                    overall = mae_results[mod]['overall_mae']
+                if mod in mse_results:
+                    overall = mse_results[mod]['overall_mse']
                     if not np.isnan(overall):
-                        row.append(f'{overall:.6f}')
+                        row.append(f'{overall:.3E}')
                     else:
                         row.append('N/A')
                 else:
                     row.append('N/A')
             writer.writerow(row)
             
-            # Mean Pressure MAE
-            row = ['Mean Pressure MAE']
+            # Mean Pressure MSE
+            row = ['Mean Pressure MSE']
             for mod in modalities:
-                if mod in mae_results:
-                    mae_p = mae_results[mod]['mean_pressure_mae']
-                    if not np.isnan(mae_p):
-                        row.append(f'{mae_p:.6f}')
+                if mod in mse_results:
+                    mse_p = mse_results[mod]['mean_pressure_mse']
+                    if not np.isnan(mse_p):
+                        row.append(f'{mse_p:.3E}')
                     else:
                         row.append('N/A')
                 else:
                     row.append('N/A')
             writer.writerow(row)
             
-            # Mean Flow MAE
-            row = ['Mean Flow MAE']
+            # Mean Flow MSE
+            row = ['Mean Flow MSE']
             for mod in modalities:
-                if mod in mae_results:
-                    mae_f = mae_results[mod]['mean_flow_mae']
-                    if not np.isnan(mae_f):
-                        row.append(f'{mae_f:.6f}')
+                if mod in mse_results:
+                    mse_f = mse_results[mod]['mean_flow_mse']
+                    if not np.isnan(mse_f):
+                        row.append(f'{mse_f:.3E}')
                     else:
                         row.append('N/A')
                 else:
@@ -1510,7 +1568,7 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 # Get type and vessel from first available result
                 obs_type = "unknown"
                 vessel_name = "unknown"
-                for modality_results in mae_results.values():
+                for modality_results in mse_results.values():
                     if obs_key in modality_results['individual']:
                         obs_type = modality_results['individual'][obs_key]['type']
                         vessel_name = modality_results['individual'][obs_key].get('vessel', 'unknown')
@@ -1518,21 +1576,21 @@ def calculate_mae_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 
                 row = [obs_key, obs_type, vessel_name]
                 for mod in modalities:
-                    if mod in mae_results and obs_key in mae_results[mod]['individual']:
-                        mae_val = mae_results[mod]['individual'][obs_key]['mae']
-                        row.append(f'{mae_val:.6f}')
+                    if mod in mse_results and obs_key in mse_results[mod]['individual']:
+                        mse_val = mse_results[mod]['individual'][obs_key]['mse']
+                        row.append(f'{mse_val:.3E}')
                     else:
                         row.append('N/A')
                 writer.writerow(row)
         
-        print(f"\n  ✓ MAE results saved to: {output_csv_path}")
+        print(f"\n  ✓ MSE results saved to: {output_csv_path}")
         
     except Exception as e:
-        print(f"  ✗ Warning: Could not save MAE results to CSV: {e}")
+        print(f"  ✗ Warning: Could not save MSE results to CSV: {e}")
         import traceback
         traceback.print_exc()
     
-    return mae_results
+    return mse_results
 
 
 def main():
@@ -1570,10 +1628,12 @@ def main():
     parser.add_argument('--zoom-end', type=int, default=699,
                        help='End index for zoom window (shaded region in plots). Default: 699')
     parser.add_argument('--skip-plots', action='store_true',
-                       help='Skip generating comparison plots')
+                        help='Skip generating comparison plots')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Print detailed MSE comparison table')
     
     args = parser.parse_args()
-    verbose = False
+    verbose = args.verbose
     # Construct paths
     base_dir = os.path.join(args.output_dir, args.set_name, args.geo_name)
     geometric_input_path = os.path.join(base_dir, 'geometric_input.json')
@@ -1635,6 +1695,7 @@ def main():
         print("="*60)
         
         if args.one_d_soln:
+            print(f"  Start index for observations: {args.start_idx}")
             observations = extract_observations_from_1d(args.one_d_soln, geometric_input_path, geo_dir=geo_dir, start_idx=args.start_idx)
         elif args.three_d_soln_dir:
             raise NotImplementedError("3D solution extraction not yet implemented")
@@ -1731,20 +1792,6 @@ def main():
             print("Step 3: Running calibration for each junction type")
             print("="*60)
             
-            # First run calibration with base (BloodVesselJunction) input
-            calibrated_output_path = os.path.join(base_dir, 'calibrated_output.json')
-            
-            try:
-                calibrated_input = run_calibration(calibration_input_path, calibrated_output_path)
-                print(f"  ✓ Base calibration completed")
-                # Replace inlet BC with original observed BC
-                replace_inlet_bc_in_calibrated_output(calibrated_output_path, calibration_input_path)
-                # Update outlet BCs with fitted values
-                update_outlet_bcs_in_file(calibrated_output_path, fitted_resistances, "base calibrated output")
-            except Exception as e:
-                print(f"  ✗ Base calibration failed: {e}")
-                import traceback
-                traceback.print_exc()
             
             # Run calibration for each junction type variant
             for jtype in args.junction_types:
@@ -1791,10 +1838,10 @@ def main():
                     import traceback
                     traceback.print_exc()
     
-    # Step 4: Calculate and print MAE between 3D and 0D solutions
+    # Step 4: Calculate and print MSE between 3D and 0D solutions
     if not args.skip_calibration:
         print("\n" + "="*60)
-        print("Step 4: Calculating MAE between 3D and 0D solutions")
+        print("Step 4: Calculating MSE between 3D and 0D solutions")
         print("="*60)
         
         # Build dictionary of CSV results for all modalities
@@ -1813,21 +1860,22 @@ def main():
         if csv_results_dict and os.path.exists(calibration_input_path):
             try:
                 # Generate CSV output path
-                mae_csv_path = os.path.join(base_dir, 'mae_comparison.csv')
-                calculate_mae_between_3d_and_0d(
+                mse_csv_path = os.path.join(base_dir, 'mse_comparison.csv')
+                calculate_mse_between_3d_and_0d(
                     calibration_input_path,
                     csv_results_dict,
                     geometric_input_path=geometric_input_path,
                     zoom_start_idx=args.zoom_start,
                     zoom_end_idx=args.zoom_end,
-                    output_csv_path=mae_csv_path
+                    output_csv_path=mse_csv_path,
+                    verbose=verbose
                 )
             except Exception as e:
-                print(f"  ✗ Error calculating MAE: {e}")
+                print(f"  ✗ Error calculating MSE: {e}")
                 import traceback
                 traceback.print_exc()
         else:
-            print("  Skipping MAE calculation (missing calibration input or CSV results)")
+            print("  Skipping MSE calculation (missing calibration input or CSV results)")
         
         # Step 5: Generate comparison plots
         if not args.skip_plots:

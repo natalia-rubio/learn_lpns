@@ -438,6 +438,9 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     # Share x-axis within zoomed plots and within full plots
     axes[0].sharex(axes[1])
     axes[2].sharex(axes[3])
+    # Ensure x-axis ticks are visible on flow plots (bottom plots in each pair)
+    axes[1].tick_params(labelbottom=True)  # Show x-axis ticks on zoomed flow plot
+    axes[3].tick_params(labelbottom=True)  # Show x-axis ticks on full flow plot
     
     # Define colors and linestyles for different junction types
     junction_styles = {
@@ -621,6 +624,7 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
     ax.set_xlim(zoom_times[0] if len(zoom_times) > 0 else None, zoom_times[-1] if len(zoom_times) > 0 else None)
     ax.set_xticklabels([])  # Remove x-axis labels (shares axis with flow plot below)
+    ax.tick_params(axis='x', bottom=False, labelbottom=False)  # Remove x-axis ticks and labels
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Plot 2: Zoomed flow
@@ -628,7 +632,32 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     plot_flow_data(ax, zoom_times, flows_3d_zoom, zoom_times, flows_geo_zoom, 
                    calibrated_results_zoom, junction_styles, set_ylim_from_3d=False)
     ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
+    # Set x-axis limits to match zoom data range
+    if len(zoom_times) > 0:
+        ax.set_xlim(zoom_times[0], zoom_times[-1])
+    # No x-axis label for zoomed plot (only on full plot)
+    # Force x-axis tick labels to be visible (shared axes can hide them)
+    ax.tick_params(axis='x', labelbottom=True, bottom=True, labelsize=20)
+    ax.xaxis.set_tick_params(labelbottom=True)
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    
+    # Collect all time values to determine full data range
+    all_times = []
+    if times_3d_sec is not None:
+        all_times.extend(times_3d_sec)
+    if times_geo is not None:
+        all_times.extend(times_geo)
+    for data in calibrated_results.values():
+        if data['times'] is not None:
+            all_times.extend(data['times'])
+    
+    # Determine full time range
+    if len(all_times) > 0:
+        time_min = np.min(all_times)
+        time_max = np.max(all_times)
+    else:
+        time_min = times_geo[0] if len(times_geo) > 0 else 0.0
+        time_max = times_geo[-1] if len(times_geo) > 0 else 1.0
     
     # Plot 3: Full pressure
     ax = axes[2]
@@ -638,7 +667,10 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     plot_pressure_data(ax, times_3d_sec, pressures_3d_mmhg, times_geo, pressures_geo_mmhg, 
                       calibrated_results, junction_styles, set_ylim_from_3d=True)
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
+    # Set x-axis limits to match full data range
+    ax.set_xlim(time_min, time_max)
     ax.set_xticklabels([])  # Remove x-axis labels (shares axis with flow plot below)
+    ax.tick_params(axis='x', bottom=False, labelbottom=False)  # Remove x-axis ticks and labels
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Plot 4: Full flow (bottom)
@@ -650,6 +682,11 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
                   calibrated_results, junction_styles, set_ylim_from_3d=True)
     ax.set_xlabel(r'Time (s)', fontsize=24)
     ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
+    # Set x-axis limits to match full data range
+    ax.set_xlim(time_min, time_max)
+    # Force x-axis tick labels to be visible (shared axes can hide them)
+    ax.tick_params(axis='x', labelbottom=True, bottom=True)
+    ax.xaxis.set_tick_params(labelbottom=True)
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Create single legend above the top subplot title
@@ -687,6 +724,20 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     # Position legend slightly below the title
     fig.legend(unique_handles, unique_labels, loc='upper center', ncol=3, 
                bbox_to_anchor=(0.5, 0.97), fontsize=24, frameon=True)
+    
+    # Ensure x-axis tick labels are visible on flow plots (after all plotting is done)
+    # This is critical because shared axes can hide tick labels
+    # Explicitly show tick labels and format them with font size 20
+    for ax_idx in [1, 3]:
+        axes[ax_idx].tick_params(axis='x', labelbottom=True, bottom=True, labelsize=20)
+        axes[ax_idx].xaxis.set_tick_params(labelbottom=True)
+        # Force tick labels to be visible by setting them explicitly
+        axes[ax_idx].xaxis.set_visible(True)
+        # Get current ticks and ensure labels are shown
+        locs = axes[ax_idx].xaxis.get_majorticklocs()
+        if len(locs) > 0:
+            axes[ax_idx].xaxis.set_ticks(locs)
+            axes[ax_idx].xaxis.set_ticklabels([f'{loc:.2f}' for loc in locs], fontsize=20)
     
     # Save plot
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
