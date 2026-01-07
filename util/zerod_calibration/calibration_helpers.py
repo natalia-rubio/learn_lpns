@@ -9,10 +9,208 @@ import numpy as np
 import xml.etree.ElementTree as ET
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 import json
+try:
+    from scipy.interpolate import CubicSpline, interp1d
+    HAS_SCIPY_INTERP = True
+except (ImportError, ValueError, AttributeError):
+    # Handle import errors and version incompatibility issues
+    HAS_SCIPY_INTERP = False
+    try:
+        from scipy.interpolate import CubicSpline
+    except (ImportError, ValueError, AttributeError):
+        CubicSpline = None
 
+def replace_inlet_bc_in_calibrated_output(calibrated_output_path, calibration_input_path):
+    """
+    Replace the inlet boundary condition in calibrated output with the original observed BC from calibration input.
+    
+    Args:
+        calibrated_output_path: Path to calibrated output JSON file
+        calibration_input_path: Path to calibration input JSON file (contains observed_inflow_bc)
+        
+    Returns:
+        True if BC was replaced, False otherwise
+    """
+    # Read calibration input to get original observed BC
+    if not os.path.exists(calibration_input_path):
+        print(f"  Warning: Calibration input not found at {calibration_input_path}")
+        return False
+    
+    with open(calibration_input_path, 'r') as f:
+        calib_input = json.load(f)
+    
+    original_bc_values = calib_input.get('observed_inflow_bc')
+    if original_bc_values is None or 't' not in original_bc_values or 'Q' not in original_bc_values:
+        print("  Warning: No observed_inflow_bc found in calibration input, keeping calibrated output BC")
+        return False
+    
+    # Read calibrated output
+    if not os.path.exists(calibrated_output_path):
+        print(f"  Warning: Calibrated output not found at {calibrated_output_path}")
+        return False
+    
+    with open(calibrated_output_path, 'r') as f:
+        calibrated_output = json.load(f)
+    
+    # Find and update the INFLOW BC
+    bc_found = False
+    for bc in calibrated_output.get('boundary_conditions', []):
+        if bc.get('bc_name') == 'INFLOW':
+            bc['bc_values'] = {
+                't': original_bc_values['t'].copy() if isinstance(original_bc_values['t'], list) else original_bc_values['t'].tolist(),
+                'Q': original_bc_values['Q'].copy() if isinstance(original_bc_values['Q'], list) else original_bc_values['Q'].tolist()
+            }
+            bc_found = True
+            print(f"  Replaced INFLOW BC with original observed BC")
+            print(f"    Time points: {len(bc['bc_values']['t'])}")
+            print(f"    Time range: [{bc['bc_values']['t'][0]:.6f}, {bc['bc_values']['t'][-1]:.6f}] s")
+            break
+    
+    if not bc_found:
+        # Add inflow BC if it doesn't exist
+        if 'boundary_conditions' not in calibrated_output:
+            calibrated_output['boundary_conditions'] = []
+        calibrated_output['boundary_conditions'].append({
+            'bc_name': 'INFLOW',
+            'bc_type': 'FLOW',
+            'bc_values': {
+                't': original_bc_values['t'].copy() if isinstance(original_bc_values['t'], list) else original_bc_values['t'].tolist(),
+                'Q': original_bc_values['Q'].copy() if isinstance(original_bc_values['Q'], list) else original_bc_values['Q'].tolist()
+            }
+        })
+        print(f"  Added INFLOW BC with original observed BC")
+        print(f"    Time points: {len(calibrated_output['boundary_conditions'][-1]['bc_values']['t'])}")
+    
 
+    # Write updated calibrated output
+    with open(calibrated_output_path, 'w') as f:
+        json.dump(calibrated_output, f, indent=4)
+    
+    return True
 
+def update_geometric_input_with_calibration_bc(geometric_input_path, calibration_input_path):
+    """
+    Update geometric_input.json with inflow BC from calibration_input.json.
+    Uses the full time frame (not the second half used for calibration).
+    
+    Args:
+        geometric_input_path: Path to geometric input JSON
+        calibration_input_path: Path to calibration input JSON
+    """
+    print(f"\nUpdating geometric input with inflow BC from calibration input...")
+    
+    if not os.path.exists(calibration_input_path):
+        print(f"  Warning: Calibration input not found at {calibration_input_path}")
+        return False
+    
+    # Read calibration input
+    with open(calibration_input_path, 'r') as f:
+        calib_data = json.load(f)
+    
+    # Use full BC if available (stored for forward simulations), otherwise use calibration BC
+    if '_full_bc_for_forward_sim' in calib_data:
+        # Use full time frame for forward simulations
+        calib_inflow_bc = calib_data['_full_bc_for_forward_sim'].copy()
+        print(f"  Using full time frame from calibration input (for forward simulations)")
+    else:
+        # Fallback: extract from boundary conditions (this would be second half)
+        calib_inflow_bc = None
+        for bc in calib_data.get('boundary_conditions', []):
+            if bc.get('bc_name') == 'INFLOW':
+                calib_inflow_bc = bc.get('bc_values', {})
+                break
+        if not calib_inflow_bc:
+            print(f"  Warning: Could not find INFLOW BC in calibration input")
+            return False
+        print(f"  Warning: Full BC not found, using calibration BC (may be second half)")
+    
+    # Read geometric input
+    with open(geometric_input_path, 'r') as f:
+        geo_input = json.load(f)
+    
+    # Refine inlet BC for forward simulation (halve timestep size, interpolate flow)
+    refined_bc = calib_inflow_bc #  refine_inlet_bc_for_forward_simulation(calib_inflow_bc)
+    
+    # Update inflow BC
+    geo_updated = False
+    n_pts_inflow = len(refined_bc.get('t', []))
+    for bc in geo_input.get('boundary_conditions', []):
+        if bc.get('bc_name') == 'INFLOW':
+            bc['bc_values'] = refined_bc.copy()
+            geo_updated = True
+            print(f"  Updated geometric input INFLOW BC (refined for forward simulation):")
+            print(f"    Original number of time points: {len(calib_inflow_bc.get('t', []))}")
+            print(f"    Refined number of time points: {n_pts_inflow}")
+            if refined_bc.get('t'):
+                print(f"    Time range: [{refined_bc['t'][0]:.6f}, {refined_bc['t'][-1]:.6f}]")
+            if refined_bc.get('Q'):
+                print(f"    Flow range: [{min(refined_bc['Q']):.3f}, {max(refined_bc['Q']):.3f}]")
+            break
 
+    # Ensure simulation_parameters.number_of_time_pts_per_cardiac_cycle
+    # matches the length of the refined inflow BC time series
+    if geo_updated and 'simulation_parameters' in geo_input:
+        geo_input['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = n_pts_inflow
+        
+        print(f"  Updated simulation_parameters.number_of_time_pts_per_cardiac_cycle to {n_pts_inflow}")
+    
+    if geo_updated:
+        # Write updated geometric input
+        with open(geometric_input_path, 'w') as f:
+            json.dump(geo_input, f, indent=4)
+        print(f"  Saved updated geometric input to: {geometric_input_path}")
+        return True
+    else:
+        print(f"  Warning: Could not find INFLOW BC in geometric input to update")
+        return False
+
+def update_outlet_bcs_in_file(file_path, outlet_params, file_type="calibration input"):
+    """
+    Update outlet boundary conditions (R and Pd) in a JSON file using fitted parameters.
+    
+    Args:
+        file_path: Path to JSON file to update (calibration input or calibrated output)
+        outlet_params: Dictionary mapping BC names to (R, Pd) tuples
+        file_type: String describing file type (for logging)
+    
+    Returns:
+        True if file was updated, False otherwise
+    """
+    if not os.path.exists(file_path):
+        print(f"  Warning: {file_type} file not found: {file_path}")
+        return False
+    
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+        
+        updated_count = 0
+        # Find and update outlet BCs
+        for bc in data.get('boundary_conditions', []):
+            if bc.get('bc_type') == 'RESISTANCE':
+                bc_name = bc.get('bc_name')
+                if bc_name in outlet_params:
+                    resistance, pd = outlet_params[bc_name]
+                    old_r = bc['bc_values'].get('R', 1.0)
+                    old_pd = bc['bc_values'].get('Pd', 0.0)
+                    bc['bc_values']['R'] = resistance
+                    bc['bc_values']['Pd'] = pd
+                    updated_count += 1
+                    print(f"    {bc_name}: R {old_r:.4f} -> {resistance:.4f}, Pd {old_pd:.4f} -> {pd:.4f}")
+        
+        if updated_count > 0:
+            # Write updated file
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=4)
+            print(f"  ✓ Updated {updated_count} outlet BC(s) in {file_type}: {file_path}")
+            return True
+        else:
+            print(f"  No outlet BCs found to update in {file_type}: {file_path}")
+            return False
+            
+    except Exception as e:
+        print(f"  Warning: Could not update {file_type} file {file_path}: {e}")
+        return False
 
 def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0):
     """
@@ -44,7 +242,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     # Find all timestep arrays
     pressure_timesteps = []
     flow_timesteps = []
-    end_idx = -50
+    end_idx = -1
     
     for key in centerline_data.keys():
         if key.startswith('pressure_'):
@@ -759,3 +957,169 @@ def convert_numpy_to_list(obj):
         return [convert_numpy_to_list(item) for item in obj]
     else:
         return obj
+
+
+def verify_inlet_flow_matches_bc(input_data, results, inlet_vessel_name='branch0_seg0'):
+    """
+    Verify that the inlet flow in simulation results matches the boundary condition.
+    
+    Args:
+        input_data: Input JSON data (contains BC)
+        results: Simulation results dictionary or CSV path
+        inlet_vessel_name: Name of inlet vessel
+        
+    Returns:
+        True if matches (within tolerance), False otherwise
+    """
+    # Extract BC flow values
+    bc_times = None
+    bc_flows = None
+    for bc in input_data.get('boundary_conditions', []):
+        if bc.get('bc_name') == 'INFLOW':
+            bc_values = bc.get('bc_values', {})
+            bc_times = bc_values.get('t', [])
+            bc_flows = bc_values.get('Q', [])
+            break
+    
+    if bc_times is None or bc_flows is None:
+        print("  Warning: Could not find INFLOW BC in input data")
+        return False
+    
+    # Extract inlet flow from results
+    if isinstance(results, str):
+        # Results is a CSV path, read it
+        import csv
+        inlet_flows = []
+        result_times = []
+        with open(results, 'r') as f:
+            reader = csv.DictReader(f)
+            # Check which column name is used for vessel identifier by reading fieldnames
+            fieldnames = reader.fieldnames
+            if fieldnames is None:
+                print("  Warning: Could not read CSV fieldnames")
+                return False
+            
+            # Determine vessel identifier column name
+            vessel_id_col = None
+            if 'location' in fieldnames:
+                vessel_id_col = 'location'
+            elif 'name' in fieldnames:
+                vessel_id_col = 'name'
+            else:
+                print("  Warning: Could not find 'location' or 'name' column in CSV")
+                print(f"    Available columns: {fieldnames}")
+                return False
+            
+            # Process all rows
+            for row in reader:
+                if row.get(vessel_id_col) == inlet_vessel_name:
+                    result_times.append(float(row['time']))
+                    inlet_flows.append(float(row['flow_in']))
+    else:
+        # Results is a dictionary from pysvzerod
+        names = results.get('name', [])
+        times = results.get('time', [])
+        flow_in = results.get('flow_in', [])
+        
+        inlet_flows = []
+        result_times = []
+        for i, name in enumerate(names):
+            if name == inlet_vessel_name:
+                result_times.append(times[i] if i < len(times) else 0.0)
+                inlet_flows.append(flow_in[i] if i < len(flow_in) else 0.0)
+    
+    if not inlet_flows:
+        print(f"  Warning: Could not find inlet flow for vessel '{inlet_vessel_name}' in results")
+        return False
+    
+    # Interpolate BC flows to match result times
+    if HAS_SCIPY_INTERP:
+        from scipy.interpolate import interp1d
+        try:
+            interp_func = interp1d(bc_times, bc_flows, kind='linear', 
+                                  bounds_error=False, fill_value='extrapolate')
+            bc_flows_interp = [float(interp_func(t)) for t in result_times]
+        except:
+            bc_flows_interp = np.interp(result_times, bc_times, bc_flows).tolist()
+    else:
+        bc_flows_interp = np.interp(result_times, bc_times, bc_flows).tolist()
+    
+    # Compare
+    max_diff = 0.0
+    max_diff_time = None
+    tolerance = 1e-3  # Allow small numerical differences
+    
+    for i, (result_flow, bc_flow) in enumerate(zip(inlet_flows, bc_flows_interp)):
+        diff = abs(result_flow - bc_flow)
+        if diff > max_diff:
+            max_diff = diff
+            max_diff_time = result_times[i] if i < len(result_times) else None
+    
+    if max_diff > tolerance:
+        print(f"  ⚠ WARNING: Inlet flow does not match BC!")
+        print(f"    Maximum difference: {max_diff:.6f} cm³/s at t={max_diff_time:.3f}")
+        print(f"    BC flow range: [{min(bc_flows):.2f}, {max(bc_flows):.2f}] cm³/s")
+        print(f"    Result flow range: [{min(inlet_flows):.2f}, {max(inlet_flows):.2f}] cm³/s")
+        print(f"    This may indicate convergence issues or BC application problems")
+        return False
+    else:
+        print(f"  ✓ Verified: Inlet flow matches BC (max diff: {max_diff:.6e} cm³/s)")
+        return True
+
+
+def convert_simulation_results_to_csv(sim_results, output_csv_path):
+    """
+    Convert pysvzerod simulation results to CSV format.
+    
+    Args:
+        sim_results: Dictionary returned by pysvzerod.simulate()
+        output_csv_path: Path to save CSV file
+        
+    Returns:
+        Path to saved CSV file
+    """
+    import csv
+    
+    # CSV format: location, time, flow_in, flow_out, pressure_in, pressure_out
+    rows = []
+    rows.append(["location", "time", "flow_in", "flow_out", "pressure_in", "pressure_out"])
+    
+    # Extract data from simulation results
+    # Results are typically arrays where each index corresponds to a (vessel, time) pair
+    if 'name' in sim_results and 'time' in sim_results:
+        names = np.array(sim_results['name']) if isinstance(sim_results['name'], list) else sim_results['name']
+        times = np.array(sim_results['time']) if isinstance(sim_results['time'], list) else sim_results['time']
+        flow_in = np.array(sim_results.get('flow_in', [])) if isinstance(sim_results.get('flow_in', []), list) else sim_results.get('flow_in', np.array([]))
+        flow_out = np.array(sim_results.get('flow_out', [])) if isinstance(sim_results.get('flow_out', []), list) else sim_results.get('flow_out', np.array([]))
+        pressure_in = np.array(sim_results.get('pressure_in', [])) if isinstance(sim_results.get('pressure_in', []), list) else sim_results.get('pressure_in', np.array([]))
+        pressure_out = np.array(sim_results.get('pressure_out', [])) if isinstance(sim_results.get('pressure_out', []), list) else sim_results.get('pressure_out', np.array([]))
+        
+        # Convert to numpy arrays for easier handling
+        if not isinstance(names, np.ndarray):
+            names = np.array(names)
+        if not isinstance(times, np.ndarray):
+            times = np.array(times)
+        
+        # Write all data points
+        num_points = len(names) if len(names) > 0 else len(times)
+        for i in range(num_points):
+            if i < len(names) and i < len(times):
+                row = [
+                    str(names[i]) if i < len(names) else "unknown",
+                    str(float(times[i])) if i < len(times) else "0.0",
+                    str(float(flow_in[i])) if i < len(flow_in) else "0.0",
+                    str(float(flow_out[i])) if i < len(flow_out) else "0.0",
+                    str(float(pressure_in[i])) if i < len(pressure_in) else "0.0",
+                    str(float(pressure_out[i])) if i < len(pressure_out) else "0.0"
+                ]
+                rows.append(row)
+    
+    # Write CSV file
+    os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
+    with open(output_csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerows(rows)
+    
+    print(f"Simulation results saved to: {output_csv_path}")
+    return output_csv_path
+
