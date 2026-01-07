@@ -10,6 +10,12 @@ import argparse
 import json
 import csv
 import numpy as np
+import warnings
+
+# Suppress matplotlib warnings about redundant linestyle
+warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
+warnings.filterwarnings('ignore', message='.*linestyle.*redundantly defined.*')
+warnings.filterwarnings('ignore', message='.*linestyle.*keyword argument.*')
 
 # Check for matplotlib
 HAS_MATPLOTLIB = False
@@ -308,7 +314,7 @@ def is_terminal_vessel(vessel_name, geometric_input_path=None, calibration_input
 
 def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrated_csv_paths,
                           vessel_name, output_path, set_name=None, geo_name=None, time_period=None,
-                          geometric_input_path=None):
+                          geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, verbose=False):
     """
     Plot outlet pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models
     for a specific vessel.
@@ -323,24 +329,29 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
         geo_name: Geometry name (for finding time period)
         time_period: Time period in seconds (if None, will try to find from XML)
     """
-    print(f"Plotting outlet comparison for {vessel_name}...")
+    if verbose:
+        print(f"Plotting outlet comparison for {vessel_name}...")
     
     if not HAS_MATPLOTLIB:
         print("Error: matplotlib is required but not available.")
         return False
+    
     
     # Get time period
     if time_period is None and set_name is not None and geo_name is not None:
         time_period = get_time_period(set_name, geo_name)
     
     if time_period is None:
-        print("  Warning: Could not determine time period, using default 1.0 s")
+        if verbose:
+            print("  Warning: Could not determine time period, using default 1.0 s")
         time_period = 1.0
     else:
-        print(f"  Time period: {time_period:.4f} s")
+        if verbose:
+            print(f"  Time period: {time_period:.4f} s")
     
     # Extract geometric 0D results
-    print(f"\nExtracting geometric 0D results for {vessel_name}...")
+    if verbose:
+        print(f"\nExtracting geometric 0D results for {vessel_name}...")
     times_geo, pressures_geo, flows_geo = extract_outlet_data_from_csv(geometric_csv_path, vessel_name)
     if times_geo is None:
         print(f"  Error: Could not extract geometric 0D results for {vessel_name}")
@@ -351,14 +362,11 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
         pressures_geo_mmhg = pressures_geo / 1333.0
     else:
         pressures_geo_mmhg = None
-    print(f"  Found {len(times_geo)} time points")
-    if pressures_geo_mmhg is not None:
-        print(f"    Pressure range: [{np.min(pressures_geo_mmhg):.2f}, {np.max(pressures_geo_mmhg):.2f}] mmHg")
-    if flows_geo is not None:
-        print(f"    Flow range: [{np.min(flows_geo):.2f}, {np.max(flows_geo):.2f}] cm³/s")
+
     
     # Extract 3D observations (from calibration input)
-    print(f"\nExtracting 3D observations for {vessel_name}...")
+    if verbose:
+        print(f"\nExtracting 3D observations for {vessel_name}...")
     times_3d_norm, pressures_3d, flows_3d, outlet_label = extract_outlet_data_from_calibration_input(
         calibration_input_path, vessel_name)
     
@@ -385,15 +393,10 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
         else:
             flows_3d = None
         
-        print(f"  Found {len(times_3d_norm)} original time points, interpolated to {len(times_geo)} points")
-        if pressures_3d_mmhg is not None:
-            print(f"    Pressure range: [{np.min(pressures_3d_mmhg):.2f}, {np.max(pressures_3d_mmhg):.2f}] mmHg")
-        if flows_3d is not None:
-            print(f"    Flow range: [{np.min(flows_3d):.2f}, {np.max(flows_3d):.2f}] cm³/s")
-        if outlet_label:
-            print(f"    Outlet label: {outlet_label}")
+
     else:
-        print(f"  Warning: Could not extract 3D observations for {vessel_name}")
+        if verbose:
+            print(f"  Warning: Could not extract 3D observations for {vessel_name}")
         pressures_3d_mmhg = None
         flows_3d = None
         times_3d_sec = times_geo
@@ -402,10 +405,12 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     calibrated_results = {}
     
     if calibrated_csv_paths is None:
-        print("\nNote: No calibrated CSV files provided")
+        if verbose:
+            print("\nNote: No calibrated CSV files provided")
     elif isinstance(calibrated_csv_paths, dict):
         # Multiple junction types
-        print(f"\nExtracting calibrated 0D results for {vessel_name}...")
+        if verbose:
+            print(f"\nExtracting calibrated 0D results for {vessel_name}...")
         for jtype, csv_path in calibrated_csv_paths.items():
             if csv_path and os.path.exists(csv_path):
                 times_cal, pressures_cal, flows_cal = extract_outlet_data_from_csv(csv_path, vessel_name)
@@ -419,13 +424,16 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
                         'flows': flows_cal
                     }
                     
-                    print(f"  {jtype}: Found {len(times_cal)} time points")
+                    if verbose:
+                        print(f"  {jtype}: Found {len(times_cal)} time points")
     else:
         # Single CSV path (backward compatibility)
-        print("  Warning: Could not extract calibrated 0D results")
+        if verbose:
+            print("  Warning: Could not extract calibrated 0D results")
     
     # Create plot with 4 subplots: 2 zoomed (top) and 2 full range (bottom)
-    print("\nCreating plot...")
+    if verbose:
+        print("\nCreating plot...")
     fig, axes = plt.subplots(4, 1, figsize=(12, 14), sharex=False)
     # Share x-axis within zoomed plots and within full plots
     axes[0].sharex(axes[1])
@@ -440,10 +448,26 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
         'Calibrated': {'color': 'red', 'linestyle': '--', 'label': 'Calibrated 0D'}
     }
     
-    # Determine zoom window (last 200 time steps)
+    # Determine zoom window
     num_time_steps = len(times_geo)
-    zoom_start_idx = max(0, num_time_steps - 105)
-    zoom_times = times_geo[zoom_start_idx:]
+    
+    # Use provided range or default to hardcoded values (599-699)
+    if zoom_start_idx is None:
+        zoom_start_idx = 599
+    if zoom_end_idx is None:
+        zoom_end_idx = 699
+    
+    # Validate and adjust zoom window if needed
+    zoom_start_idx = max(0, min(zoom_start_idx, num_time_steps - 1))
+    zoom_end_idx = min(zoom_end_idx, num_time_steps)
+    
+    # Ensure valid range
+    if zoom_start_idx >= zoom_end_idx:
+        # Fallback to last 105 timesteps if invalid range
+        zoom_start_idx = max(0, num_time_steps - 105)
+        zoom_end_idx = num_time_steps
+    
+    zoom_times = times_geo[zoom_start_idx:zoom_end_idx]
     
     # Helper function to plot pressure data on an axis
     def plot_pressure_data(ax, times_data, pressures_3d_data, times_geo_data, pressures_geo_data, 
@@ -567,10 +591,10 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     time_zoom_start = zoom_times[0] if len(zoom_times) > 0 else times_geo[0]
     time_zoom_end = zoom_times[-1] if len(zoom_times) > 0 else times_geo[-1]
     
-    pressures_3d_zoom = pressures_3d_mmhg[zoom_start_idx:] if pressures_3d_mmhg is not None else None
-    pressures_geo_zoom = pressures_geo_mmhg[zoom_start_idx:] if pressures_geo_mmhg is not None else None
-    flows_3d_zoom = flows_3d[zoom_start_idx:] if flows_3d is not None else None
-    flows_geo_zoom = flows_geo[zoom_start_idx:] if flows_geo is not None else None
+    pressures_3d_zoom = pressures_3d_mmhg[zoom_start_idx:zoom_end_idx] if pressures_3d_mmhg is not None else None
+    pressures_geo_zoom = pressures_geo_mmhg[zoom_start_idx:zoom_end_idx] if pressures_geo_mmhg is not None else None
+    flows_3d_zoom = flows_3d[zoom_start_idx:zoom_end_idx] if flows_3d is not None else None
+    flows_geo_zoom = flows_geo[zoom_start_idx:zoom_end_idx] if flows_geo is not None else None
     
     calibrated_results_zoom = {}
     for jtype, data in calibrated_results.items():
@@ -596,6 +620,7 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
                       calibrated_results_zoom, junction_styles, set_ylim_from_3d=False)
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
     ax.set_xlim(zoom_times[0] if len(zoom_times) > 0 else None, zoom_times[-1] if len(zoom_times) > 0 else None)
+    ax.set_xticklabels([])  # Remove x-axis labels (shares axis with flow plot below)
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Plot 2: Zoomed flow
@@ -613,6 +638,7 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     plot_pressure_data(ax, times_3d_sec, pressures_3d_mmhg, times_geo, pressures_geo_mmhg, 
                       calibrated_results, junction_styles, set_ylim_from_3d=True)
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
+    ax.set_xticklabels([])  # Remove x-axis labels (shares axis with flow plot below)
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Plot 4: Full flow (bottom)
@@ -664,7 +690,7 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     
     # Save plot
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"✓ Plot saved to: {output_path}")
+    
     
     plt.close()
     return True
@@ -689,6 +715,10 @@ def main():
                         help='Data directory for input files (default: data/zeroD)')
     parser.add_argument('--time-period', type=float, default=None,
                         help='Time period in seconds (default: auto-detect from XML)')
+    parser.add_argument('--zoom-start', type=int, default=None,
+                        help='Start index for zoom window (shaded region). Default: last 105 timesteps')
+    parser.add_argument('--zoom-end', type=int, default=None,
+                        help='End index for zoom window (shaded region). Default: end of time series')
     
     args = parser.parse_args()
     
@@ -746,9 +776,7 @@ def main():
         # Generate output path
         output_path = os.path.join(output_dir, f"{vessel_name}_outlet_comparison.png")
         
-        print(f"\n{'='*60}")
-        print(f"Processing vessel: {vessel_name}")
-        print(f"{'='*60}")
+
         
         # Find geometric input path
         geometric_input_path = os.path.join(data_dir, 'geometric_input.json')
@@ -758,7 +786,8 @@ def main():
         success = plot_outlet_comparison(
             calibration_input_path, geometric_csv_path, calibrated_csv_paths,
             vessel_name, output_path, set_name=args.set_name, geo_name=args.geo_name,
-            time_period=args.time_period, geometric_input_path=geometric_input_path
+            time_period=args.time_period, geometric_input_path=geometric_input_path,
+            zoom_start_idx=args.zoom_start, zoom_end_idx=args.zoom_end
         )
         
         if success:

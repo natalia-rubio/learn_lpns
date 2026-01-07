@@ -708,7 +708,7 @@ def merge_centerline_results(centerline_path, batch_outputs, final_output_path):
         traceback.print_exc()
         return False
 
-def process_geometry(geo_dir, sim_dir, centerline_path, num_procs, output_path, num_threads=None, batch_size=10, use_python_only=False):
+def process_geometry(geo_dir, sim_dir, centerline_path, num_procs, output_path, num_threads=None, batch_size=10, use_python_only=False, start_timestep_idx=None, end_timestep_idx=None):
     """
     Process a single geometry: combine VTU files and call svSlicer.
     If svSlicer crashes with many timesteps, process in batches.
@@ -721,6 +721,8 @@ def process_geometry(geo_dir, sim_dir, centerline_path, num_procs, output_path, 
         num_threads: Number of threads for svSlicer (optional)
         batch_size: Number of timesteps to process at once (default: 10)
         use_python_only: If True, skip svSlicer and use Python method directly
+        start_timestep_idx: Start index for timestep window (None = start from beginning)
+        end_timestep_idx: End index for timestep window (None = end at last timestep)
     Returns:
         True if successful, False otherwise
     """
@@ -731,6 +733,22 @@ def process_geometry(geo_dir, sim_dir, centerline_path, num_procs, output_path, 
         print(f"  No simulation files found in {sim_dir}")
         return False
     
+    # Filter timesteps based on window
+    total_timesteps = len(time_files)
+    if start_timestep_idx is not None or end_timestep_idx is not None:
+        start_idx = start_timestep_idx if start_timestep_idx is not None else 0
+        end_idx = end_timestep_idx if end_timestep_idx is not None else total_timesteps
+        
+        # Validate indices
+        start_idx = max(0, min(start_idx, total_timesteps - 1))
+        end_idx = max(start_idx + 1, min(end_idx, total_timesteps))
+        
+        time_files = time_files[start_idx:end_idx]
+        print(f"  Using timestep window: indices {start_idx} to {end_idx-1} ({len(time_files)} timesteps out of {total_timesteps})")
+        if time_files:
+            print(f"    Timestep range: {time_files[0][0]} to {time_files[-1][0]}")
+    else:
+        print(f"  Processing all {total_timesteps} timesteps")
 
     combined_vtu_path = os.path.join(procs_dir, "combined_results.vtu")
     
@@ -748,20 +766,24 @@ def main():
     """
     Main function to process completed simulations using svSlicer.
     """
-    # Check command line arguments
-    if len(sys.argv) < 2:
-        print("Usage: python batch_centerline_proj_svslicer.py <set_name> [num_procs] [num_threads]")
-        print("  set_name: Name of the set to process (required)")
-        print("  num_procs: Number of processors (optional, default: 48)")
-        print("  num_threads: Number of threads for svSlicer (optional)")
-        print("")
-        print("Environment variables:")
-        print("  SVSLICER_USE_PYTHON_ONLY=1  Skip svSlicer and use Python method directly")
-        sys.exit(1)
+    import argparse
     
-    set_name = sys.argv[1]
-    num_procs = sys.argv[2] if len(sys.argv) > 2 else "48"
-    num_threads = int(sys.argv[3]) if len(sys.argv) > 3 else None
+    parser = argparse.ArgumentParser(
+        description="Process completed simulations using svSlicer"
+    )
+    parser.add_argument('set_name', help='Name of the set to process')
+    parser.add_argument('--num-procs', default='48', help='Number of processors (default: 48)')
+    parser.add_argument('--num-threads', type=int, help='Number of threads for svSlicer (optional)')
+    parser.add_argument('--start-timestep-idx', type=int, help='Start index for timestep window (0-based, inclusive)')
+    parser.add_argument('--end-timestep-idx', type=int, help='End index for timestep window (0-based, exclusive)')
+    
+    args = parser.parse_args()
+    
+    set_name = args.set_name
+    num_procs = args.num_procs
+    num_threads = args.num_threads
+    start_timestep_idx = args.start_timestep_idx
+    end_timestep_idx = args.end_timestep_idx
     
     base_dir = "/scratch/users/nrubio/synthetic_junctions/CCO_trees"
     output_base_dir = "/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees"
@@ -783,6 +805,10 @@ def main():
     print(f"Using {num_procs}-procs for simulation files")
     if num_threads:
         print(f"Using {num_threads} threads for svSlicer")
+    if start_timestep_idx is not None or end_timestep_idx is not None:
+        start_str = str(start_timestep_idx) if start_timestep_idx is not None else "0"
+        end_str = str(end_timestep_idx) if end_timestep_idx is not None else "end"
+        print(f"Timestep window: indices {start_str} to {end_str} (exclusive)")
     print()
     
     total_processed = 0
@@ -831,7 +857,8 @@ def main():
             continue
         
         print(f"  Processing {geo_name}...")
-        if process_geometry(geo_dir, sim_dir, centerline_path, num_procs, output_path, num_threads):
+        if process_geometry(geo_dir, sim_dir, centerline_path, num_procs, output_path, num_threads,
+                           start_timestep_idx=start_timestep_idx, end_timestep_idx=end_timestep_idx):
             total_processed += 1
         else:
             total_failed += 1

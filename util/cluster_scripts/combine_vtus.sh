@@ -32,6 +32,8 @@ cd ~/SV_scripts/cluster_scripts
 SET_NAME=${1:-set_3}
 NUM_PROCS=${2:-48}
 NUM_THREADS=${3:-}
+START_TIMESTEP_IDX=${4:-}
+END_TIMESTEP_IDX=${5:-}
 
 # Use Python method directly (svSlicer has issues)
 export SVSLICER_USE_PYTHON_ONLY=1
@@ -42,15 +44,29 @@ export PYTHON_NUM_WORKERS=${SLURM_CPUS_PER_TASK:-16}
 echo "Starting batch centerline projection for set: $SET_NAME"
 echo "Using $NUM_PROCS-procs for simulation files"
 echo "Using $PYTHON_NUM_WORKERS parallel workers"
+if [ -n "$START_TIMESTEP_IDX" ] || [ -n "$END_TIMESTEP_IDX" ]; then
+    echo "Timestep window: start_idx=$START_TIMESTEP_IDX, end_idx=$END_TIMESTEP_IDX"
+fi
 echo "Job ID: $SLURM_JOB_ID"
 echo "Start time: $(date)"
 
-# Run the script
-if [ -z "$NUM_THREADS" ]; then
-    python3 combine_vtus.py "$SET_NAME" "$NUM_PROCS"
-else
-    python3 combine_vtus.py "$SET_NAME" "$NUM_PROCS" "$NUM_THREADS"
+# Build command arguments
+CMD_ARGS=("$SET_NAME" "--num-procs" "$NUM_PROCS")
+
+if [ -n "$NUM_THREADS" ]; then
+    CMD_ARGS+=("--num-threads" "$NUM_THREADS")
 fi
+
+if [ -n "$START_TIMESTEP_IDX" ]; then
+    CMD_ARGS+=("--start-timestep-idx" "$START_TIMESTEP_IDX")
+fi
+
+if [ -n "$END_TIMESTEP_IDX" ]; then
+    CMD_ARGS+=("--end-timestep-idx" "$END_TIMESTEP_IDX")
+fi
+
+# Run the script
+python3 combine_vtus.py "${CMD_ARGS[@]}"
 
 echo "End time: $(date)"
 echo "Job completed"
