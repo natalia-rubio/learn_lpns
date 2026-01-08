@@ -122,6 +122,7 @@ def get_branch_to_vessel_mapping(geometric_input_path):
 def extract_pressure_along_vessel(centerline_data, branch_id, branch_idx):
     """
     Extract pressure and distance data along a specific vessel branch for all timesteps.
+    Also extracts flow at the inlet (first point) of the vessel.
     
     Args:
         centerline_data: Dictionary with centerline data arrays
@@ -132,13 +133,14 @@ def extract_pressure_along_vessel(centerline_data, branch_id, branch_idx):
         distances: Array of distances along vessel (in cm)
         pressures: Dictionary mapping timestep_key -> pressure array (in dynes/cm^2)
         timestep_keys: List of available timestep keys (sorted)
+        inlet_flows: Dictionary mapping timestep_key -> flow value at inlet (in cm^3/s)
     """
     # Find points belonging to this branch
     branch_mask = (branch_id == branch_idx)
     branch_indices = np.where(branch_mask)[0]
     
     if len(branch_indices) == 0:
-        return None, None, None
+        return None, None, None, None
     
     # Get Path (distance along centerline) for this branch
     path = centerline_data.get('Path', None)
@@ -163,6 +165,12 @@ def extract_pressure_along_vessel(centerline_data, branch_id, branch_idx):
         if key.startswith('pressure_'):
             pressure_keys.append(key)
     
+    # Find all flow/velocity timestep keys
+    flow_keys = []
+    for key in centerline_data.keys():
+        if key.startswith('velocity_') or key.startswith('flow_'):
+            flow_keys.append(key)
+    
     # Sort timestep keys
     def extract_timestep(name):
         try:
@@ -171,6 +179,7 @@ def extract_pressure_along_vessel(centerline_data, branch_id, branch_idx):
             return 0
     
     pressure_keys.sort(key=extract_timestep)
+    flow_keys.sort(key=extract_timestep)
     
     # Extract pressure for all timesteps
     pressures = {}
@@ -179,7 +188,29 @@ def extract_pressure_along_vessel(centerline_data, branch_id, branch_idx):
             pressure_array = centerline_data[key]
             pressures[key] = pressure_array[branch_indices_sorted]
     
-    return distances, pressures, pressure_keys
+    # Extract flow at inlet (first point) for all timesteps
+    # Map flow values using pressure keys (matching by timestep number)
+    inlet_flows = {}
+    inlet_idx = branch_indices_sorted[0]  # First point along the vessel (inlet)
+    
+    # Create mapping from timestep number to flow key
+    flow_timestep_map = {}
+    for key in flow_keys:
+        if key in centerline_data:
+            timestep_num = extract_timestep(key)
+            flow_timestep_map[timestep_num] = key
+    
+    # Map flow values to pressure keys
+    for pressure_key in pressure_keys:
+        timestep_num = extract_timestep(pressure_key)
+        if timestep_num in flow_timestep_map:
+            flow_key = flow_timestep_map[timestep_num]
+            flow_array = centerline_data[flow_key]
+            # Get flow at inlet point (convert from velocity*area to flow if needed)
+            # Flow data might be velocity or actual flow, we'll use it as-is
+            inlet_flows[pressure_key] = flow_array[inlet_idx]
+    
+    return distances, pressures, pressure_keys, inlet_flows
 
 
 def create_pressure_animation(centerline_soln_path, geometric_input_path, vessel_name, 
@@ -230,7 +261,7 @@ def create_pressure_animation(centerline_soln_path, geometric_input_path, vessel
         return False
     
     # Extract pressure and distance data for all timesteps
-    distances, pressures, pressure_keys = extract_pressure_along_vessel(
+    distances, pressures, pressure_keys, inlet_flows = extract_pressure_along_vessel(
         centerline_data, branch_id, branch_idx)
     
     if distances is None or pressures is None or not pressure_keys:
@@ -254,11 +285,29 @@ def create_pressure_animation(centerline_soln_path, geometric_input_path, vessel
     all_pressures = np.array(all_pressures)
     pressure_min = np.min(all_pressures) / 1333.0  # Convert to mmHg
     pressure_max = np.max(all_pressures) / 1333.0
-    pressure_range = pressure_max - pressure_min
-    y_min = pressure_min - 0.1 * pressure_range
-    y_max = pressure_max + 0.1 * pressure_range
+    # Use actual data range for y-axis limits
+    y_min = pressure_min
+    y_max = pressure_max
     
     print(f"  Pressure range: [{pressure_min:.2f}, {pressure_max:.2f}] mmHg")
+    
+    # Calculate flow range for right y-axis
+    flow_min = None
+    flow_max = None
+    if inlet_flows and len(inlet_flows) > 0:
+        all_flows = [inlet_flows[key] for key in pressure_keys if key in inlet_flows]
+        if all_flows:
+            all_flows = np.array(all_flows)
+            flow_min = np.min(all_flows)
+            flow_max = np.max(all_flows)
+            flow_range = flow_max - flow_min
+            flow_y_min = flow_min - 0.1 * flow_range
+            flow_y_max = flow_max + 0.1 * flow_range
+            print(f"  Flow range: [{flow_min:.2f}, {flow_max:.2f}] cm³/s")
+        else:
+            inlet_flows = None  # No valid flow data
+    else:
+        inlet_flows = None  # No flow data available
     
     # Create figure and axis
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -268,7 +317,8 @@ def create_pressure_animation(centerline_soln_path, geometric_input_path, vessel
     
     # Set labels and title
     ax.set_xlabel(r'Distance along vessel (cm)', fontsize=24)
-    ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
+    ax.set_ylabel(r'Pressure (mmHg)', fontsize=24, color='blue')
+    ax.tick_params(axis='y', labelcolor='blue')
     ax.set_title(f'Pressure along {vessel_name}', fontsize=28, weight='bold')
     
     # Set axis limits
@@ -278,6 +328,25 @@ def create_pressure_animation(centerline_soln_path, geometric_input_path, vessel
     # Add grid
     ax.grid(True, alpha=0.3)
     
+    # Create second y-axis for flow (if available)
+    ax2 = None
+    flow_dot = None
+    x_max = np.max(distances)
+    
+    if inlet_flows is not None:
+        ax2 = ax.twinx()
+        ax2.set_ylabel(r'Flow (cm³/s)', fontsize=24, color='red')
+        ax2.tick_params(axis='y', labelcolor='red')
+        if flow_min is not None and flow_max is not None:
+            ax2.set_ylim(flow_y_min, flow_y_max)
+        
+        # Initialize red dot at right edge of plot
+        # Start with first flow value if available
+        initial_flow = 0.0
+        if pressure_keys and pressure_keys[0] in inlet_flows:
+            initial_flow = inlet_flows[pressure_keys[0]]
+        flow_dot, = ax2.plot([x_max], [initial_flow], 'ro', markersize=12, label='Inlet Flow')
+    
     # Add timestep text
     timestep_text = ax.text(0.02, 0.98, '', transform=ax.transAxes, fontsize=18, 
                            verticalalignment='top',
@@ -286,6 +355,8 @@ def create_pressure_animation(centerline_soln_path, geometric_input_path, vessel
     # Animation function
     def animate(frame):
         if frame >= len(pressure_keys):
+            if flow_dot is not None:
+                return line, timestep_text, flow_dot
             return line, timestep_text
         
         timestep_key = pressure_keys[frame]
@@ -301,6 +372,13 @@ def create_pressure_animation(centerline_soln_path, geometric_input_path, vessel
         timestep_num = timestep_key.split('_')[-1] if '_' in timestep_key else str(frame)
         timestep_text.set_text(f'Timestep: {timestep_num}')
         
+        # Update flow dot position (if available)
+        if flow_dot is not None and inlet_flows is not None and timestep_key in inlet_flows:
+            flow_value = inlet_flows[timestep_key]
+            flow_dot.set_data([x_max], [flow_value])
+        
+        if flow_dot is not None:
+            return line, timestep_text, flow_dot
         return line, timestep_text
     
     # Create animation

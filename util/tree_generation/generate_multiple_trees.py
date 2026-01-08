@@ -129,6 +129,26 @@ def generate_single_tree(tree_id, set_name='test_set', domain_size=45.0, n_branc
         # Check centerlines file
         if not os.path.isfile(centerlines_path):
             raise FileNotFoundError(f"Missing SimVascular centerlines: {centerlines_path}")
+        
+        # Check that centerlines contain BranchId field
+        try:
+            centerlines = pv.read(centerlines_path)
+            # Check both point data and cell data for BranchId
+            has_branch_id = (
+                'BranchId' in centerlines.point_data.keys() or 
+                'BranchId' in centerlines.cell_data.keys() or
+                'BranchId' in centerlines.field_data.keys()
+            )
+            if not has_branch_id:
+                raise ValueError(f"Centerlines file {centerlines_path} does not contain 'BranchId' field. "
+                               f"Available point data: {list(centerlines.point_data.keys())}, "
+                               f"Available cell data: {list(centerlines.cell_data.keys())}, "
+                               f"Available field data: {list(centerlines.field_data.keys())}")
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise  # Re-raise ValueError about missing BranchId
+            else:
+                raise RuntimeError(f"Failed to read centerlines file {centerlines_path}: {str(e)}")
 
         logger.info("Output verification passed: volume mesh, mesh-surfaces (7 caps + wall), and centerlines present.")
         
@@ -171,7 +191,7 @@ def main():
                        help='Size of the cubic domain (default: 45.0)')
     parser.add_argument('--n-branches', type=int, default=5,
                        help='Number of branches per tree (default: 5)')
-    parser.add_argument('--root-pressure', type=float, default=2*1333.22,
+    parser.add_argument('--root-pressure', type=float, default=3*1333.22,
                        help='Root pressure in dyn/cm^2 (default: 2666.44)')
     parser.add_argument('--terminal-pressure', type=float, default=1*1333.22,
                        help='Terminal pressure in dyn/cm^2 (default: 1333.22)')
