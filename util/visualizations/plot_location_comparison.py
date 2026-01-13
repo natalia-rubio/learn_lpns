@@ -1,0 +1,757 @@
+#!/usr/bin/env python3
+"""
+Unified script to plot pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models
+at any location in the network.
+
+Location format: "source:target" where:
+  - "INFLOW:branch0_seg0" - inlet BC to vessel
+  - "J0:branch1_seg0" - junction to vessel (inlet of vessel)
+  - "branch0_seg0:J0" - vessel to junction (outlet of vessel)
+  - "branch5_seg0:RESISTANCE_0" - vessel to outlet BC (terminal outlet)
+"""
+
+import os
+import sys
+import argparse
+import json
+import csv
+import numpy as np
+import warnings
+
+# Suppress matplotlib warnings about redundant linestyle
+warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
+warnings.filterwarnings('ignore', message='.*linestyle.*redundantly defined.*')
+warnings.filterwarnings('ignore', message='.*linestyle.*keyword argument.*')
+
+# Check for matplotlib
+HAS_MATPLOTLIB = False
+plt = None
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend
+    import matplotlib.pyplot as plt
+    
+    # Configure LaTeX rendering with Computer Modern font
+    try:
+        plt.rcParams['text.usetex'] = True
+        # Test if LaTeX is available
+        test_fig, test_ax = plt.subplots(figsize=(1, 1))
+        test_ax.text(0.5, 0.5, r'Test $\alpha$')
+        plt.close(test_fig)
+        # If successful, configure LaTeX settings
+        plt.rcParams['font.family'] = 'serif'
+        plt.rcParams['font.serif'] = ['Computer Modern Roman', 'DejaVu Serif']
+        plt.rcParams['mathtext.fontset'] = 'cm'
+        LATEX_AVAILABLE = True
+    except Exception:
+        # LaTeX not available, use mathtext with Computer Modern
+        plt.rcParams['text.usetex'] = False
+        plt.rcParams['font.family'] = 'serif'
+        plt.rcParams['font.serif'] = ['Computer Modern Roman', 'DejaVu Serif']
+        plt.rcParams['mathtext.fontset'] = 'cm'
+        LATEX_AVAILABLE = False
+    
+    # Set font sizes
+    plt.rcParams['axes.labelsize'] = 28
+    plt.rcParams['axes.titlesize'] = 32
+    plt.rcParams['xtick.labelsize'] = 24
+    plt.rcParams['ytick.labelsize'] = 24
+    plt.rcParams['legend.fontsize'] = 24
+    plt.rcParams['figure.titlesize'] = 36
+    
+    HAS_MATPLOTLIB = True
+except ImportError:
+    print("Error: matplotlib is required. Install with: pip install matplotlib")
+    sys.exit(1)
+
+
+def parse_location(location):
+    """
+    Parse a location string into its components.
+    
+    Args:
+        location: Location string like "INFLOW:branch0_seg0" or "branch0_seg0:J0"
+    
+    Returns:
+        tuple: (source, target, vessel_name, is_inlet, location_type)
+            - source: First part of location (e.g., "INFLOW", "J0", "branch0_seg0")
+            - target: Second part of location (e.g., "branch0_seg0", "J0", "RESISTANCE_0")
+            - vessel_name: The vessel involved
+            - is_inlet: True if this is the inlet of the vessel, False if outlet
+            - location_type: 'bc_inlet', 'junction_inlet', 'junction_outlet', 'bc_outlet'
+    """
+    parts = location.split(':')
+    if len(parts) != 2:
+        raise ValueError(f"Invalid location format: {location}. Expected 'source:target'")
+    
+    source, target = parts
+    
+    # Determine location type based on source and target
+    if source == 'INFLOW':
+        # BC inlet: INFLOW:branch0_seg0
+        return source, target, target, True, 'bc_inlet'
+    elif source.startswith('J'):
+        # Junction inlet: J0:branch1_seg0
+        return source, target, target, True, 'junction_inlet'
+    elif target.startswith('J'):
+        # Junction outlet: branch0_seg0:J0
+        return source, target, source, False, 'junction_outlet'
+    elif target.startswith('RESISTANCE') or target.startswith('RCR') or target.startswith('CORONARY'):
+        # BC outlet: branch5_seg0:RESISTANCE_0
+        return source, target, source, False, 'bc_outlet'
+    else:
+        # Unknown pattern - try to infer
+        if source.startswith('branch'):
+            return source, target, source, False, 'outlet'
+        else:
+            return source, target, target, True, 'inlet'
+
+
+def read_zerod_csv(csv_path):
+    """
+    Read 0D simulation results from CSV.
+    Handles both 'location' and 'name' as the vessel identifier column.
+    
+    Returns:
+        results: Dictionary {location: {time: {field: value}}}
+        times: Sorted list of time values
+    """
+    results = {}
+    times = set()
+    
+    if not os.path.exists(csv_path):
+        return results, sorted(times)
+    
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        # Check which column name is used for vessel identifier
+        fieldnames = reader.fieldnames
+        if fieldnames is None:
+            return results, sorted(times)
+        
+        vessel_col = None
+        if 'location' in fieldnames:
+            vessel_col = 'location'
+        elif 'name' in fieldnames:
+            vessel_col = 'name'
+        else:
+            return results, sorted(times)
+        
+        for row in reader:
+            location = row[vessel_col]
+            time = float(row['time'])
+            times.add(time)
+            
+            if location not in results:
+                results[location] = {}
+            if time not in results[location]:
+                results[location][time] = {}
+            
+            # Extract all numeric fields
+            for key, value in row.items():
+                if key not in [vessel_col, 'time']:
+                    try:
+                        results[location][time][key] = float(value)
+                    except (ValueError, TypeError):
+                        continue
+    
+    return results, sorted(times)
+
+
+def extract_data_from_csv(csv_path, vessel_name, is_inlet):
+    """
+    Extract pressure and flow data from 0D CSV results for a specific vessel.
+    
+    Args:
+        csv_path: Path to CSV file
+        vessel_name: Name of the vessel
+        is_inlet: If True, extract inlet data; if False, extract outlet data
+    
+    Returns:
+        times: Time array
+        pressures: Pressure values (in dynes/cm^2)
+        flows: Flow values (in cm³/s)
+    """
+    results, times = read_zerod_csv(csv_path)
+    
+    if vessel_name not in results:
+        return None, None, None
+    
+    # Determine which fields to extract
+    if is_inlet:
+        pressure_field = 'pressure_in'
+        flow_field = 'flow_in'
+    else:
+        pressure_field = 'pressure_out'
+        flow_field = 'flow_out'
+    
+    pressures = []
+    flows = []
+    times_list = []
+    
+    for time in times:
+        if time in results[vessel_name]:
+            data = results[vessel_name][time]
+            if pressure_field in data:
+                pressures.append(data[pressure_field])
+                times_list.append(time)
+                if flow_field in data:
+                    flows.append(data[flow_field])
+                else:
+                    flows.append(None)
+            elif flow_field in data:
+                flows.append(data[flow_field])
+                times_list.append(time)
+                pressures.append(None)
+    
+    # Filter out None values
+    if pressures and all(p is not None for p in pressures):
+        pressures = np.array(pressures)
+    else:
+        pressures = None
+    
+    if flows and all(f is not None for f in flows):
+        flows = np.array(flows)
+    else:
+        flows = None
+    
+    times_array = np.array(times_list) if times_list else None
+    
+    return times_array, pressures, flows
+
+
+def extract_data_from_calibration_input(calibration_input_path, location):
+    """
+    Extract pressure and flow data from calibration input observations for a specific location.
+    
+    Args:
+        calibration_input_path: Path to calibration input JSON
+        location: Location string like "INFLOW:branch0_seg0" or "branch0_seg0:J0"
+    
+    Returns:
+        times: Time array (normalized [0, 1])
+        pressures: Pressure values (in dynes/cm^2)
+        flows: Flow values (in cm³/s)
+    """
+    with open(calibration_input_path, 'r') as f:
+        calib_data = json.load(f)
+    
+    if 'y' not in calib_data:
+        return None, None, None
+    
+    observations = calib_data['y']
+    
+    # Build observation keys from location
+    pressure_key = f'pressure:{location}'
+    flow_key = f'flow:{location}'
+    
+    if pressure_key not in observations:
+        return None, None, None
+    
+    # Get number of observations
+    num_obs = len(observations[pressure_key])
+    times = np.linspace(0.0, 1.0, num_obs)
+    
+    # Extract pressure (in dynes/cm^2)
+    pressures = np.array(observations[pressure_key])
+    
+    # Extract flow
+    if flow_key in observations:
+        flows = np.array(observations[flow_key])
+    else:
+        flows = None
+    
+    return times, pressures, flows
+
+
+def get_all_locations_from_calibration_input(calibration_input_path):
+    """
+    Get all unique locations from calibration input observations.
+    
+    Returns:
+        List of location strings (e.g., ["INFLOW:branch0_seg0", "branch0_seg0:J0", ...])
+    """
+    with open(calibration_input_path, 'r') as f:
+        calib_data = json.load(f)
+    
+    if 'y' not in calib_data:
+        return []
+    
+    observations = calib_data['y']
+    locations = set()
+    
+    for key in observations.keys():
+        if key.startswith('pressure:'):
+            # Extract location from "pressure:source:target"
+            parts = key.split(':')
+            if len(parts) == 3:
+                location = f'{parts[1]}:{parts[2]}'
+                locations.add(location)
+    
+    return sorted(locations)
+
+
+def get_time_period(set_name, geo_name):
+    """
+    Try to get the actual time period from 3D simulation XML.
+    Returns time period in seconds, or None if not found.
+    """
+    xml_paths = [
+        os.path.join('data', 'threeD', set_name, geo_name, 'fluid_simulation_0-0.xml'),
+        os.path.join('data', 'threeD', set_name, geo_name, 'solver.inp'),
+    ]
+    
+    for xml_path in xml_paths:
+        if os.path.exists(xml_path):
+            try:
+                import xml.etree.ElementTree as ET
+                tree = ET.parse(xml_path)
+                root = tree.getroot()
+                
+                gen_params = root.find('General_Parameters')
+                if gen_params is None:
+                    gen_params = root.find('GeneralSimulationParameters')
+                
+                if gen_params is not None:
+                    num_time_steps_elem = gen_params.find('Number_of_time_steps')
+                    time_step_size_elem = gen_params.find('Time_step_size')
+                    
+                    if num_time_steps_elem is not None and time_step_size_elem is not None:
+                        num_time_steps = int(num_time_steps_elem.text)
+                        time_step_size = float(time_step_size_elem.text)
+                        time_period = num_time_steps * time_step_size
+                        return time_period
+            except Exception:
+                pass
+    
+    return None
+
+
+def plot_location_comparison(calibration_input_path, geometric_csv_path, calibrated_csv_paths,
+                             location, output_path, set_name=None, geo_name=None, time_period=None,
+                             geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, 
+                             verbose=False):
+    """
+    Plot pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models
+    at a specific location.
+    
+    Args:
+        calibration_input_path: Path to calibration input JSON (for 3D observations)
+        geometric_csv_path: Path to geometric 0D results CSV
+        calibrated_csv_paths: Dictionary mapping junction type names to CSV paths
+        location: Location string (e.g., "INFLOW:branch0_seg0" or "branch0_seg0:J0")
+        output_path: Path to save plot
+        set_name: Set name (for finding time period and VMR zoom defaults)
+        geo_name: Geometry name (for finding time period)
+        time_period: Time period in seconds (if None, will try to find from XML)
+        geometric_input_path: Path to geometric input JSON (optional)
+        zoom_start_idx: Start index for zoom window
+        zoom_end_idx: End index for zoom window
+        verbose: If True, print detailed information
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    if verbose:
+        print(f"Plotting comparison for location: {location}")
+    
+    if not HAS_MATPLOTLIB:
+        print("Error: matplotlib is required but not available.")
+        return False
+    
+    # Parse location
+    try:
+        source, target, vessel_name, is_inlet, location_type = parse_location(location)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return False
+    
+    if verbose:
+        print(f"  Vessel: {vessel_name}, is_inlet: {is_inlet}, type: {location_type}")
+    
+    # Get time period
+    if time_period is None and set_name is not None and geo_name is not None:
+        time_period = get_time_period(set_name, geo_name)
+    
+    if time_period is None:
+        if set_name == 'VMR':
+            time_period = 2.0  # Default for VMR
+        else:
+            time_period = 1.0
+        if verbose:
+            print(f"  Using default time period: {time_period} s")
+    else:
+        if verbose:
+            print(f"  Time period: {time_period:.4f} s")
+    
+    # Extract geometric 0D results
+    times_geo, pressures_geo, flows_geo = extract_data_from_csv(
+        geometric_csv_path, vessel_name, is_inlet)
+    
+    if times_geo is None:
+        print(f"  Error: Could not extract geometric 0D results for {vessel_name}")
+        return False
+    
+    # Convert pressure to mmHg
+    pressures_geo_mmhg = pressures_geo / 1333.0 if pressures_geo is not None else None
+    
+    if verbose:
+        print(f"  Found {len(times_geo)} geometric 0D time points")
+    
+    # Extract 3D observations from calibration input
+    times_3d_norm, pressures_3d, flows_3d = extract_data_from_calibration_input(
+        calibration_input_path, location)
+    
+    if times_3d_norm is not None:
+        # Interpolate 3D observations to match geometric 0D time points
+        times_3d_sec = times_geo
+        time_min = times_geo[0]
+        time_max = times_geo[-1]
+        times_3d_original = time_min + times_3d_norm * (time_max - time_min)
+        
+        if pressures_3d is not None:
+            pressures_3d_interp = np.interp(times_geo, times_3d_original, pressures_3d)
+            pressures_3d_mmhg = pressures_3d_interp / 1333.0
+        else:
+            pressures_3d_mmhg = None
+        
+        if flows_3d is not None:
+            flows_3d = np.interp(times_geo, times_3d_original, flows_3d)
+        
+        if verbose:
+            print(f"  Found {len(times_3d_norm)} 3D observation points")
+    else:
+        if verbose:
+            print(f"  Warning: Could not extract 3D observations for {location}")
+        pressures_3d_mmhg = None
+        flows_3d = None
+        times_3d_sec = times_geo
+    
+    # Extract calibrated 0D results
+    calibrated_results = {}
+    if calibrated_csv_paths and isinstance(calibrated_csv_paths, dict):
+        for jtype, csv_path in calibrated_csv_paths.items():
+            if csv_path and os.path.exists(csv_path):
+                times_cal, pressures_cal, flows_cal = extract_data_from_csv(
+                    csv_path, vessel_name, is_inlet)
+                if times_cal is not None:
+                    pressures_cal_mmhg = pressures_cal / 1333.0 if pressures_cal is not None else None
+                    calibrated_results[jtype] = {
+                        'times': times_cal,
+                        'pressures': pressures_cal_mmhg,
+                        'flows': flows_cal
+                    }
+                    if verbose:
+                        print(f"  {jtype}: Found {len(times_cal)} time points")
+    
+    # Create plot with 4 subplots
+    fig, axes = plt.subplots(4, 1, figsize=(12, 14), sharex=False)
+    axes[0].sharex(axes[1])
+    axes[2].sharex(axes[3])
+    axes[1].tick_params(labelbottom=True)
+    axes[3].tick_params(labelbottom=True)
+    
+    # Define styles for junction types
+    junction_styles = {
+        'BloodVesselJunction': {'color': 'orange', 'linestyle': '-', 'label': 'Blood Vessel Junction'},
+        'NORMAL_JUNCTION': {'color': 'red', 'linestyle': '--', 'label': 'Normal Junction'},
+        'DirIndepJunction': {'color': 'skyblue', 'linestyle': '-.', 'label': 'Dir-Indep Junction'},
+        'HybridJunction': {'color': 'violet', 'linestyle': ':', 'label': 'Hybrid Junction'},
+    }
+    
+    # Determine zoom window
+    num_time_steps = len(times_geo)
+    
+    if zoom_start_idx is None or zoom_end_idx is None:
+        if set_name == 'VMR':
+            vmr_period = time_period if time_period else 2.0
+            dt = vmr_period / (num_time_steps - 1) if num_time_steps > 1 else 1.0
+            if zoom_start_idx is None:
+                zoom_start_idx = int(1.0 / dt)
+            if zoom_end_idx is None:
+                zoom_end_idx = min(int(2.0 / dt) + 1, num_time_steps)
+        else:
+            if zoom_start_idx is None:
+                zoom_start_idx = 599
+            if zoom_end_idx is None:
+                zoom_end_idx = 699
+    
+    # Validate zoom window
+    zoom_start_idx = max(0, min(zoom_start_idx, num_time_steps - 1))
+    zoom_end_idx = min(zoom_end_idx, num_time_steps)
+    
+    if zoom_start_idx >= zoom_end_idx:
+        zoom_start_idx = max(0, num_time_steps - 105)
+        zoom_end_idx = num_time_steps
+    
+    zoom_times = times_geo[zoom_start_idx:zoom_end_idx]
+    time_zoom_start = zoom_times[0] if len(zoom_times) > 0 else times_geo[0]
+    time_zoom_end = zoom_times[-1] if len(zoom_times) > 0 else times_geo[-1]
+    
+    # Prepare zoomed data
+    pressures_3d_zoom = pressures_3d_mmhg[zoom_start_idx:zoom_end_idx] if pressures_3d_mmhg is not None else None
+    pressures_geo_zoom = pressures_geo_mmhg[zoom_start_idx:zoom_end_idx] if pressures_geo_mmhg is not None else None
+    flows_3d_zoom = flows_3d[zoom_start_idx:zoom_end_idx] if flows_3d is not None else None
+    flows_geo_zoom = flows_geo[zoom_start_idx:zoom_end_idx] if flows_geo is not None else None
+    
+    calibrated_results_zoom = {}
+    for jtype, data in calibrated_results.items():
+        if data['times'] is not None and len(data['times']) > 0:
+            times_cal = np.array(data['times'])
+            zoom_mask = (times_cal >= time_zoom_start) & (times_cal <= time_zoom_end)
+            if np.any(zoom_mask):
+                calibrated_results_zoom[jtype] = {
+                    'times': times_cal[zoom_mask],
+                    'pressures': np.array(data['pressures'])[zoom_mask] if data['pressures'] is not None else None,
+                    'flows': np.array(data['flows'])[zoom_mask] if data['flows'] is not None else None
+                }
+    
+    # Helper functions for plotting
+    def plot_pressure_data(ax, times_data, pressures_3d_data, times_geo_data, pressures_geo_data, 
+                          calibrated_data_dict, set_ylim_from_3d=True):
+        if pressures_3d_data is not None:
+            ax.plot(times_data, pressures_3d_data, 'k-', linewidth=8, label='3D Model', alpha=1)
+        
+        if pressures_geo_data is not None:
+            ax.plot(times_geo_data, pressures_geo_data, 'g--', linewidth=3, label='Geometric 0D', alpha=1)
+        
+        for jtype, data in calibrated_data_dict.items():
+            if data['pressures'] is not None:
+                style = junction_styles.get(jtype, {'color': 'red', 'linestyle': '--', 'label': jtype})
+                ax.plot(data['times'], data['pressures'], 
+                       color=style['color'], linewidth=3, 
+                       label=style['label'], alpha=1, linestyle=style['linestyle'])
+        
+        # Set y-limits
+        all_pressures = []
+        if pressures_3d_data is not None:
+            all_pressures.extend(pressures_3d_data)
+        if pressures_geo_data is not None:
+            all_pressures.extend(pressures_geo_data)
+        for data in calibrated_data_dict.values():
+            if data['pressures'] is not None:
+                all_pressures.extend(data['pressures'])
+        
+        if all_pressures:
+            pressure_min = np.min(all_pressures)
+            pressure_max = np.max(all_pressures)
+            pressure_range = pressure_max - pressure_min
+            if pressure_range > 0:
+                ax.set_ylim(pressure_min - 0.1 * pressure_range, pressure_max + 0.1 * pressure_range)
+    
+    def plot_flow_data(ax, times_data, flows_3d_data, times_geo_data, flows_geo_data, 
+                      calibrated_data_dict, set_ylim_from_3d=True):
+        if flows_3d_data is not None:
+            ax.plot(times_data, flows_3d_data, 'k-', linewidth=8, label='3D Model', alpha=1)
+        
+        if flows_geo_data is not None:
+            ax.plot(times_geo_data, flows_geo_data, 'g:', linewidth=3, label='Geometric 0D', alpha=1)
+        
+        for jtype, data in calibrated_data_dict.items():
+            if data['flows'] is not None:
+                style = junction_styles.get(jtype, {'color': 'red', 'linestyle': '--', 'label': jtype})
+                ax.plot(data['times'], data['flows'], 
+                       color=style['color'], linewidth=2, 
+                       label=style['label'], alpha=1, linestyle=style['linestyle'])
+        
+        # Set y-limits
+        all_flows = []
+        if flows_3d_data is not None:
+            all_flows.extend(flows_3d_data)
+        if flows_geo_data is not None:
+            all_flows.extend(flows_geo_data)
+        for data in calibrated_data_dict.values():
+            if data['flows'] is not None:
+                all_flows.extend(data['flows'])
+        
+        if all_flows:
+            flow_min = np.min(all_flows)
+            flow_max = np.max(all_flows)
+            flow_range = flow_max - flow_min
+            if flow_range > 0:
+                ax.set_ylim(flow_min - 0.1 * flow_range, flow_max + 0.1 * flow_range)
+    
+    # Determine full time range
+    all_times = list(times_geo)
+    for data in calibrated_results.values():
+        if data['times'] is not None:
+            all_times.extend(data['times'])
+    time_min = np.min(all_times)
+    time_max = np.max(all_times)
+    
+    # Plot 1: Zoomed pressure
+    ax = axes[0]
+    plot_pressure_data(ax, zoom_times, pressures_3d_zoom, zoom_times, pressures_geo_zoom, 
+                      calibrated_results_zoom, set_ylim_from_3d=False)
+    ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
+    ax.set_xlim(time_zoom_start, time_zoom_end)
+    ax.tick_params(axis='x', bottom=False, labelbottom=False)
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    
+    # Plot 2: Zoomed flow
+    ax = axes[1]
+    plot_flow_data(ax, zoom_times, flows_3d_zoom, zoom_times, flows_geo_zoom, 
+                   calibrated_results_zoom, set_ylim_from_3d=False)
+    ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
+    ax.set_xlim(time_zoom_start, time_zoom_end)
+    ax.tick_params(axis='x', labelbottom=True, bottom=True, labelsize=20)
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    
+    # Plot 3: Full pressure
+    ax = axes[2]
+    ax.axvspan(time_zoom_start, time_zoom_end, alpha=0.4, color='gray', zorder=0)
+    plot_pressure_data(ax, times_3d_sec, pressures_3d_mmhg, times_geo, pressures_geo_mmhg, 
+                      calibrated_results, set_ylim_from_3d=True)
+    ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
+    ax.set_xlim(time_min, time_max)
+    ax.tick_params(axis='x', bottom=False, labelbottom=False)
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    
+    # Plot 4: Full flow
+    ax = axes[3]
+    ax.axvspan(time_zoom_start, time_zoom_end, alpha=0.4, color='gray', zorder=0)
+    plot_flow_data(ax, times_3d_sec, flows_3d, times_geo, flows_geo, 
+                  calibrated_results, set_ylim_from_3d=True)
+    ax.set_xlabel(r'Time (s)', fontsize=24)
+    ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
+    ax.set_xlim(time_min, time_max)
+    ax.tick_params(axis='x', labelbottom=True, bottom=True, labelsize=20)
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    
+    # Create legend
+    handles, labels = axes[2].get_legend_handles_labels()
+    seen = set()
+    unique_handles, unique_labels = [], []
+    for handle, label in zip(handles, labels):
+        if label not in seen:
+            seen.add(label)
+            unique_handles.append(handle)
+            unique_labels.append(label)
+    
+    # Title
+    title_text = location
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.85])
+    fig.suptitle(title_text, fontsize=28, weight='bold', y=0.995)
+    fig.legend(unique_handles, unique_labels, loc='upper center', ncol=3, 
+               bbox_to_anchor=(0.5, 0.97), fontsize=24, frameon=True)
+    
+    # Ensure x-axis labels are visible
+    for ax_idx in [1, 3]:
+        axes[ax_idx].tick_params(axis='x', labelbottom=True, bottom=True, labelsize=20)
+        locs = axes[ax_idx].xaxis.get_majorticklocs()
+        if len(locs) > 0:
+            axes[ax_idx].xaxis.set_ticks(locs)
+            axes[ax_idx].xaxis.set_ticklabels([f'{loc:.2f}' for loc in locs], fontsize=20)
+    
+    # Save plot
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    if verbose:
+        print(f"✓ Plot saved to: {output_path}")
+    
+    plt.close()
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Plot pressure and flow comparison at any location in the network"
+    )
+    parser.add_argument('--set-name', required=True, help='Set name (e.g., set_3, VMR)')
+    parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., tree_007, 0063_1001)')
+    parser.add_argument('--location', help='Specific location to plot (e.g., "INFLOW:branch0_seg0" or "branch0_seg0:J0")')
+    parser.add_argument('--calibration-input', help='Path to calibration input JSON (default: auto-detect)')
+    parser.add_argument('--geometric-csv', help='Path to geometric 0D results CSV (default: auto-detect)')
+    parser.add_argument('--junction-types', nargs='+', 
+                       default=['BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction'],
+                       help='Junction types to plot')
+    parser.add_argument('--output-dir', default='results/location_comparison', 
+                        help='Output directory for plots')
+    parser.add_argument('--data-dir', default='data/zeroD', 
+                        help='Data directory for input files')
+    parser.add_argument('--time-period', type=float, default=None,
+                        help='Time period in seconds (default: auto-detect)')
+    parser.add_argument('--zoom-start', type=int, default=None,
+                        help='Start index for zoom window')
+    parser.add_argument('--zoom-end', type=int, default=None,
+                        help='End index for zoom window')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='Print detailed information')
+    
+    args = parser.parse_args()
+    
+    if not HAS_MATPLOTLIB:
+        print("Error: matplotlib is required but not available.")
+        sys.exit(1)
+    
+    # Auto-detect file paths
+    data_dir = os.path.join(args.data_dir, args.set_name, args.geo_name)
+    
+    calibration_input_path = args.calibration_input or os.path.join(data_dir, 'calibration_input.json')
+    geometric_csv_path = args.geometric_csv or os.path.join(data_dir, 'geometric_results.csv')
+    
+    # Set up calibrated CSV paths
+    calibrated_csv_paths = {}
+    for jtype in args.junction_types:
+        csv_path = os.path.join(data_dir, f'calibrated_results_{jtype}.csv')
+        calibrated_csv_paths[jtype] = csv_path
+    
+    if not os.path.exists(calibration_input_path):
+        print(f"Error: Calibration input file not found: {calibration_input_path}")
+        sys.exit(1)
+    
+    if not os.path.exists(geometric_csv_path):
+        print(f"Error: Geometric CSV file not found: {geometric_csv_path}")
+        sys.exit(1)
+    
+    # Get list of locations
+    if args.location:
+        locations = [args.location]
+    else:
+        locations = get_all_locations_from_calibration_input(calibration_input_path)
+        print(f"\nFound {len(locations)} locations")
+    
+    # Create output directory
+    output_dir = os.path.join(args.output_dir, args.set_name, args.geo_name)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Find geometric input path
+    geometric_input_path = os.path.join(data_dir, 'geometric_input.json')
+    if not os.path.exists(geometric_input_path):
+        geometric_input_path = None
+    
+    # Plot for each location
+    success_count = 0
+    for location in locations:
+        # Generate safe filename from location
+        safe_location = location.replace(':', '_')
+        output_path = os.path.join(output_dir, f"{safe_location}_comparison.png")
+        
+        if args.verbose:
+            print(f"\n{'='*60}")
+            print(f"Processing location: {location}")
+            print(f"{'='*60}")
+        
+        success = plot_location_comparison(
+            calibration_input_path, geometric_csv_path, calibrated_csv_paths,
+            location, output_path, set_name=args.set_name, geo_name=args.geo_name,
+            time_period=args.time_period, geometric_input_path=geometric_input_path,
+            zoom_start_idx=args.zoom_start, zoom_end_idx=args.zoom_end,
+            verbose=args.verbose
+        )
+        
+        if success:
+            success_count += 1
+    
+    print(f"\n{'='*60}")
+    print(f"Summary: Created {success_count}/{len(locations)} location comparison plots")
+    print(f"Output directory: {output_dir}")
+    print(f"{'='*60}")
+    
+    sys.exit(0 if success_count == len(locations) else 1)
+
+
+if __name__ == '__main__':
+    main()
+

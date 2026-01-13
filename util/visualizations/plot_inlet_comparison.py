@@ -239,6 +239,7 @@ def get_time_period(set_name, geo_name):
                         return time_period
             except Exception as e:
                 pass
+
     
     return None
 
@@ -265,7 +266,7 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
         print("Error: matplotlib is required but not available.")
         return False
     
-    # Get time period
+    # Get time period, used for zoom window
     if time_period is None and set_name is not None and geo_name is not None:
         time_period = get_time_period(set_name, geo_name)
     
@@ -380,10 +381,19 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
         'Calibrated': {'color': 'red', 'linestyle': '--', 'label': 'Calibrated 0D'}
     }
     
-    # Determine zoom window (last 200 time steps)
+    # Determine zoom window
     num_time_steps = len(times_geo)
-    zoom_start_idx = max(0, num_time_steps - 105)
-    zoom_times = times_geo[zoom_start_idx:]
+    if set_name == 'VMR':
+        # For VMR: zoom to 1-2 seconds (time_period is typically 2.0s)
+        vmr_period = time_period if time_period else 2.0
+        dt = vmr_period / (num_time_steps - 1) if num_time_steps > 1 else 1.0
+        zoom_start_idx = int(1.0 / dt)
+        zoom_end_idx = min(int(2.0 / dt) + 1, num_time_steps)
+    else:
+        # Default: last 105 time steps
+        zoom_start_idx = max(0, num_time_steps - 105)
+        zoom_end_idx = num_time_steps
+    zoom_times = times_geo[zoom_start_idx:zoom_end_idx]
     
     # Helper function to plot pressure data on an axis
     def plot_pressure_data(ax, times_data, pressures_3d_data, times_geo_data, pressures_geo_data, 
@@ -490,10 +500,10 @@ def plot_inlet_comparison(calibration_input_path, geometric_csv_path, calibrated
     time_zoom_start = zoom_times[0] if len(zoom_times) > 0 else times_geo[0]
     time_zoom_end = zoom_times[-1] if len(zoom_times) > 0 else times_geo[-1]
     
-    pressures_3d_zoom = pressures_3d_mmhg[zoom_start_idx:] if pressures_3d_mmhg is not None else None
-    pressures_geo_zoom = pressures_geo_mmhg[zoom_start_idx:] if pressures_geo_mmhg is not None else None
-    flows_3d_zoom = flows_3d[zoom_start_idx:] if flows_3d is not None else None
-    flows_geo_zoom = flows_geo[zoom_start_idx:] if flows_geo is not None else None
+    pressures_3d_zoom = pressures_3d_mmhg[zoom_start_idx:zoom_end_idx] if pressures_3d_mmhg is not None else None
+    pressures_geo_zoom = pressures_geo_mmhg[zoom_start_idx:zoom_end_idx] if pressures_geo_mmhg is not None else None
+    flows_3d_zoom = flows_3d[zoom_start_idx:zoom_end_idx] if flows_3d is not None else None
+    flows_geo_zoom = flows_geo[zoom_start_idx:zoom_end_idx] if flows_geo is not None else None
     
     calibrated_results_zoom = {}
     for jtype, data in calibrated_results.items():
