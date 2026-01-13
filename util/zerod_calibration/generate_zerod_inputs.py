@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 import csv
 from collections import defaultdict, OrderedDict
 from util.zerod_calibration.calibration_helpers import *
+from util.zerod_calibration.post_processing import *
 try:
     from scipy.interpolate import CubicSpline, interp1d
     HAS_SCIPY_INTERP = True
@@ -134,12 +135,49 @@ def create_geometric_zerod_input_rom(geo_dir, centerline_path, output_path,
     
     print(f"Using SimVascular ROM workflow to generate 0D input")
     
-    # Find inlet and outlet caps (handles both svVascularize and SimVascular formats)
-    print("Identifying inlet and outlet caps...")
-    inlet_cap, outlet_caps, mesh_surfaces_dir = find_inlet_outlet_caps(geo_dir)
+    # Find inlet and outlet caps
+    # If geo_dir doesn't exist or doesn't have mesh files, use centerline-based approach
+    use_centerline_caps = False
+    if geo_dir is None or not os.path.exists(geo_dir):
+        use_centerline_caps = True
+    else:
+        # Check if mesh-surfaces directory exists
+        mesh_surfaces_paths = [
+            os.path.join(geo_dir, 'mesh', 'fluid_msh_0', 'mesh-surfaces'),
+            os.path.join(geo_dir, 'mesh-complete', 'mesh-surfaces')
+        ]
+        if not any(os.path.exists(p) for p in mesh_surfaces_paths):
+            use_centerline_caps = True
     
-    # Get geometry name from directory
-    geo_name = os.path.basename(geo_dir.rstrip('/'))
+    if use_centerline_caps:
+        print("Identifying inlet and outlet caps from centerline data...")
+        # Try to find geometric input to get vessel names
+        geometric_input_path = None
+        if geo_dir and os.path.exists(geo_dir):
+            geometric_input_path = os.path.join(geo_dir, 'geometric_input.json')
+            if not os.path.exists(geometric_input_path):
+                # Try parent directory
+                parent_dir = os.path.dirname(geo_dir)
+                geometric_input_path = os.path.join(parent_dir, os.path.basename(geo_dir), 'geometric_input.json')
+                if not os.path.exists(geometric_input_path):
+                    geometric_input_path = None
+        
+        inlet_cap, outlet_caps, mesh_surfaces_dir = find_inlet_outlet_caps_from_centerline(
+            centerline_path, geometric_input_path=geometric_input_path
+        )
+    else:
+        # Find inlet and outlet caps (handles both svVascularize and SimVascular formats)
+        print("Identifying inlet and outlet caps from mesh files...")
+        inlet_cap, outlet_caps, mesh_surfaces_dir = find_inlet_outlet_caps(geo_dir)
+    
+    # Get geometry name from directory or centerline path
+    if geo_dir and os.path.exists(geo_dir):
+        geo_name = os.path.basename(geo_dir.rstrip('/'))
+    else:
+        # Extract from centerline path or output path
+        geo_name = os.path.basename(centerline_path).replace('.vtp', '')
+        if not geo_name:
+            geo_name = os.path.basename(os.path.dirname(output_path))
     
     # Create temporary directory for ROM workflow files
     temp_dir = os.path.join(os.path.dirname(output_path), 'rom_temp')
@@ -166,87 +204,19 @@ def create_geometric_zerod_input_rom(geo_dir, centerline_path, output_path,
     # Format outlet_caps_base as a Python list literal for the script
     outlet_caps_base_str = '[' + ', '.join([f"'{cap}'" for cap in outlet_caps_base]) + ']'
     
-    # Extract outlet resistances from XML file
+    # Extract outlet resistances from XML file (if available)
     print(f"\nExtracting outlet resistances from XML file...")
     print(f"  Looking for outlet caps: {outlet_caps}")
     # Create mapping from base names (without .vtp) to full names (with .vtp)
     # XML BC names don't include .vtp extension
-    outlet_caps_base = {}
+    outlet_caps_base_dict = {}
     for cap in outlet_caps:
         base_name = cap.replace('.vtp', '') if cap.endswith('.vtp') else cap
-        outlet_caps_base[base_name] = cap
-    print(f"  Outlet caps base names (for XML matching): {list(outlet_caps_base.keys())}")
+        outlet_caps_base_dict[base_name] = cap
+    print(f"  Outlet caps base names (for XML matching): {list(outlet_caps_base_dict.keys())}")
     
     outlet_resistances = {}
-    xml_files = [
-        os.path.join(geo_dir, 'fluid_simulation_0-0.xml'),
-        os.path.join(geo_dir, 'fluid_simulation.xml'),
-    ]
-    xml_path = None
-    for path in xml_files:
-        print(f"  Checking for XML file: {path}")
-        if os.path.exists(path):
-            xml_path = path
-            print(f"  Found XML file: {xml_path}")
-            break
     
-    if xml_path:
-        try:
-            print(f"  Parsing XML file...")
-            tree = ET.parse(xml_path)
-            root = tree.getroot()
-            add_equation = root.find('Add_equation')
-            if add_equation is None:
-                print(f"  Warning: No 'Add_equation' element found in XML")
-            else:
-                print(f"  Found 'Add_equation' element, searching for boundary conditions...")
-                all_bcs = add_equation.findall('Add_BC')
-                print(f"  Found {len(all_bcs)} boundary condition(s) in XML")
-                
-                for bc in all_bcs:
-                    bc_name = bc.get('name')
-                    bc_type = bc.find('Type')
-                    value_elem = bc.find('Value')
-                    
-                    print(f"    BC name: {bc_name}, type: {bc_type.text if bc_type is not None else 'None'}, value: {value_elem.text if value_elem is not None else 'None'}")
-                    
-                    # Outlet BCs are Neumann type with a Value (resistance)
-                    # XML BC names don't have .vtp extension, so compare against base names
-                    if bc_name:
-                        print(f"      Checking if '{bc_name}' is in outlet_caps_base: {bc_name in outlet_caps_base}")
-                        if bc_name in outlet_caps_base:
-                            print(f"      '{bc_name}' is an outlet cap")
-                            if bc_type is not None:
-                                print(f"      BC type is: '{bc_type.text}'")
-                                if bc_type.text == 'Neumann':
-                                    print(f"      BC type matches 'Neumann'")
-                                    if value_elem is not None:
-                                        print(f"      Value element found: '{value_elem.text}'")
-                                        try:
-                                            resistance = float(value_elem.text)
-                                            # Store using base name (without .vtp) to match XML BC names
-                                            outlet_resistances[bc_name] = resistance
-                                            print(f"      ✓ Found resistance for {bc_name}: {resistance}")
-                                        except (ValueError, TypeError) as e:
-                                            print(f"      ✗ Could not parse resistance value for {bc_name}: {e}, using default 1.0")
-                                    else:
-                                        print(f"      ✗ No Value element found for {bc_name}")
-                                else:
-                                    print(f"      ✗ BC type is not 'Neumann' (it's '{bc_type.text}')")
-                            else:
-                                print(f"      ✗ No Type element found for {bc_name}")
-                        else:
-                            print(f"      '{bc_name}' is not in outlet_caps list")
-                    else:
-                        print(f"      ✗ BC has no name attribute")
-        except Exception as e:
-            print(f"  ✗ Error parsing XML for outlet resistances: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        print(f"  ✗ No XML file found. Tried: {xml_files}")
-    
-    print(f"  Final outlet resistances dictionary: {outlet_resistances}")
     
     script_content = f"""import os
 from pathlib import Path
@@ -290,7 +260,7 @@ bcs.add_velocities(face_name='{inlet_cap_base}', file_name='{os.path.abspath(inf
         outlet_cap_base = outlet_cap.replace('.vtp', '') if outlet_cap.endswith('.vtp') else outlet_cap
         resistance = outlet_resistances.get(outlet_cap_base, 1.0)  # Default to 1.0 if not found
         print(f"  Using resistance {resistance} for {outlet_cap} (face_name: {outlet_cap_base})")
-        script_content += f"bcs.add_resistance(face_name='{outlet_cap_base}', resistance={1+0*resistance})\n"
+        script_content += f"bcs.add_resistance(face_name='{outlet_cap_base}', resistance={resistance})\n"
     
     script_content += f"""solution_params = params.Solution()
 solution_params.time_step = {dt}
@@ -359,6 +329,7 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
         vessel['zero_d_element_values']['C'] = cap_value
     # Set number of cardiac cycles to 1
     zerod_input['simulation_parameters']['number_of_cardiac_cycles'] = 1
+    
     # Fix junction types and validate junction structure
     if 'junctions' in zerod_input:
         for junc in zerod_input['junctions']:
@@ -372,6 +343,41 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
                 print(f"    BloodVessel junction only supports 1 inlet. Keeping first inlet only.")
                 # Keep only the first inlet
                 junc['inlet_vessels'] = [inlet_vessels[0]]
+    
+    # Remove unused resistance BCs (BCs that are not referenced by any vessel)
+    print(f"\n  Removing unused resistance BCs...")
+    if 'boundary_conditions' in zerod_input:
+        # Find all resistance BC names that are actually used by vessels
+        used_resistance_bcs = set()
+        for vessel in zerod_input.get('vessels', []):
+            if 'boundary_conditions' in vessel and 'outlet' in vessel['boundary_conditions']:
+                bc_name = vessel['boundary_conditions']['outlet']
+                used_resistance_bcs.add(bc_name)
+        
+        # Filter boundary conditions to keep only:
+        # 1. Non-RESISTANCE BCs (like INFLOW)
+        # 2. RESISTANCE BCs that are actually used by vessels
+        original_bcs = zerod_input['boundary_conditions']
+        filtered_bcs = []
+        removed_count = 0
+        
+        for bc in original_bcs:
+            if bc.get('bc_type') != 'RESISTANCE':
+                # Keep all non-resistance BCs
+                filtered_bcs.append(bc)
+            elif bc.get('bc_name') in used_resistance_bcs:
+                # Keep resistance BCs that are used
+                filtered_bcs.append(bc)
+            else:
+                # Remove unused resistance BCs
+                removed_count += 1
+        
+        zerod_input['boundary_conditions'] = filtered_bcs
+        
+        if removed_count > 0:
+            print(f"    Removed {removed_count} unused resistance BC(s)")
+        print(f"    Kept {len(used_resistance_bcs)} used resistance BC(s)")
+    
     zerod_input['simulation_parameters']['number_of_cardiac_cycles'] = 1
     # Move to final output location
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -422,6 +428,35 @@ def update_simulation_parameters(geo_dir, json_path, inlet_cap_name, capacitance
         zerod_input['simulation_parameters']['steady_initial'] = False
         zerod_input['simulation_parameters']['absolute_tolerance'] = 1e-5
         zerod_input['simulation_parameters']['maximum_nonlinear_iterations'] = 50
+        
+        # Calculate cardiac cycle period from boundary condition time array
+        if 'boundary_conditions' in zerod_input and len(zerod_input['boundary_conditions']) > 0:
+            bc = zerod_input['boundary_conditions'][0]
+            if 'bc_values' in bc and 't' in bc['bc_values']:
+                t_array = bc['bc_values']['t']
+                if len(t_array) > 1:
+                    # Cardiac cycle period is the time span of the BC array
+                    # For evenly spaced times: period = t[-1] - t[0] + dt
+                    # Or simply: period = t[-1] if t[0] == 0
+                    if t_array[0] == 0.0:
+                        cardiac_period = t_array[-1]
+                    else:
+                        dt = t_array[1] - t_array[0] if len(t_array) > 1 else 0.0
+                        cardiac_period = t_array[-1] - t_array[0] + dt
+                    zerod_input['simulation_parameters']['cardiac_cycle_period'] = cardiac_period
+                    print(f"  Set cardiac_cycle_period to {cardiac_period:.6f} s (from BC time array)")
+                elif len(t_array) == 1:
+                    # Single time point - use default
+                    zerod_input['simulation_parameters']['cardiac_cycle_period'] = 1.0
+                    print(f"  Warning: Only one time point in BC, using default cardiac_cycle_period = 1.0 s")
+            else:
+                # No BC time array - use default
+                zerod_input['simulation_parameters']['cardiac_cycle_period'] = 1.0
+                print(f"  Warning: No BC time array found, using default cardiac_cycle_period = 1.0 s")
+        else:
+            # No boundary conditions - use default
+            zerod_input['simulation_parameters']['cardiac_cycle_period'] = 1.0
+            print(f"  Warning: No boundary conditions found, using default cardiac_cycle_period = 1.0 s")
     
     # Set all capacitance (C) values to 10^-10
     capacitance_value = 1e-10
@@ -468,8 +503,9 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     if centerline_soln_path and geo_dir:
         time_step_size = timestep_from_1D(centerline_soln_path, geo_dir)
     # If we are using a 0D solution, we use the timestep size from the geometric input
-    else:
-        time_step_size = inp["boundary_conditions"][0]["bc_values"]["t"][1] - inp["boundary_conditions"][0]["bc_values"]["t"][0]
+    # else:
+        # print(f"  Warning: No centerline solution path or geo_dir provided, using default time step size: {time_step_size:.6f} s")
+        #time_step_size = inp["boundary_conditions"][0]["bc_values"]["t"][1] - inp["boundary_conditions"][0]["bc_values"]["t"][0]
     
     # We get the inflow BC values from the observations
     if "flow:INFLOW:branch0_seg0" in observations["y"]:
@@ -504,9 +540,9 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     # Add calibration parameters
     inp["calibration_parameters"] = {
         "tolerance_gradient": 1e-4,
-        "tolerance_increment": 1e-10,
+        "tolerance_increment": 1e-4,
         "maximum_iterations": 100,
-        "calibrate_stenosis_coefficient":False,
+        "calibrate_stenosis_coefficient":True,
         "set_capacitance_to_zero": False,
     }
     
@@ -543,154 +579,6 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     
     print(f"Calibration input saved to: {output_path}")
     return inp
-
-
-def fit_outlet_resistances_from_3d(geometric_input_path, observations):
-    """
-    Fit outlet boundary condition resistances and distal pressures from 3D solution observations.
-    Fits linear relationship: P = R*Q + Pd using least squares regression.
-    
-    Args:
-        geometric_input_path: Path to geometric 0D input JSON (will be updated)
-        observations: Dictionary with observation data (y, dy) containing outlet pressure and flow
-    
-    Returns:
-        Dictionary mapping outlet BC names to fitted (R, Pd) tuples
-    """
-    print(f"\nFitting outlet resistances and distal pressures from 3D solution...")
-    
-    # Load geometric input
-    with open(geometric_input_path, 'r') as f:
-        inp = json.load(f)
-    
-    # Extract outlet resistances and distal pressures
-    outlet_params = {}
-    
-    # Find all outlet BCs in geometric input
-    outlet_bcs = {}
-    for bc in inp.get('boundary_conditions', []):
-        if bc.get('bc_type') == 'RESISTANCE':
-            bc_name = bc.get('bc_name')
-            if bc_name:
-                outlet_bcs[bc_name] = bc
-    
-    # Find vessels with outlet BCs
-    vessels = inp.get('vessels', [])
-    vessel_to_bc = {}
-    for vessel in vessels:
-        if 'boundary_conditions' in vessel and 'outlet' in vessel['boundary_conditions']:
-            bc_name = vessel['boundary_conditions']['outlet']
-            vessel_name = vessel['vessel_name']
-            vessel_to_bc[vessel_name] = bc_name
-    
-    print(f"  Found {len(outlet_bcs)} outlet boundary conditions")
-    
-    # Extract pressure and flow for each outlet
-    obs_y = observations.get('y', {})
-    
-    for vessel_name, bc_name in vessel_to_bc.items():
-        if bc_name not in outlet_bcs:
-            print(f"  Warning: BC {bc_name} not found in boundary_conditions")
-            continue
-        
-        # Look for pressure and flow observations
-        # Pattern: "pressure:{vessel_name}:{bc_name}" and "flow:{vessel_name}:{bc_name}"
-        pressure_key = f"pressure:{vessel_name}:{bc_name}"
-        flow_key = f"flow:{vessel_name}:{bc_name}"
-        
-        if pressure_key not in obs_y:
-            print(f"  Warning: No pressure observation found for {vessel_name}:{bc_name}")
-            continue
-        
-        if flow_key not in obs_y:
-            print(f"  Warning: No flow observation found for {vessel_name}:{bc_name}")
-            continue
-        
-        pressures = np.array(obs_y[pressure_key])
-        flows = np.array(obs_y[flow_key])
-        
-        # Convert to numpy arrays if needed
-        if isinstance(pressures, list):
-            pressures = np.array(pressures)
-        if isinstance(flows, list):
-            flows = np.array(flows)
-        
-        # Filter out invalid values (inf, nan)
-        valid_mask = np.isfinite(pressures) & np.isfinite(flows)
-        
-        if not np.any(valid_mask):
-            print(f"  Warning: No valid data points for {vessel_name}:{bc_name}")
-            print(f"    Pressure range: [{np.min(pressures):.2f}, {np.max(pressures):.2f}]")
-            print(f"    Flow range: [{np.min(flows):.2f}, {np.max(flows):.2f}]")
-            continue
-        
-        valid_pressures = pressures[valid_mask]
-        valid_flows = flows[valid_mask]
-        
-        if len(valid_pressures) < 2:
-            print(f"  Warning: Insufficient data points for {vessel_name}:{bc_name} (need at least 2)")
-            continue
-        
-        # Fit linear relationship: P = R*Q + Pd
-        # Using least squares: [R, Pd] = (Q^T * Q)^(-1) * Q^T * P
-        # Where Q is the design matrix: [flows, ones]
-        try:
-            # Create design matrix: [flows, ones] for [R, Pd]
-            A = np.vstack([valid_flows, np.ones(len(valid_flows))]).T
-            b = valid_pressures
-            
-            # Solve least squares: [R, Pd] = (A^T * A)^(-1) * A^T * b
-            params, residuals, rank, s = np.linalg.lstsq(A, b, rcond=None)
-            
-            fitted_resistance = float(params[0])
-            fitted_pd = float(params[1])
-            
-            # Check if fit is reasonable
-            if not np.isfinite(fitted_resistance) or not np.isfinite(fitted_pd):
-                print(f"  Warning: Invalid fit parameters for {vessel_name}:{bc_name}")
-                continue
-            
-            # Check if resistance is positive (should be for physical validity)
-            if fitted_resistance < 0:
-                print(f"  Warning: Negative resistance fitted for {vessel_name}:{bc_name} ({fitted_resistance:.4f}), using absolute value")
-                fitted_resistance = abs(fitted_resistance)
-            
-            outlet_params[bc_name] = (fitted_resistance, fitted_pd)
-            
-            # Calculate R-squared for quality assessment
-            predicted_pressures = fitted_resistance * valid_flows + fitted_pd
-            ss_res = np.sum((valid_pressures - predicted_pressures) ** 2)
-            ss_tot = np.sum((valid_pressures - np.mean(valid_pressures)) ** 2)
-            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
-            
-            print(f"  {bc_name} ({vessel_name}):")
-            print(f"    Pressure range: [{np.min(valid_pressures):.2f}, {np.max(valid_pressures):.2f}] dynes/cm²")
-            print(f"    Flow range: [{np.min(valid_flows):.2f}, {np.max(valid_flows):.2f}] cm³/s")
-            print(f"    Fitted R: {fitted_resistance:.4f}")
-            print(f"    Fitted Pd: {fitted_pd:.4f}")
-            print(f"    R²: {r_squared:.4f}")
-            
-        except np.linalg.LinAlgError as e:
-            print(f"  Warning: Linear regression failed for {vessel_name}:{bc_name}: {e}")
-            continue
-    
-    # Update geometric input with fitted resistances and distal pressures
-    print(f"\n  Updating geometric input with fitted parameters...")
-    for bc_name, (resistance, pd) in outlet_params.items():
-        if bc_name in outlet_bcs:
-            old_resistance = outlet_bcs[bc_name]['bc_values'].get('R', 1.0)
-            old_pd = outlet_bcs[bc_name]['bc_values'].get('Pd', 0.0)
-            outlet_bcs[bc_name]['bc_values']['R'] = resistance
-            outlet_bcs[bc_name]['bc_values']['Pd'] = pd
-            print(f"    {bc_name}: R {old_resistance:.4f} -> {resistance:.4f}, Pd {old_pd:.4f} -> {pd:.4f}")
-    
-    # Save updated geometric input
-    with open(geometric_input_path, 'w') as f:
-        json.dump(inp, f, indent=4)
-    
-    print(f"  ✓ Updated geometric input saved to: {geometric_input_path}")
-    
-    return outlet_params
 
 
 def run_calibration(calibration_input_path, output_path):
@@ -772,7 +660,8 @@ def run_calibration(calibration_input_path, output_path):
                 # For non-HybridJunction types, remove pressure_recovery_coefficient if present
                 if 'pressure_recovery_coefficient' in junc['junction_values']:
                     del junc['junction_values']['pressure_recovery_coefficient']
-    
+    # Replace simulation parameters with the original values
+
     # Write calibrated output
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'w') as f:
@@ -781,6 +670,52 @@ def run_calibration(calibration_input_path, output_path):
     print(f"Calibrated output saved to: {output_path}")
     return cali
 
+
+def restore_simulation_parameters(calibrated_output_path, geometric_input_path):
+    """
+    Restore simulation parameters to the original values.
+    """
+    with open(calibrated_output_path, 'r') as f:
+        cali = json.load(f)
+    with open(geometric_input_path, 'r') as f:
+        geometric_input = json.load(f)
+    cali['simulation_parameters'] = geometric_input['simulation_parameters']
+
+    # replace inflow bc with the original values
+    cali['boundary_conditions'] = geometric_input['boundary_conditions']
+    with open(calibrated_output_path, 'w') as f:
+        json.dump(cali, f, indent=4)
+    print(f"Restored simulation parameters to: {calibrated_output_path}")
+    return cali
+
+def refine_inlet_bc_for_forward_simulation(input_path, refinement_factor=2):
+    """
+    Refine the inlet boundary condition for forward simulation.
+    """
+    with open(input_path, 'r') as f:
+        cali = json.load(f)
+
+    bc_time = cali['boundary_conditions'][0]['bc_values']['t']
+    bc_flow = cali['boundary_conditions'][0]['bc_values']['Q']
+    bc_time_refined = np.linspace(0, bc_time[-1], len(bc_time) * refinement_factor, endpoint=True).tolist()
+    bc_flow_refined = interp1d(bc_time, bc_flow, kind='cubic')(bc_time_refined)
+    # plot the original and refined boundary condition
+    if False:
+        plt.scatter(bc_time, bc_flow, label='Original')
+        plt.scatter(bc_time_refined, bc_flow_refined, label='Refined')
+        plt.legend()
+        plt.show()
+    cali['boundary_conditions'][0]['bc_values']['t'] = list(bc_time_refined)
+    cali['boundary_conditions'][0]['bc_values']['Q'] = list(bc_flow_refined)
+    cali['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = len(bc_time_refined)
+
+    cali['simulation_parameters']['number_of_cardiac_cycles'] = 10
+    cali['simulation_parameters']['output_all_cycles'] = False
+
+    with open(input_path, 'w') as f:
+        json.dump(cali, f, indent=4)
+    print(f"Refined inlet boundary condition for forward simulation to: {input_path}")
+    return
 
 def modify_junction_types(config, junction_type):
     """
@@ -1044,892 +979,6 @@ def run_forward_simulation(input_json_path, output_csv_path):
         raise RuntimeError(error_msg)
 
 
-def read_zerod_csv(csv_path):
-    """
-    Read 0D simulation results from CSV.
-    Handles both 'location' and 'name' as the vessel identifier column.
-    
-    Returns:
-        results: Dictionary {location: {time: {field: value}}}
-        times: Sorted list of time values
-    """
-    results = {}
-    times = set()
-    
-    if not os.path.exists(csv_path):
-        return results, sorted(times)
-    
-    with open(csv_path, 'r') as f:
-        reader = csv.DictReader(f)
-        # Check which column name is used for vessel identifier
-        fieldnames = reader.fieldnames
-        if fieldnames is None:
-            return results, sorted(times)
-        
-        vessel_col = None
-        if 'location' in fieldnames:
-            vessel_col = 'location'
-        elif 'name' in fieldnames:
-            vessel_col = 'name'
-        else:
-            return results, sorted(times)
-        
-        for row in reader:
-            location = row[vessel_col]
-            time = float(row['time'])
-            times.add(time)
-            
-            if location not in results:
-                results[location] = {}
-            if time not in results[location]:
-                results[location][time] = {}
-            
-            # Extract all numeric fields
-            for key, value in row.items():
-                if key not in [vessel_col, 'time']:
-                    try:
-                        results[location][time][key] = float(value)
-                    except (ValueError, TypeError):
-                        continue
-    
-    return results, sorted(times)
-
-
-def get_time_period(set_name, geo_name):
-    """
-    Try to get the actual time period from 3D simulation XML.
-    Returns time period in seconds, or None if not found.
-    """
-    # Try to find XML file
-    xml_paths = [
-        os.path.join('data', 'threeD', set_name, geo_name, 'fluid_simulation_0-0.xml'),
-        os.path.join('data', 'threeD', set_name, geo_name, 'solver.inp'),
-    ]
-    
-    for xml_path in xml_paths:
-        if os.path.exists(xml_path):
-            try:
-                tree = ET.parse(xml_path)
-                root = tree.getroot()
-                
-                # Look for time step size and number of time steps
-                gen_params = root.find('General_Parameters')
-                if gen_params is None:
-                    gen_params = root.find('GeneralSimulationParameters')
-                
-                if gen_params is not None:
-                    num_time_steps_elem = gen_params.find('Number_of_time_steps')
-                    time_step_size_elem = gen_params.find('Time_step_size')
-                    
-                    if num_time_steps_elem is not None and time_step_size_elem is not None:
-                        num_time_steps = int(num_time_steps_elem.text)
-                        time_step_size = float(time_step_size_elem.text)
-                        time_period = num_time_steps * time_step_size
-                        return time_period
-            except Exception as e:
-                pass
-    
-    return None
-
-
-def plot_junction_pressure_differences(calibration_input_path, geometric_input_path, output_dir, zoom_start_idx=None, zoom_end_idx=None, set_name=None, geo_name=None, verbose=False):
-    """
-    Plot pressure differences at junctions from 3D solution.
-    For each junction, plots pressure difference (inlet - outlet) vs time, one line per outlet.
-    
-    Args:
-        calibration_input_path: Path to calibration input JSON (contains 3D observations)
-        geometric_input_path: Path to geometric input JSON (contains junction structure)
-        output_dir: Directory to save plots
-        zoom_start_idx: Start index for zoom window (default: 599)
-        zoom_end_idx: End index for zoom window (default: 699)
-        set_name: Set name (for extracting time period from XML)
-        geo_name: Geometry name (for extracting time period from XML)
-        verbose: If True, print detailed information
-    """
-    try:
-        import matplotlib
-        matplotlib.use('Agg')  # Use non-interactive backend
-        import matplotlib.pyplot as plt
-    except ImportError:
-        if verbose:
-            print("  ✗ matplotlib not available, skipping junction pressure difference plots")
-        return
-    
-    # Read calibration input for 3D observations
-    if not os.path.exists(calibration_input_path):
-        if verbose:
-            print(f"  ✗ Calibration input not found: {calibration_input_path}")
-        return
-    
-    with open(calibration_input_path, 'r') as f:
-        calib_data = json.load(f)
-    
-    # Get 3D observations
-    if '_full_observations' in calib_data and 'y' in calib_data['_full_observations']:
-        obs_3d = calib_data['_full_observations']['y']
-    elif 'y' in calib_data:
-        obs_3d = calib_data['y']
-    else:
-        if verbose:
-            print("  ✗ No 3D observations found in calibration input")
-        return
-    
-    # Read geometric input for junction structure
-    if not os.path.exists(geometric_input_path):
-        if verbose:
-            print(f"  ✗ Geometric input not found: {geometric_input_path}")
-        return
-    
-    with open(geometric_input_path, 'r') as f:
-        geo_input = json.load(f)
-    
-    junctions = geo_input.get('junctions', [])
-    if not junctions:
-        if verbose:
-            print("  ✗ No junctions found in geometric input")
-        return
-    
-    # Create output directory
-    junction_plots_dir = os.path.join(output_dir, 'junction_pressure_differences')
-    os.makedirs(junction_plots_dir, exist_ok=True)
-    
-    # Set default zoom window if not provided
-    if zoom_start_idx is None:
-        zoom_start_idx = 599
-    if zoom_end_idx is None:
-        zoom_end_idx = 699
-    
-    # Extract time array from observations (use first available observation)
-    num_obs = None
-    for obs_key, obs_values in obs_3d.items():
-        if isinstance(obs_values, list) and len(obs_values) > 0:
-            num_obs = len(obs_values)
-            break
-    
-    if num_obs is None:
-        if verbose:
-            print("  ✗ Could not determine number of observations")
-        return
-    
-    # Get time period in seconds (for converting to actual time)
-    time_period = None
-    if set_name and geo_name:
-        time_period = get_time_period(set_name, geo_name)
-    
-    if time_period is None:
-        if verbose:
-            print("  ⚠ Could not determine time period, using default 1.0 s")
-        time_period = 1.0
-    else:
-        if verbose:
-            print(f"  Time period: {time_period:.4f} s")
-    
-    # Create time array in seconds (same as inlet comparison plots)
-    time_array = np.linspace(0.0, time_period, num_obs)
-    time_label = 'Time (s)'
-    
-    # Validate and adjust zoom window
-    max_length = len(time_array)
-    if zoom_start_idx >= max_length:
-        zoom_start_idx = max(0, max_length - 100)
-        zoom_end_idx = max_length
-    elif zoom_end_idx > max_length:
-        zoom_end_idx = max_length
-    
-    if zoom_start_idx >= zoom_end_idx:
-        zoom_start_idx = max(0, max_length - 100)
-        zoom_end_idx = max_length
-    
-    # Process each junction
-    plot_count = 0
-    for junc in junctions:
-        junc_name = junc.get('junction_name', '')
-        if not junc_name:
-            continue
-        
-        inlet_vessels = junc.get('inlet_vessels', [])
-        outlet_vessels = junc.get('outlet_vessels', [])
-        
-        if not inlet_vessels or not outlet_vessels:
-            if verbose:
-                print(f"  ⚠ Skipping junction {junc_name}: missing inlet or outlet vessels")
-            continue
-        
-        # Get inlet vessel (assuming single inlet for now)
-        inlet_vessel_idx = inlet_vessels[0] if inlet_vessels else None
-        if inlet_vessel_idx is None:
-            continue
-        
-        # Find inlet vessel name
-        vessels = geo_input.get('vessels', [])
-        if inlet_vessel_idx >= len(vessels):
-            continue
-        
-        inlet_vessel = vessels[inlet_vessel_idx]
-        inlet_vessel_name = inlet_vessel.get('vessel_name', '')
-        
-        if not inlet_vessel_name:
-            continue
-        
-        # Get inlet pressure at junction: "pressure:inlet_vessel_name:junction_name"
-        inlet_key = f"pressure:{inlet_vessel_name}:{junc_name}"
-        if inlet_key not in obs_3d:
-            if verbose:
-                print(f"  ⚠ Junction {junc_name}: inlet pressure observation not found ({inlet_key})")
-            continue
-        
-        inlet_pressure = np.array(obs_3d[inlet_key])
-        if len(inlet_pressure) != len(time_array):
-            # Interpolate to match time array if needed
-            if HAS_SCIPY_INTERP:
-                from scipy.interpolate import interp1d
-                inlet_times = np.arange(len(inlet_pressure))
-                interp_func = interp1d(inlet_times, inlet_pressure, kind='linear', 
-                                     bounds_error=False, fill_value=(inlet_pressure[0], inlet_pressure[-1]))
-                inlet_pressure = interp_func(time_array)
-            else:
-                # Simple resampling
-                indices = np.linspace(0, len(inlet_pressure) - 1, len(time_array)).astype(int)
-                inlet_pressure = inlet_pressure[indices]
-        
-        # Get inlet flow at junction: "flow:inlet_vessel_name:junction_name"
-        inlet_flow_key = f"flow:{inlet_vessel_name}:{junc_name}"
-        inlet_flow = None
-        if inlet_flow_key in obs_3d:
-            inlet_flow = np.array(obs_3d[inlet_flow_key])
-            if len(inlet_flow) != len(time_array):
-                # Interpolate to match time array if needed
-                if HAS_SCIPY_INTERP:
-                    from scipy.interpolate import interp1d
-                    inlet_flow_times = np.arange(len(inlet_flow))
-                    interp_func = interp1d(inlet_flow_times, inlet_flow, kind='linear', 
-                                         bounds_error=False, fill_value=(inlet_flow[0], inlet_flow[-1]))
-                    inlet_flow = interp_func(time_array)
-                else:
-                    # Simple resampling
-                    indices = np.linspace(0, len(inlet_flow) - 1, len(time_array)).astype(int)
-                    inlet_flow = inlet_flow[indices]
-        
-        # Get outlet pressures and calculate differences
-        outlet_pressures = {}
-        outlet_vessel_names = []
-        
-        for outlet_vessel_idx in outlet_vessels:
-            if outlet_vessel_idx >= len(vessels):
-                continue
-            
-            outlet_vessel = vessels[outlet_vessel_idx]
-            outlet_vessel_name = outlet_vessel.get('vessel_name', '')
-            
-            if not outlet_vessel_name:
-                continue
-            
-            # Get outlet pressure at junction: "pressure:junction_name:outlet_vessel_name"
-            outlet_key = f"pressure:{junc_name}:{outlet_vessel_name}"
-            if outlet_key not in obs_3d:
-                if verbose:
-                    print(f"  ⚠ Junction {junc_name}: outlet pressure observation not found for {outlet_vessel_name} ({outlet_key})")
-                continue
-            
-            outlet_pressure = np.array(obs_3d[outlet_key])
-            if len(outlet_pressure) != len(time_array):
-                # Interpolate to match time array if needed
-                if HAS_SCIPY_INTERP:
-                    from scipy.interpolate import interp1d
-                    outlet_times = np.arange(len(outlet_pressure))
-                    interp_func = interp1d(outlet_times, outlet_pressure, kind='linear', 
-                                         bounds_error=False, fill_value=(outlet_pressure[0], outlet_pressure[-1]))
-                    outlet_pressure = interp_func(time_array)
-                else:
-                    # Simple resampling
-                    indices = np.linspace(0, len(outlet_pressure) - 1, len(time_array)).astype(int)
-                    outlet_pressure = outlet_pressure[indices]
-            
-            # Calculate pressure difference: inlet - outlet (convert to mmHg by dividing by 1333)
-            pressure_diff = (inlet_pressure - outlet_pressure) / 1333.0
-            outlet_pressures[outlet_vessel_name] = pressure_diff
-            outlet_vessel_names.append(outlet_vessel_name)
-        
-        if not outlet_pressures:
-            if verbose:
-                print(f"  ⚠ Junction {junc_name}: no valid outlet pressures found")
-            continue
-        
-        # Create plot with two subplots (zoomed on top, full on bottom)
-        fig, axes = plt.subplots(2, 1, figsize=(12, 10))
-        ax1_zoom = axes[0]  # Top: zoomed view
-        ax1_full = axes[1]   # Bottom: full view
-        
-        # Define colors: red, blue, green (cycle if more than 3 outlets)
-        color_list = ['red', 'blue', 'green']
-        
-        # Extract zoom window data (use indices, not time values)
-        zoom_mask = np.zeros(len(time_array), dtype=bool)
-        zoom_mask[zoom_start_idx:zoom_end_idx] = True
-        zoom_times = time_array[zoom_mask]
-        
-        # Plot zoomed view (top subplot)
-        for i, (outlet_name, pressure_diff) in enumerate(outlet_pressures.items()):
-            color = color_list[i % len(color_list)]
-            zoom_pressure_diff = pressure_diff[zoom_mask]
-            ax1_zoom.plot(zoom_times, zoom_pressure_diff, label=outlet_name, linewidth=2, color=color)
-        
-        ax1_zoom.set_ylabel('Pressure Difference (mmHg)', fontsize=20)
-        ax1_zoom.set_title(f'Junction {junc_name}: Pressure Difference (Inlet - Outlets)', fontsize=20)
-        ax1_zoom.legend(loc='best', fontsize=20)
-        ax1_zoom.grid(True, alpha=0.3)
-        ax1_zoom.tick_params(axis='both', labelsize=20)
-        ax1_zoom.set_xlim(zoom_times[0], zoom_times[-1])
-        
-        # Add second y-axis for inlet flow in zoomed view (if available)
-        if inlet_flow is not None:
-            ax2_zoom = ax1_zoom.twinx()
-            zoom_inlet_flow = inlet_flow[zoom_mask]
-            ax2_zoom.plot(zoom_times, zoom_inlet_flow, label='Inlet Flow', linewidth=2, color='black', linestyle='--')
-            ax2_zoom.set_ylabel('Flow (cm³/s)', fontsize=20, color='black')
-            ax2_zoom.tick_params(axis='y', labelsize=20, labelcolor='black')
-            ax2_zoom.legend(loc='upper center', fontsize=20)
-        
-        # Plot full view (bottom subplot)
-        for i, (outlet_name, pressure_diff) in enumerate(outlet_pressures.items()):
-            color = color_list[i % len(color_list)]
-            ax1_full.plot(time_array, pressure_diff, label=outlet_name, linewidth=2, color=color)
-        
-        ax1_full.set_xlabel(time_label, fontsize=20)
-        ax1_full.set_ylabel('Pressure Difference (mmHg)', fontsize=20)
-        ax1_full.grid(True, alpha=0.3)
-        ax1_full.tick_params(axis='both', labelsize=20)
-        ax1_full.set_xlim(time_array[0], time_array[-1])
-        
-        # Add shaded region to indicate zoom window (use time values, not indices)
-        zoom_time_start = time_array[zoom_start_idx]
-        zoom_time_end = time_array[min(zoom_end_idx, len(time_array)-1)]
-        ax1_full.axvspan(zoom_time_start, zoom_time_end, alpha=0.3, color='gray', label='Zoom region')
-        
-        # Add second y-axis for inlet flow in full view (if available)
-        if inlet_flow is not None:
-            ax2_full = ax1_full.twinx()
-            ax2_full.plot(time_array, inlet_flow, label='Inlet Flow', linewidth=2, color='black', linestyle='--')
-            ax2_full.set_ylabel('Flow (cm³/s)', fontsize=20, color='black')
-            ax2_full.tick_params(axis='y', labelsize=20, labelcolor='black')
-        
-        plt.tight_layout()
-        
-        # Save plot
-        plot_filename = f"{junc_name}_pressure_difference.png"
-        plot_path = os.path.join(junction_plots_dir, plot_filename)
-        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-        plt.close()
-        
-        plot_count += 1
-        if verbose:
-            print(f"  ✓ Created plot for junction {junc_name}: {plot_path}")
-    
-    if verbose:
-        print(f"  Created {plot_count} junction pressure difference plots in: {junction_plots_dir}")
-    else:
-        print(f"  Created {plot_count} junction pressure difference plots")
-
-
-def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, output_csv_path=None, verbose=False):
-    """
-    Calculate and print Mean Squared Error (MSE) between 3D observations and 0D solutions.
-    Optionally saves results to a CSV file.
-    
-    Args:
-        calibration_input_path: Path to calibration input JSON (contains 3D observations)
-        csv_results_dict: Dictionary mapping modality names to CSV file paths
-                         e.g., {'geometric': 'path/to/geometric_results.csv',
-                                'NORMAL_JUNCTION': 'path/to/normal_junction_results.csv', ...}
-        geometric_input_path: Optional path to geometric input JSON (for understanding structure)
-        zoom_start_idx: Start index for zoom window (default: 599)
-        zoom_end_idx: End index for zoom window (default: 699)
-        output_csv_path: Optional path to save MSE results CSV (default: auto-generate based on calibration_input_path)
-        verbose: If True, print detailed comparison table. If False, only print summary.
-    
-    Returns:
-        Dictionary mapping modality names to MSE results
-    """
-    print("\n" + "="*80)
-    print("Calculating Mean Squared Error (MSE) between 3D and 0D solutions")
-    print("="*80)
-    
-    # Read 3D observations from calibration input
-    if not os.path.exists(calibration_input_path):
-        print(f"  ✗ Calibration input not found: {calibration_input_path}")
-        return {}
-    
-    with open(calibration_input_path, 'r') as f:
-        calib_data = json.load(f)
-    
-    # Get 3D observations (use full observations if available, otherwise use y)
-    if '_full_observations' in calib_data and 'y' in calib_data['_full_observations']:
-        obs_3d = calib_data['_full_observations']['y']
-    elif 'y' in calib_data:
-        obs_3d = calib_data['y']
-    else:
-        print("  ✗ No 3D observations found in calibration input")
-        return {}
-    
-    print(f"  Found {len(obs_3d)} 3D observation series")
-    
-    # Read geometric input to understand vessel/junction structure
-    vessels = []
-    junctions = []
-    if geometric_input_path and os.path.exists(geometric_input_path):
-        with open(geometric_input_path, 'r') as f:
-            geo_input = json.load(f)
-        vessels = geo_input.get('vessels', [])
-        junctions = geo_input.get('junctions', [])
-    
-    # Calculate MSE for each modality
-    mse_results = {}
-    
-    for modality_name, csv_path in csv_results_dict.items():
-        if not csv_path or not os.path.exists(csv_path):
-            print(f"\n  {modality_name}: ✗ CSV file not found: {csv_path}")
-            continue
-        
-        print(f"\n  {modality_name}:")
-        print(f"    Reading 0D results from: {csv_path}")
-        
-        # Read 0D CSV results
-        results_0d, times_0d = read_zerod_csv(csv_path)
-        
-        if not results_0d or not times_0d:
-            print(f"    ✗ No data found in CSV file")
-            continue
-        
-        print(f"    Found {len(results_0d)} vessels, {len(times_0d)} time points")
-        
-        # Determine zoom window - matching the shaded region in plots
-        # This corresponds to the zoom window used in plot_inlet_comparison.py and plot_outlet_comparison.py
-        
-        # Find the maximum length of 3D observations to validate zoom window
-        max_3d_length = 0
-        for obs_values_3d in obs_3d.values():
-            if isinstance(obs_values_3d, list):
-                max_3d_length = max(max_3d_length, len(obs_values_3d))
-            elif hasattr(obs_values_3d, '__len__'):
-                max_3d_length = max(max_3d_length, len(obs_values_3d))
-        
-        # Validate and adjust zoom window if needed
-        if zoom_start_idx >= max_3d_length:
-            zoom_start_idx = max(0, max_3d_length - 105)
-            zoom_end_idx = max_3d_length
-        elif zoom_end_idx > max_3d_length:
-            zoom_end_idx = max_3d_length
-        
-        # Ensure valid range
-        if zoom_start_idx >= zoom_end_idx:
-            zoom_start_idx = max(0, max_3d_length - 105)
-            zoom_end_idx = max_3d_length
-        
-        num_zoom_timesteps = zoom_end_idx - zoom_start_idx
-        print(f"    Using zoom window: timesteps {zoom_start_idx} to {zoom_end_idx-1} ({num_zoom_timesteps} timesteps)")
-        
-        # Calculate MSE for each observation
-        modality_mse = {}
-        total_mse_pressure = []
-        total_mse_flow = []
-        
-        for obs_key, obs_values_3d in obs_3d.items():
-            if not isinstance(obs_values_3d, list):
-                obs_values_3d = obs_values_3d.tolist() if hasattr(obs_values_3d, 'tolist') else list(obs_values_3d)
-            
-            # Apply zoom window filter: use timesteps in range [zoom_start_idx:zoom_end_idx] (matching shaded region in plots)
-            if len(obs_values_3d) > zoom_start_idx:
-                obs_values_3d = obs_values_3d[zoom_start_idx:zoom_end_idx]
-            else:
-                # If 3D data is shorter than zoom window, skip this observation
-                continue
-            
-            # Parse observation key: "pressure:INFLOW:branch0_seg0" or "flow:branch0_seg0:J0"
-            parts = obs_key.split(':')
-            if len(parts) != 3:
-                continue
-            
-            obs_type = parts[0]  # 'pressure' or 'flow'
-            part1 = parts[1]     # e.g., 'INFLOW', 'branch0_seg0', or 'J0'
-            part2 = parts[2]     # e.g., 'branch0_seg0' or 'J0'
-            
-            # Determine vessel name and field (pressure_in/out, flow_in/out)
-            vessel_name = None
-            field_name = None
-            
-            # Handle inlet observations: "pressure:INFLOW:branch0_seg0" or "flow:INFLOW:branch0_seg0"
-            if part1 == 'INFLOW':
-                vessel_name = part2
-                field_name = f"{obs_type}_in"
-            # Handle outlet observations at junctions: "pressure:branch0_seg0:J0" or "flow:branch0_seg0:J0"
-            elif part1.startswith('branch') and part2.startswith('J'):
-                vessel_name = part1
-                field_name = f"{obs_type}_out"
-            # Handle inlet observations at junctions: "pressure:J0:branch1_seg0" or "flow:J0:branch1_seg0"
-            elif part1.startswith('J') and part2.startswith('branch'):
-                vessel_name = part2
-                field_name = f"{obs_type}_in"
-            else:
-                # Try to find vessel name in parts
-                for p in [part1, part2]:
-                    if p.startswith('branch'):
-                        vessel_name = p
-                        # Guess field based on position
-                        if part1 == vessel_name:
-                            field_name = f"{obs_type}_out"
-                        else:
-                            field_name = f"{obs_type}_in"
-                        break
-            
-            if not vessel_name or not field_name:
-                continue
-            
-            # Extract 0D data for this vessel
-            if vessel_name not in results_0d:
-                continue
-            
-            # Extract 0D values at available time points
-            times_0d_valid = []
-            obs_values_0d_raw = []
-            for time in sorted(times_0d):
-                if time in results_0d[vessel_name] and field_name in results_0d[vessel_name][time]:
-                    times_0d_valid.append(time)
-                    obs_values_0d_raw.append(results_0d[vessel_name][time][field_name])
-            
-            if len(times_0d_valid) < 2:
-                continue
-            
-            # Apply zoom window filter to 0D data: use same index range [zoom_start_idx:zoom_end_idx]
-            if len(obs_values_0d_raw) > zoom_start_idx:
-                obs_values_0d_zoomed = obs_values_0d_raw[zoom_start_idx:zoom_end_idx]
-                times_0d_zoomed = times_0d_valid[zoom_start_idx:zoom_end_idx]
-            else:
-                # If 0D data is shorter than zoom window, skip this observation
-                continue
-            
-            if len(obs_values_0d_zoomed) == 0:
-                continue
-            
-            # Interpolate 0D data to match 3D observation time points (now both are in zoom window)
-            if len(obs_values_3d) != len(obs_values_0d_zoomed):
-                # Interpolate 0D data to match 3D observation count
-                # Use linear interpolation
-                times_0d_array = np.array(times_0d_zoomed)
-                obs_values_0d_array = np.array(obs_values_0d_zoomed)
-                
-                # Create time points matching 3D observation count
-                time_min = times_0d_array[0]
-                time_max = times_0d_array[-1]
-                times_3d_interp = np.linspace(time_min, time_max, len(obs_values_3d))
-                
-                # Interpolate 0D values
-                if HAS_SCIPY_INTERP:
-                    from scipy.interpolate import interp1d
-                    interp_func = interp1d(times_0d_array, obs_values_0d_array, kind='linear', 
-                                          bounds_error=False, fill_value=(obs_values_0d_array[0], obs_values_0d_array[-1]))
-                    obs_values_0d = interp_func(times_3d_interp)
-                else:
-                    # Use numpy interpolation
-                    obs_values_0d = np.interp(times_3d_interp, times_0d_array, obs_values_0d_array)
-            else:
-                # Same length, use directly (both are already in zoom window)
-                obs_values_0d = np.array(obs_values_0d_zoomed)
-            
-            # Convert to numpy arrays
-            obs_values_0d = np.array(obs_values_0d)
-            obs_values_3d = np.array(obs_values_3d)
-            
-            # Ensure 0D data matches the length of filtered 3D data (zoom window)
-            # If 0D data is longer, take the last portion matching 3D length
-            if len(obs_values_0d) > len(obs_values_3d):
-                obs_values_0d = obs_values_0d[-len(obs_values_3d):]
-            elif len(obs_values_0d) < len(obs_values_3d):
-                # If 0D data is shorter, pad or truncate 3D to match
-                obs_values_3d = obs_values_3d[:len(obs_values_0d)]
-            
-            # Remove NaN and inf values
-            valid_mask = np.isfinite(obs_values_0d) & np.isfinite(obs_values_3d)
-            if not np.any(valid_mask):
-                continue
-            
-            obs_values_0d_clean = obs_values_0d[valid_mask]
-            obs_values_3d_clean = obs_values_3d[valid_mask]
-            
-            # Ensure same length (take minimum)
-            min_len = min(len(obs_values_0d_clean), len(obs_values_3d_clean))
-            if min_len == 0:
-                continue
-            
-            obs_values_0d_clean = obs_values_0d_clean[:min_len]
-            obs_values_3d_clean = obs_values_3d_clean[:min_len]
-            
-            # Calculate MSE
-            diff = obs_values_0d_clean - obs_values_3d_clean
-            
-            mse = np.mean(diff**2)
-            mae = np.mean(np.abs(diff))
-            
-            # Save comparison plot for debugging
-            try:
-                import matplotlib
-                matplotlib.use('Agg')  # Use non-interactive backend
-                import matplotlib.pyplot as plt
-                
-                # Create output directory for debug plots
-                base_dir = os.path.dirname(calibration_input_path)
-                debug_plots_dir = os.path.join(base_dir, 'mse_debug_plots')
-                os.makedirs(debug_plots_dir, exist_ok=True)
-                
-                # Create safe filename from observation key
-                safe_obs_key = obs_key.replace(':', '_').replace('/', '_')
-                plot_filename = f"{modality_name}_{safe_obs_key}_comparison.png"
-                plot_path = os.path.join(debug_plots_dir, plot_filename)
-                
-                # Create comparison plot
-                fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-                
-                # Plot 0D vs 3D as scatter or line plot
-                if len(obs_values_0d_clean) > 50:
-                    # For many points, use scatter
-                    ax.scatter(obs_values_3d_clean, obs_values_0d_clean, alpha=0.5, s=10, label='Data points')
-                else:
-                    # For fewer points, use line plot
-                    ax.plot(obs_values_3d_clean, obs_values_0d_clean, 'o-', alpha=0.7, markersize=4, label='Data points')
-                
-                # Add diagonal line (perfect match)
-                min_val = min(np.min(obs_values_3d_clean), np.min(obs_values_0d_clean))
-                max_val = max(np.max(obs_values_3d_clean), np.max(obs_values_0d_clean))
-                ax.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect match', alpha=0.5)
-                
-                ax.set_xlabel('3D Observations', fontsize=12)
-                ax.set_ylabel('0D Results', fontsize=12)
-                # Format MSE and MAE in engineering notation
-                ax.set_title(f'{modality_name}: {obs_key}\nMSE={mse:.3E}, MAE={mae:.3E}, n={min_len}', fontsize=10)
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-                
-                plt.tight_layout()
-                plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-                plt.close()
-            except Exception as e:
-                pass  # Silently fail if plotting is not available
-            
-            modality_mse[obs_key] = {
-                'mse': mse,
-                'type': obs_type,
-                'vessel': vessel_name,
-                'n_points': min_len
-            }
-            
-            if obs_type == 'pressure':
-                total_mse_pressure.append(mse)
-            else:
-                total_mse_flow.append(mse)
-        
-        # Store results
-        mse_results[modality_name] = {
-            'individual': modality_mse,
-            'mean_pressure_mse': np.mean(total_mse_pressure) if total_mse_pressure else np.nan,
-            'mean_flow_mse': np.mean(total_mse_flow) if total_mse_flow else np.nan,
-            'overall_mse': np.mean(total_mse_pressure + total_mse_flow) if (total_mse_pressure or total_mse_flow) else np.nan
-        }
-        
-        # Print summary (only in verbose mode)
-        if verbose:
-            print(f"    Calculated MSE for {len(modality_mse)} observation series")
-            if total_mse_pressure:
-                print(f"    Mean Pressure MSE: {np.mean(total_mse_pressure):.3E}")
-            if total_mse_flow:
-                print(f"    Mean Flow MSE: {np.mean(total_mse_flow):.3E}")
-            if total_mse_pressure or total_mse_flow:
-                print(f"    Overall MSE: {np.mean(total_mse_pressure + total_mse_flow):.3E}")
-    
-    # Get all observation keys and modalities for summary
-    all_obs_keys = set()
-    for modality_results in mse_results.values():
-        all_obs_keys.update(modality_results['individual'].keys())
-    
-    if not all_obs_keys:
-        if verbose:
-            print("  No observations found for comparison")
-        return mse_results
-    
-    modalities = list(csv_results_dict.keys())
-    
-    # Print detailed comparison table (only in verbose mode)
-    if verbose:
-        print("\n" + "="*80)
-        print("Detailed MSE Comparison")
-        print("="*80)
-        
-        # Print header
-        print(f"\n{'Observation':<40} {'Type':<10} ", end="")
-        for mod in modalities:
-            if mod in mse_results:
-                print(f"{mod:<15} ", end="")
-        print()
-        print("-" * (50 + 15 * len([m for m in modalities if m in mse_results])))
-        
-        # Print each observation
-        for obs_key in sorted(all_obs_keys):
-            # Truncate long keys for display
-            display_key = obs_key[:38] + ".." if len(obs_key) > 40 else obs_key
-            
-            # Get type from first available result
-            obs_type = "unknown"
-            for modality_results in mse_results.values():
-                if obs_key in modality_results['individual']:
-                    obs_type = modality_results['individual'][obs_key]['type']
-                    break
-            
-            print(f"{display_key:<40} {obs_type:<10} ", end="")
-            for mod in modalities:
-                if mod in mse_results and obs_key in mse_results[mod]['individual']:
-                    mse_val = mse_results[mod]['individual'][obs_key]['mse']
-                    print(f"{mse_val:>13.3E}  ", end="")
-                else:
-                    print(f"{'N/A':>13}  ", end="")
-            print()
-        
-        print("\n" + "-" * (50 + 15 * len([m for m in modalities if m in mse_results])))
-    
-    # Always print summary statistics with column headers
-    # Print header row
-    print(f"{'':<40} {'':<10} ", end="")
-    for mod in modalities:
-        if mod in mse_results:
-            print(f"{mod:<15} ", end="")
-    print()
-    print("-" * (50 + 15 * len([m for m in modalities if m in mse_results])))
-    
-    # Print summary rows
-    print(f"{'SUMMARY':<40} {'':<10} ", end="")
-    for mod in modalities:
-        if mod in mse_results:
-            overall = mse_results[mod]['overall_mse']
-            if not np.isnan(overall):
-                print(f"{overall:>13.3E}  ", end="")
-            else:
-                print(f"{'N/A':>13}  ", end="")
-    print()
-    
-    print(f"{'Mean Pressure MSE':<40} {'':<10} ", end="")
-    for mod in modalities:
-        if mod in mse_results:
-            mse_p = mse_results[mod]['mean_pressure_mse']
-            if not np.isnan(mse_p):
-                print(f"{mse_p:>13.3E}  ", end="")
-            else:
-                print(f"{'N/A':>13}  ", end="")
-    print()
-    
-    print(f"{'Mean Flow MSE':<40} {'':<10} ", end="")
-    for mod in modalities:
-        if mod in mse_results:
-            mse_f = mse_results[mod]['mean_flow_mse']
-            if not np.isnan(mse_f):
-                print(f"{mse_f:>13.3E}  ", end="")
-            else:
-                print(f"{'N/A':>13}  ", end="")
-    print()
-    
-    # Save results to CSV file
-    if output_csv_path is None:
-        # Auto-generate CSV path based on calibration input path
-        base_dir = os.path.dirname(calibration_input_path)
-        base_name = os.path.basename(calibration_input_path).replace('.json', '')
-        output_csv_path = os.path.join(base_dir, f'{base_name}_mse_comparison.csv')
-    
-    try:
-        os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
-        
-        # Write CSV with two sections: summary and detailed
-        with open(output_csv_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            
-            # Write header
-            writer.writerow(['MSE Comparison Results'])
-            writer.writerow(['Zoom Window', f'{zoom_start_idx} to {zoom_end_idx-1}'])
-            writer.writerow([])
-            
-            # Write summary statistics
-            writer.writerow(['Summary Statistics'])
-            writer.writerow(['Metric'] + modalities)
-            
-            # Overall MSE
-            row = ['Overall MSE']
-            for mod in modalities:
-                if mod in mse_results:
-                    overall = mse_results[mod]['overall_mse']
-                    if not np.isnan(overall):
-                        row.append(f'{overall:.3E}')
-                    else:
-                        row.append('N/A')
-                else:
-                    row.append('N/A')
-            writer.writerow(row)
-            
-            # Mean Pressure MSE
-            row = ['Mean Pressure MSE']
-            for mod in modalities:
-                if mod in mse_results:
-                    mse_p = mse_results[mod]['mean_pressure_mse']
-                    if not np.isnan(mse_p):
-                        row.append(f'{mse_p:.3E}')
-                    else:
-                        row.append('N/A')
-                else:
-                    row.append('N/A')
-            writer.writerow(row)
-            
-            # Mean Flow MSE
-            row = ['Mean Flow MSE']
-            for mod in modalities:
-                if mod in mse_results:
-                    mse_f = mse_results[mod]['mean_flow_mse']
-                    if not np.isnan(mse_f):
-                        row.append(f'{mse_f:.3E}')
-                    else:
-                        row.append('N/A')
-                else:
-                    row.append('N/A')
-            writer.writerow(row)
-            
-            writer.writerow([])
-            writer.writerow(['Detailed Results'])
-            writer.writerow(['Observation', 'Type', 'Vessel'] + modalities)
-            
-            # Write individual observation results
-            for obs_key in sorted(all_obs_keys):
-                # Get type and vessel from first available result
-                obs_type = "unknown"
-                vessel_name = "unknown"
-                for modality_results in mse_results.values():
-                    if obs_key in modality_results['individual']:
-                        obs_type = modality_results['individual'][obs_key]['type']
-                        vessel_name = modality_results['individual'][obs_key].get('vessel', 'unknown')
-                        break
-                
-                row = [obs_key, obs_type, vessel_name]
-                for mod in modalities:
-                    if mod in mse_results and obs_key in mse_results[mod]['individual']:
-                        mse_val = mse_results[mod]['individual'][obs_key]['mse']
-                        row.append(f'{mse_val:.3E}')
-                    else:
-                        row.append('N/A')
-                writer.writerow(row)
-        
-        print(f"\n  ✓ MSE results saved to: {output_csv_path}")
-        
-    except Exception as e:
-        print(f"  ✗ Warning: Could not save MSE results to CSV: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    return mse_results
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Generate svZeroDSolver input files and run calibration"
@@ -1953,8 +1002,6 @@ def main():
                        help='Number of time steps for ROM workflow (default: 5)')
     parser.add_argument('--num-cardiac-cycles', type=int, default=1,
                        help='Number of cardiac cycles for 0D simulation (default: 1)')
-    parser.add_argument('--timestep-scale-factor', type=float, default=0.25,
-                       help='Scaling factor for 0D simulation timestep relative to 1D/3D timestep (default: 0.25, i.e., quarter the timestep)')
     parser.add_argument('--junction-types', nargs='+', 
                        default=['BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction'],
                        help='Junction types to generate calibration files for (default: all four types)')
@@ -2006,8 +1053,23 @@ def main():
                 centerline_path = path
                 break
         
+        # If not found in 3D directory, try 1D solution (for VMR files)
+        oneD_soln_paths = []
         if centerline_path is None:
-            raise FileNotFoundError(f"Centerline file not found. Tried: {centerline_paths}")
+            oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
+            oneD_soln_paths = [
+                os.path.join(oneD_dir, 'unsteady_soln.vtp'),
+                os.path.join(oneD_dir, 'unsteady_soln_5.vtp'),
+            ]
+            for path in oneD_soln_paths:
+                if os.path.exists(path):
+                    centerline_path = path
+                    print(f"  Using 1D solution as centerline source: {centerline_path}")
+                    break
+        
+        if centerline_path is None:
+            all_paths = centerline_paths + oneD_soln_paths
+            raise FileNotFoundError(f"Centerline file not found. Tried: {all_paths}")
     
     # Skip all steps if --plot-only is set
     if args.plot_only:
@@ -2023,22 +1085,34 @@ def main():
             raise FileNotFoundError(f"Calibration input not found: {calibration_input_path}")
     else:
         # Step 1: Create geometric 0D input using SimVascular ROM workflow
-        print("\n" + "="*60)
-        print("Step 1: Creating geometric 0D input file using SimVascular ROM")
-        print("="*60)
-        
-        # Get geometry directory
-        geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
-        if not os.path.exists(geo_dir):
-            raise FileNotFoundError(f"Geometry directory not found: {geo_dir}")
-        
-        zerod_input, vessel_bc_map = create_geometric_zerod_input_rom(
-            geo_dir, centerline_path, geometric_input_path,
-            simvascular_path=args.simvascular_path,
-            dt=args.dt,
-            num_time_steps=args.num_time_steps,
-            num_cardiac_cycles=args.num_cardiac_cycles
-        )
+        if args.set_name == "VMR":
+            richter_0d_path = os.path.join('data', 'zeroD', args.set_name, 'richter-0d', args.geo_name+'.json')
+            zerod_input = load_from_json(richter_0d_path)
+            zerod_input['simulation_parameters']['output_all_cycles'] = True
+            zerod_input['simulation_parameters']['number_of_cardiac_cycles'] = 1
+            os.makedirs(os.path.dirname(geometric_input_path), exist_ok=True)
+            save_to_json(zerod_input, geometric_input_path)
+            print(f"    ✓ Richter 0D input saved to: {geometric_input_path}")
+        else:
+    
+            print("\n" + "="*60)
+            print("Step 1: Creating geometric 0D input file using SimVascular ROM")
+            print("="*60)
+            
+            # Get geometry directory (may not exist for VMR files)
+            geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
+            if not os.path.exists(geo_dir):
+                print(f"  Warning: Geometry directory not found: {geo_dir}")
+                print(f"  Will use centerline-based workflow (for VMR files)")
+                geo_dir = None
+            
+            zerod_input, vessel_bc_map = create_geometric_zerod_input_rom(
+                geo_dir, centerline_path, geometric_input_path,
+                simvascular_path=args.simvascular_path,
+                dt=args.dt,
+                num_time_steps=args.num_time_steps,
+                num_cardiac_cycles=args.num_cardiac_cycles
+            )
         
         # Step 2: Extract observations and create calibration inputs for each junction type
         if not args.skip_calibration:
@@ -2049,8 +1123,6 @@ def main():
         if args.one_d_soln:
             print(f"  Start index for observations: {args.start_idx}")
             observations = extract_observations_from_1d(args.one_d_soln, geometric_input_path, geo_dir=geo_dir, start_idx=args.start_idx)
-        elif args.three_d_soln_dir:
-            raise NotImplementedError("3D solution extraction not yet implemented")
         else:
             # Try to find 1D solution automatically
             # First check data/oneD/set_name/geo_name
@@ -2109,16 +1181,19 @@ def main():
             
             print(f"    ✓ Base calibration input saved to: {calibration_input_path}")
             
-            # Fit outlet resistances from 3D solution
-            fitted_resistances = fit_outlet_resistances_from_3d(geometric_input_path, observations)
-            
-            # Update base calibration input with fitted outlet BCs
-            print(f"\n  Updating base calibration input with fitted outlet BCs...")
-            update_outlet_bcs_in_file(calibration_input_path, fitted_resistances, "base calibration input")
-            
-            # Update geometric input with BC from calibration input
-            update_geometric_input_with_calibration_bc(geometric_input_path, calibration_input_path)
-            
+            # Fit outlet resistances from 3D solution (skip for VMR cases)
+            if args.set_name != "VMR":
+
+                fitted_resistances = fit_outlet_resistances_from_3d(geometric_input_path, observations)
+                # Update base calibration input with fitted outlet BCs
+                print(f"\n  Updating base calibration input with fitted outlet BCs...")
+                update_outlet_bcs_in_file(calibration_input_path, fitted_resistances, "base calibration input")
+                
+            else:
+                fitted_resistances = None
+                # Update geometric input with BC from calibration input
+            update_geometric_input_with_calibration_bc(geometric_input_path, calibration_input_path)   
+                
             # Create calibration input variants for each junction type
             print(f"\n  Creating calibration input variants for each junction type...")
             with open(calibration_input_path, 'r') as f:
@@ -2135,9 +1210,10 @@ def main():
                     json.dump(jtype_config, f, indent=4)
                 
                 # Update with fitted outlet BCs (after writing, to ensure they're in the file)
-                update_outlet_bcs_in_file(jtype_input_path, fitted_resistances, f"{jtype} calibration input")
-                
-                print(f"      ✓ Saved to: {jtype_input_path}")
+                # Skip for VMR cases (fitted_resistances will be empty)
+                # if fitted_resistances:
+                #     update_outlet_bcs_in_file(jtype_input_path, fitted_resistances, f"{jtype} calibration input")
+                # print(f"      ✓ Saved to: {jtype_input_path}")
             
             # Step 3: Run calibration for each junction type
             if not args.plot_only:
@@ -2156,13 +1232,18 @@ def main():
                         calibrated_config = run_calibration(jtype_input_path, jtype_output_path)
                         print(f"    ✓ Calibration completed for {jtype}")
                         # Replace inlet BC with original observed BC
-                        replace_inlet_bc_in_calibrated_output(jtype_output_path, jtype_input_path)
-                        # Update outlet BCs with fitted values
-                        update_outlet_bcs_in_file(jtype_output_path, fitted_resistances, f"{jtype} calibrated output")
+                        #replace_inlet_bc_in_calibrated_output(jtype_output_path, jtype_input_path)
+                        # Update outlet BCs with fitted values (skip for VMR cases)
+                        # if fitted_resistances:
+                        #     update_outlet_bcs_in_file(jtype_output_path, fitted_resistances, f"{jtype} calibrated output")
                     except Exception as e:
                         print(f"    ✗ Calibration failed for {jtype}: {e}")
                         import traceback
                         traceback.print_exc()
+                
+                    # Restore simulation parameters to the original values
+                    # restore_simulation_parameters(jtype_output_path, geometric_input_path)
+                print(f"    ✓ Simulation parameters restored to: {jtype_output_path}")
                 
                 # Step 4: Run forward simulations
                 print("\n" + "="*60)
@@ -2171,7 +1252,10 @@ def main():
                 
                 # Run simulation with geometric input
                 print("\n  Running simulation with geometric input...")
+                refinement_factor = 4
                 try:
+                    
+                    refine_inlet_bc_for_forward_simulation(geometric_input_path, refinement_factor)
                     run_forward_simulation(geometric_input_path, geometric_results_csv)
                     print(f"    ✓ Geometric simulation completed successfully")
                 except Exception as e:
@@ -2181,6 +1265,7 @@ def main():
                 for jtype in args.junction_types:
                     print(f"\n  Running simulation with calibrated {jtype} input...")
                     calibrated_output_path = junction_type_paths[jtype]['calibrated_output']
+                    refine_inlet_bc_for_forward_simulation(calibrated_output_path, refinement_factor)
                     calibrated_results_csv = junction_type_paths[jtype]['calibrated_results']
                     
                     try:
@@ -2221,7 +1306,8 @@ def main():
                     zoom_start_idx=args.zoom_start,
                     zoom_end_idx=args.zoom_end,
                     output_csv_path=mse_csv_path,
-                    verbose=verbose
+                    verbose=verbose,
+                    set_name=args.set_name
                 )
             except Exception as e:
                 print(f"  ✗ Error calculating MSE: {e}")
@@ -2237,10 +1323,13 @@ def main():
         print("="*60)
         
         try:
-            # Import plotting functions
+            # Import plotting functions from unified location comparison script
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visualizations'))
-            from plot_inlets_comparison import plot_inlet_comparison, get_all_vessels_from_csv as get_vessels_inlets
-            from plot_outlet_comparison import plot_outlet_comparison, get_all_vessels_from_csv as get_vessels_outlets
+            from plot_location_comparison import (
+                plot_location_comparison, 
+                get_all_locations_from_calibration_input,
+                get_time_period as get_time_period_func
+            )
             
             # Build dictionary of calibrated CSV paths for all junction types
             calibrated_csv_paths = {}
@@ -2254,36 +1343,35 @@ def main():
             elif not os.path.exists(geometric_results_csv):
                 print("  Warning: Geometric results CSV not found, skipping plots")
             else:
-                # Get list of all vessels
-                all_vessels = get_vessels_inlets(geometric_results_csv)
-                print(f"  Found {len(all_vessels)} vessels to plot")
+                # Get all locations from calibration input
+                all_locations = get_all_locations_from_calibration_input(str(calibration_input_path))
+                print(f"  Found {len(all_locations)} locations to plot")
                 
-                # Create output directories
-                inlets_output_dir = os.path.join('results', 'inlets_comparison', args.set_name, args.geo_name)
-                outlets_output_dir = os.path.join('results', 'outlet_comparison', args.set_name, args.geo_name)
-                os.makedirs(inlets_output_dir, exist_ok=True)
-                os.makedirs(outlets_output_dir, exist_ok=True)
+                # Create output directory
+                output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name)
+                os.makedirs(output_dir, exist_ok=True)
                 
                 # Get time period (for plotting)
                 time_period = None
                 try:
-                    from plot_inlets_comparison import get_time_period as get_time_period_func
                     time_period = get_time_period_func(args.set_name, args.geo_name)
                 except Exception:
                     pass
                 
-                # Plot inlets (one plot per vessel)
-                print(f"\n  Creating inlet comparison plots...")
-                inlet_success_count = 0
-                for vessel_name in all_vessels:
-                    inlet_plot_path = os.path.join(inlets_output_dir, f"{vessel_name}_inlet_comparison.png")
+                # Plot each location
+                print(f"\n  Creating location comparison plots...")
+                success_count = 0
+                for location in all_locations:
+                    # Generate safe filename from location (replace : with _)
+                    safe_location = location.replace(':', '_')
+                    plot_path = os.path.join(output_dir, f"{safe_location}_comparison.png")
                     try:
-                        success = plot_inlet_comparison(
+                        success = plot_location_comparison(
                             str(calibration_input_path),
                             str(geometric_results_csv),
                             calibrated_csv_paths,
-                            vessel_name,
-                            inlet_plot_path,
+                            location,
+                            plot_path,
                             set_name=args.set_name,
                             geo_name=args.geo_name,
                             time_period=time_period,
@@ -2293,49 +1381,18 @@ def main():
                             verbose=False
                         )
                         if success:
-                            inlet_success_count += 1
+                            success_count += 1
                     except Exception as e:
-                        print(f"    ✗ Failed to create inlet plot for {vessel_name}: {e}")
+                        print(f"    ✗ Failed to create plot for {location}: {e}")
                         import traceback
                         traceback.print_exc()
                 
-                print(f"    Created {inlet_success_count}/{len(all_vessels)} inlet comparison plots")
-                
-                # Plot outlets (one plot per vessel)
-                print(f"\n  Creating outlet comparison plots...")
-                outlet_success_count = 0
-                for vessel_name in all_vessels:
-                    outlet_plot_path = os.path.join(outlets_output_dir, f"{vessel_name}_outlet_comparison.png")
-                    try:
-                        success = plot_outlet_comparison(
-                            str(calibration_input_path),
-                            str(geometric_results_csv),
-                            calibrated_csv_paths,
-                            vessel_name,
-                            outlet_plot_path,
-                            set_name=args.set_name,
-                            geo_name=args.geo_name,
-                            time_period=time_period,
-                            geometric_input_path=str(geometric_input_path),
-                            zoom_start_idx=args.zoom_start,
-                            zoom_end_idx=args.zoom_end,
-                            verbose=False
-                        )
-                        if success:
-                            outlet_success_count += 1
-                    except Exception as e:
-                        print(f"    ✗ Failed to create outlet plot for {vessel_name}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                
-                print(f"    Created {outlet_success_count}/{len(all_vessels)} outlet comparison plots")
-                print(f"\n  Plot output directories:")
-                print(f"    Inlets: {inlets_output_dir}")
-                print(f"    Outlets: {outlets_output_dir}")
+                print(f"    Created {success_count}/{len(all_locations)} location comparison plots")
+                print(f"\n  Plot output directory: {output_dir}")
                 
         except ImportError as e:
             print(f"  ✗ Could not import plotting functions: {e}")
-            print("  Make sure plot_inlets_comparison.py and plot_outlet_comparison.py are available")
+            print("  Make sure plot_location_comparison.py is available")
         except Exception as e:
             print(f"  ✗ Error generating plots: {e}")
             import traceback

@@ -454,11 +454,22 @@ def plot_outlet_comparison(calibration_input_path, geometric_csv_path, calibrate
     # Determine zoom window
     num_time_steps = len(times_geo)
     
-    # Use provided range or default to hardcoded values (599-699)
-    if zoom_start_idx is None:
-        zoom_start_idx = 599
-    if zoom_end_idx is None:
-        zoom_end_idx = 699
+    # Use provided range or set-specific defaults
+    if zoom_start_idx is None or zoom_end_idx is None:
+        if set_name == 'VMR':
+            # For VMR: zoom to 1-2 seconds (time_period is typically 2.0s)
+            vmr_period = time_period if time_period else 2.0
+            dt = vmr_period / (num_time_steps - 1) if num_time_steps > 1 else 1.0
+            if zoom_start_idx is None:
+                zoom_start_idx = int(1.0 / dt)
+            if zoom_end_idx is None:
+                zoom_end_idx = min(int(2.0 / dt) + 1, num_time_steps)
+        else:
+            # Default for other sets: indices 599-699
+            if zoom_start_idx is None:
+                zoom_start_idx = 599
+            if zoom_end_idx is None:
+                zoom_end_idx = 699
     
     # Validate and adjust zoom window if needed
     zoom_start_idx = max(0, min(zoom_start_idx, num_time_steps - 1))

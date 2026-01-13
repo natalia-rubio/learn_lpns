@@ -20,6 +20,258 @@ except (ImportError, ValueError, AttributeError):
     except (ImportError, ValueError, AttributeError):
         CubicSpline = None
 
+def fit_outlet_resistances_from_3d(geometric_input_path, observations):
+    """
+    Fit outlet boundary condition resistances and distal pressures from 3D solution observations.
+    Fits linear relationship: P = R*Q + Pd using least squares regression.
+    
+    Args:
+        geometric_input_path: Path to geometric 0D input JSON (will be updated)
+        observations: Dictionary with observation data (y, dy) containing outlet pressure and flow
+    
+    Returns:
+        Dictionary mapping outlet BC names to fitted (R, Pd) tuples
+    """
+    print(f"\nFitting outlet resistances and distal pressures from 3D solution...")
+    
+    # Load geometric input
+    with open(geometric_input_path, 'r') as f:
+        inp = json.load(f)
+    
+    # Extract outlet resistances and distal pressures
+    outlet_params = {}
+    
+    # Find all outlet BCs in geometric input
+    outlet_bcs = {}
+    for bc in inp.get('boundary_conditions', []):
+        if bc.get('bc_type') == 'RESISTANCE':
+            bc_name = bc.get('bc_name')
+            if bc_name:
+                outlet_bcs[bc_name] = bc
+    
+    # Find vessels with outlet BCs
+    vessels = inp.get('vessels', [])
+    vessel_to_bc = {}
+    for vessel in vessels:
+        if 'boundary_conditions' in vessel and 'outlet' in vessel['boundary_conditions']:
+            bc_name = vessel['boundary_conditions']['outlet']
+            vessel_name = vessel['vessel_name']
+            vessel_to_bc[vessel_name] = bc_name
+    
+    print(f"  Found {len(outlet_bcs)} outlet boundary conditions")
+    
+    # Extract pressure and flow for each outlet
+    obs_y = observations.get('y', {})
+    
+    for vessel_name, bc_name in vessel_to_bc.items():
+        if bc_name not in outlet_bcs:
+            print(f"  Warning: BC {bc_name} not found in boundary_conditions")
+            continue
+        
+        # Look for pressure and flow observations
+        # Pattern: "pressure:{vessel_name}:{bc_name}" and "flow:{vessel_name}:{bc_name}"
+        pressure_key = f"pressure:{vessel_name}:{bc_name}"
+        flow_key = f"flow:{vessel_name}:{bc_name}"
+        
+        if pressure_key not in obs_y:
+            print(f"  Warning: No pressure observation found for {vessel_name}:{bc_name}")
+            continue
+        
+        if flow_key not in obs_y:
+            print(f"  Warning: No flow observation found for {vessel_name}:{bc_name}")
+            continue
+        
+        pressures = np.array(obs_y[pressure_key])
+        flows = np.array(obs_y[flow_key])
+        
+        # Convert to numpy arrays if needed
+        if isinstance(pressures, list):
+            pressures = np.array(pressures)
+        if isinstance(flows, list):
+            flows = np.array(flows)
+        
+        # Filter out invalid values (inf, nan)
+        valid_mask = np.isfinite(pressures) & np.isfinite(flows)
+        
+        if not np.any(valid_mask):
+            print(f"  Warning: No valid data points for {vessel_name}:{bc_name}")
+            print(f"    Pressure range: [{np.min(pressures):.2f}, {np.max(pressures):.2f}]")
+            print(f"    Flow range: [{np.min(flows):.2f}, {np.max(flows):.2f}]")
+            continue
+        
+        valid_pressures = pressures[valid_mask]
+        valid_flows = flows[valid_mask]
+        
+        if len(valid_pressures) < 2:
+            print(f"  Warning: Insufficient data points for {vessel_name}:{bc_name} (need at least 2)")
+            continue
+        
+        # Fit linear relationship: P = R*Q + Pd
+        # Using least squares: [R, Pd] = (Q^T * Q)^(-1) * Q^T * P
+        # Where Q is the design matrix: [flows, ones]
+        try:
+            # Create design matrix: [flows, ones] for [R, Pd]
+            A = np.vstack([valid_flows, np.ones(len(valid_flows))]).T
+            b = valid_pressures
+            
+            # Solve least squares: [R, Pd] = (A^T * A)^(-1) * A^T * b
+            params, residuals, rank, s = np.linalg.lstsq(A, b, rcond=None)
+            
+            fitted_resistance = float(params[0])
+            fitted_pd = float(params[1])
+            
+            # Check if fit is reasonable
+            if not np.isfinite(fitted_resistance) or not np.isfinite(fitted_pd):
+                print(f"  Warning: Invalid fit parameters for {vessel_name}:{bc_name}")
+                continue
+            
+            # Check if resistance is positive (should be for physical validity)
+            if fitted_resistance < 0:
+                print(f"  Warning: Negative resistance fitted for {vessel_name}:{bc_name} ({fitted_resistance:.4f}), using absolute value")
+                fitted_resistance = abs(fitted_resistance)
+            
+            outlet_params[bc_name] = (fitted_resistance, fitted_pd)
+            
+            # Calculate R-squared for quality assessment
+            predicted_pressures = fitted_resistance * valid_flows + fitted_pd
+            ss_res = np.sum((valid_pressures - predicted_pressures) ** 2)
+            ss_tot = np.sum((valid_pressures - np.mean(valid_pressures)) ** 2)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+            
+            print(f"  {bc_name} ({vessel_name}):")
+            print(f"    Pressure range: [{np.min(valid_pressures):.2f}, {np.max(valid_pressures):.2f}] dynes/cm²")
+            print(f"    Flow range: [{np.min(valid_flows):.2f}, {np.max(valid_flows):.2f}] cm³/s")
+            print(f"    Fitted R: {fitted_resistance:.4f}")
+            print(f"    Fitted Pd: {fitted_pd:.4f}")
+            print(f"    R²: {r_squared:.4f}")
+            
+        except np.linalg.LinAlgError as e:
+            print(f"  Warning: Linear regression failed for {vessel_name}:{bc_name}: {e}")
+            continue
+    
+    # Update geometric input with fitted resistances and distal pressures
+    print(f"\n  Updating geometric input with fitted parameters...")
+    for bc_name, (resistance, pd) in outlet_params.items():
+        if bc_name in outlet_bcs:
+            old_resistance = outlet_bcs[bc_name]['bc_values'].get('R', 1.0)
+            old_pd = outlet_bcs[bc_name]['bc_values'].get('Pd', 0.0)
+            outlet_bcs[bc_name]['bc_values']['R'] = resistance
+            outlet_bcs[bc_name]['bc_values']['Pd'] = pd
+            print(f"    {bc_name}: R {old_resistance:.4f} -> {resistance:.4f}, Pd {old_pd:.4f} -> {pd:.4f}")
+    
+    # Save updated geometric input
+    with open(geometric_input_path, 'w') as f:
+        json.dump(inp, f, indent=4)
+    
+    print(f"  ✓ Updated geometric input saved to: {geometric_input_path}")
+    
+    return outlet_params
+
+def read_zerod_csv(csv_path):
+    """
+    Read 0D simulation results from CSV.
+    Handles both 'location' and 'name' as the vessel identifier column.
+    
+    Returns:
+        results: Dictionary {location: {time: {field: value}}}
+        times: Sorted list of time values
+    """
+    results = {}
+    times = set()
+    
+    if not os.path.exists(csv_path):
+        return results, sorted(times)
+    
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        # Check which column name is used for vessel identifier
+        fieldnames = reader.fieldnames
+        if fieldnames is None:
+            return results, sorted(times)
+        
+        vessel_col = None
+        if 'location' in fieldnames:
+            vessel_col = 'location'
+        elif 'name' in fieldnames:
+            vessel_col = 'name'
+        else:
+            return results, sorted(times)
+        
+        for row in reader:
+            location = row[vessel_col]
+            time = float(row['time'])
+            times.add(time)
+            
+            if location not in results:
+                results[location] = {}
+            if time not in results[location]:
+                results[location][time] = {}
+            
+            # Extract all numeric fields
+            for key, value in row.items():
+                if key not in [vessel_col, 'time']:
+                    try:
+                        results[location][time][key] = float(value)
+                    except (ValueError, TypeError):
+                        continue
+    
+    return results, sorted(times)
+
+def load_from_json(json_path):
+    """
+    Load JSON file from path.
+    """
+    with open(json_path, 'r') as f:
+        print(f"  Loading JSON file from: {json_path}")
+        geometric_input = json.load(f)
+    return geometric_input
+
+def save_to_json(geometric_input, json_path):
+    """
+    Save geometric input to JSON file.
+    """
+    with open(json_path, 'w') as f:
+        json.dump(geometric_input, f, indent=4)
+    print(f"  Saved geometric input to: {json_path}")
+    return
+
+
+def get_time_period(set_name, geo_name):
+    """
+    Try to get the actual time period from 3D simulation XML.
+    Returns time period in seconds, or None if not found.
+    """
+    # Try to find XML file
+    xml_paths = [
+        os.path.join('data', 'threeD', set_name, geo_name, 'fluid_simulation_0-0.xml'),
+        os.path.join('data', 'threeD', set_name, geo_name, 'solver.inp'),
+    ]
+    
+    for xml_path in xml_paths:
+        if os.path.exists(xml_path):
+            try:
+                tree = ET.parse(xml_path)
+                root = tree.getroot()
+                
+                # Look for time step size and number of time steps
+                gen_params = root.find('General_Parameters')
+                if gen_params is None:
+                    gen_params = root.find('GeneralSimulationParameters')
+                
+                if gen_params is not None:
+                    num_time_steps_elem = gen_params.find('Number_of_time_steps')
+                    time_step_size_elem = gen_params.find('Time_step_size')
+                    
+                    if num_time_steps_elem is not None and time_step_size_elem is not None:
+                        num_time_steps = int(num_time_steps_elem.text)
+                        time_step_size = float(time_step_size_elem.text)
+                        time_period = num_time_steps * time_step_size
+                        return time_period
+            except Exception as e:
+                pass
+    
+    return None
+
 def replace_inlet_bc_in_calibrated_output(calibrated_output_path, calibration_input_path):
     """
     Replace the inlet boundary condition in calibrated output with the original observed BC from calibration input.
@@ -153,6 +405,17 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
         geo_input['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = n_pts_inflow
         
         print(f"  Updated simulation_parameters.number_of_time_pts_per_cardiac_cycle to {n_pts_inflow}")
+        
+        # Update cardiac_cycle_period to match the BC time array
+        if refined_bc.get('t') and len(refined_bc['t']) > 1:
+            t_array = refined_bc['t']
+            if t_array[0] == 0.0:
+                cardiac_period = t_array[-1]
+            else:
+                dt = t_array[1] - t_array[0] if len(t_array) > 1 else 0.0
+                cardiac_period = t_array[-1] - t_array[0] + dt
+            geo_input['simulation_parameters']['cardiac_cycle_period'] = cardiac_period
+            print(f"  Updated simulation_parameters.cardiac_cycle_period to {cardiac_period:.6f} s (from BC time array)")
     
     if geo_updated:
         # Write updated geometric input
@@ -212,7 +475,7 @@ def update_outlet_bcs_in_file(file_path, outlet_params, file_type="calibration i
         print(f"  Warning: Could not update {file_type} file {file_path}: {e}")
         return False
 
-def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0, derivative_method='backward'):
+def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0, derivative_method='central'):
     """
     Extract observation data from 1D centerline solution VTP file.
     Extracts observations at boundaries and junctions following the format expected by svZeroDCalibrator.
@@ -300,6 +563,14 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
             time_step_size = sim_params['time_step_size']
             print(f"  Found XML time_step_size: {time_step_size:.6f} s")
             print(f"  Timestep increment in solution: {timestep_increment}")
+    # If we are using a VMR type geometry, get the dt from dictionary
+    elif 'VMR' in centerline_soln_path:
+        geometry_name = centerline_soln_path.split('/')[-2]
+        VMR_time_step_dict = {'0063_1001': 0.00041666875}
+        time_step_size = VMR_time_step_dict[geometry_name]
+        print(f"  Found time_step_size in VMR dictionary: {time_step_size:.6f} s")
+    else:
+        raise ValueError("Could not find time_step_size in XML or VMR dictionary")
     
     # Extract time array (assume uniform time steps)
     num_timesteps = len(pressure_timesteps)
@@ -325,6 +596,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     if time_step_size is not None:
         dt = time_step_size * timestep_increment
         print(f"  Calculated dt for derivatives: {dt:.6f} s (time_step_size * increment = {time_step_size:.6f} * {timestep_increment})")
+
     else:
         # Fallback: use normalized time difference
         dt = times[1] - times[0] if len(times) > 1 else 1.0
@@ -403,7 +675,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     # Extract observations at boundaries (inlet and outlets)
     # Inflow BC
     if inlet_idx is not None:
-        p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt, derivative_method, verbose=False)
+        p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt, derivative_method, verbose=True)
         if p_ref is not None:
             observations["y"][f"pressure:INFLOW:branch0_seg0"] = p_ref[start_idx:end_idx]
             observations["dy"][f"pressure:INFLOW:branch0_seg0"] = p_der[start_idx:end_idx]
@@ -591,6 +863,101 @@ def find_inlet_outlet_caps(geo_dir):
     print(f"  Mesh surfaces directory: {mesh_surfaces_dir}")
     
     return inlet_cap_name, outlet_caps, mesh_surfaces_dir
+
+def find_inlet_outlet_caps_from_centerline(centerline_path, geometric_input_path=None):
+    """
+    Find inlet and outlet caps from centerline data.
+    Uses branchId 0 as the inlet, and identifies terminal branches as outlets.
+    Names outlet caps based on outlet vessel names.
+    
+    Args:
+        centerline_path: Path to centerline VTP file (or 1D solution VTP)
+        geometric_input_path: Optional path to geometric input JSON (for vessel names)
+        
+    Returns:
+        inlet_cap: Inlet cap filename (e.g., "cap_branch0_seg0.vtp")
+        outlet_caps: List of outlet cap filenames (e.g., ["cap_branch1_seg0.vtp", ...])
+        mesh_surfaces_dir: None (not applicable for centerline-based workflow)
+    """
+    # Read centerline data
+    centerline_data, _ = read_centerline_vtp(centerline_path)
+    
+    branch_id = centerline_data.get('BranchId', None)
+    if branch_id is None:
+        raise ValueError("BranchId array not found in centerline")
+    
+    # Get unique branches
+    unique_branches = np.unique(branch_id)
+    
+    # Branch 0 is the inlet
+    if 0 not in unique_branches:
+        raise ValueError("BranchId 0 not found in centerline (expected inlet branch)")
+    
+    inlet_cap = "cap_branch0_seg0.vtp"
+    
+    # Identify terminal branches (outlets)
+    # A terminal branch is one that doesn't have any downstream branches
+    # We can use BifurcationId if available, or identify by checking branch connectivity
+    
+    outlet_caps = []
+    
+    if geometric_input_path and os.path.exists(geometric_input_path):
+        # Use geometric input to identify terminal vessels
+        with open(geometric_input_path, 'r') as f:
+            geo_input = json.load(f)
+        
+        vessels = geo_input.get('vessels', [])
+        junctions = geo_input.get('junctions', [])
+        
+        # Find all vessels that are outlets of junctions
+        outlet_vessel_indices = set()
+        for junc in junctions:
+            outlet_vessel_indices.update(junc.get('outlet_vessels', []))
+        
+        # Terminal vessels are those that are not outlets of any junction
+        terminal_vessel_indices = set(range(len(vessels))) - outlet_vessel_indices
+        
+        # Create cap names for terminal vessels
+        for vessel_idx in terminal_vessel_indices:
+            if vessel_idx < len(vessels):
+                vessel_name = vessels[vessel_idx].get('vessel_name', f'branch{vessel_idx}_seg0')
+                # Extract branch index from vessel name
+                if vessel_name.startswith('branch'):
+                    branch_str = vessel_name.split('_')[0]  # "branch0"
+                    branch_idx = int(branch_str.replace('branch', ''))
+                    if branch_idx != 0:  # Skip inlet
+                        cap_name = f"cap_{vessel_name}.vtp"
+                        outlet_caps.append(cap_name)
+    else:
+        # Use BifurcationId to identify terminal branches if available
+        # Terminal branches are those that don't appear as inlet to any bifurcation
+        bifurcation_id = centerline_data.get('BifurcationId', None)
+        
+        if bifurcation_id is not None:
+            # Find branches that are inlets to bifurcations
+            inlet_branches = set()
+            for i, bif_id in enumerate(bifurcation_id):
+                if bif_id >= 0:  # Valid bifurcation ID
+                    # The branch at this point is an inlet to a bifurcation
+                    inlet_branches.add(branch_id[i])
+            
+            # Terminal branches are those not in inlet_branches (except branch 0)
+            for branch_idx in unique_branches:
+                if branch_idx != 0 and branch_idx not in inlet_branches:
+                    cap_name = f"cap_branch{branch_idx}_seg0.vtp"
+                    outlet_caps.append(cap_name)
+        else:
+            # Fallback: use all branches except 0 as outlets
+            # This is a simplified approach - in practice, you'd want to identify terminal branches
+            for branch_idx in unique_branches:
+                if branch_idx != 0:
+                    cap_name = f"cap_branch{branch_idx}_seg0.vtp"
+                    outlet_caps.append(cap_name)
+    
+    print(f"  Inlet cap: {inlet_cap} (branchId 0)")
+    print(f"  Found {len(outlet_caps)} outlet caps: {outlet_caps}")
+    
+    return inlet_cap, outlet_caps, None
 
 def identify_junctions_and_bcs(centerline_data, vessels):
     """
@@ -878,24 +1245,39 @@ def timestep_from_1D(centerline_soln_path, geo_dir):
     num_timesteps = len(flow_timesteps)
     time_increment = extract_timestep(flow_timesteps[1]) - extract_timestep(flow_timesteps[0])
 
-    # Get timestep size from XML
-    xml_path = os.path.join(geo_dir, 'fluid_simulation_0-0.xml')
+    # Get timestep size from XML (if geo_dir is available)
+    if geo_dir is not None and os.path.exists(geo_dir):
+        xml_path = os.path.join(geo_dir, 'fluid_simulation_0-0.xml')
+
+        if not os.path.exists(xml_path):
+            # If no XML found, use default
+            raise ValueError("No XML file found in {geo_dir}")
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        
+        # Find GeneralSimulationParameters
+        gen_params = root.find('GeneralSimulationParameters')
+        if gen_params is None:
+            gen_params = root.find('General_Parameters')
+        
+        threeD_time_step_size = None
+        if gen_params is not None:
+            time_step_size_elem = gen_params.find('Time_step_size')
+            if time_step_size_elem is not None:
+                threeD_time_step_size = float(time_step_size_elem.text)
+
+    # if we are using a VMR type geometry, get the dt from dictionary
+    if 'VMR' in centerline_soln_path:
+        geometry_name = centerline_soln_path.split('/')[-2]
+        VMR_time_step_dict = {'0063_1001': 0.00041666875}
+        threeD_time_step_size = VMR_time_step_dict[geometry_name]
+        print(f"  Found time_step_size in VMR dictionary: {threeD_time_step_size:.6f} s")
+
+    if threeD_time_step_size is None:
+        raise ValueError("Could not extract time step size from XML")
+    else:
+        time_step_size = time_increment * threeD_time_step_size
     
-    if not os.path.exists(xml_path):
-        raise ValueError(f"XML file not found at {xml_path}")
-
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-    
-    # Find GeneralSimulationParameters
-    gen_params = root.find('GeneralSimulationParameters')
-    if gen_params is not None:
-        time_step_size_elem = gen_params.find('Time_step_size')
-        if time_step_size_elem is not None:
-            threeD_time_step_size = float(time_step_size_elem.text)
-
-
-    time_step_size = time_increment * threeD_time_step_size
     return time_step_size
 
 def parse_simulation_xml(xml_path):
