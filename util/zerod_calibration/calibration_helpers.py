@@ -1553,3 +1553,274 @@ def convert_simulation_results_to_csv(sim_results, output_csv_path):
     print(f"Simulation results saved to: {output_csv_path}")
     return output_csv_path
 
+
+def split_junctions(geometric_input, centerline_data):
+    """
+    Split junctions with more than 2 outlets into cascading bifurcations.
+    
+    For each multi-outlet junction:
+    - The main outlet is the one where branchID = inlet branchID + 1
+    - A connecting vessel runs from inlet to main outlet
+    - Other outlets branch off along this connecting vessel
+    - Order of branching is determined by centerline geometry (Path coordinate)
+    
+    Args:
+        geometric_input: Dictionary with 0D model structure (vessels, junctions, boundary_conditions)
+        centerline_data: Dictionary with centerline arrays (Points, BranchId, Path, etc.)
+    
+    Returns:
+        Modified geometric_input with only bifurcations (2-outlet junctions)
+    """
+    import copy
+    
+    # Deep copy to avoid modifying original
+    result = copy.deepcopy(geometric_input)
+    
+    vessels = result.get('vessels', [])
+    junctions = result.get('junctions', [])
+    boundary_conditions = result.get('boundary_conditions', [])
+    
+    # Create vessel lookup by index and name
+    vessel_by_id = {v['vessel_id']: v for v in vessels}
+    vessel_by_name = {v['vessel_name']: v for v in vessels}
+    
+    # Extract branchId from vessel name (e.g., "branch3_seg0" -> 3)
+    def get_branch_id(vessel_name):
+        try:
+            branch_part = vessel_name.split('_')[0]  # "branch3"
+            return int(branch_part.replace('branch', ''))
+        except (ValueError, IndexError):
+            return None
+    
+    # Get bifurcation positions from centerline for each branch
+    # The bifurcation position is where a branch starts (minimum Path value for that branch)
+    branch_id_array = centerline_data.get('BranchId', None)
+    path_array = centerline_data.get('Path', None)
+    points_array = centerline_data.get('Points', None)
+    
+    if branch_id_array is None or path_array is None:
+        print("  Warning: BranchId or Path not found in centerline data, cannot determine bifurcation order")
+        return result
+    
+    # Find bifurcation position for each branch (minimum path value where branch starts)
+    branch_bifurcation_path = {}
+    branch_start_point = {}
+    unique_branches = np.unique(branch_id_array)
+    
+    for branch in unique_branches:
+        branch_mask = branch_id_array == branch
+        branch_paths = path_array[branch_mask]
+        branch_points = points_array[branch_mask] if points_array is not None else None
+        
+        if len(branch_paths) > 0:
+            min_idx = np.argmin(branch_paths)
+            branch_bifurcation_path[int(branch)] = float(branch_paths[min_idx])
+            if branch_points is not None:
+                branch_start_point[int(branch)] = branch_points[min_idx]
+    
+    # Process junctions
+    new_junctions = []
+    new_vessels = list(vessels)  # Start with existing vessels
+    next_vessel_id = max(v['vessel_id'] for v in vessels) + 1
+    next_junction_id = 0
+    
+    # First pass: find max junction ID
+    for junc in junctions:
+        junc_name = junc.get('junction_name', '')
+        if junc_name.startswith('J'):
+            try:
+                jid = int(junc_name[1:])
+                next_junction_id = max(next_junction_id, jid + 1)
+            except ValueError:
+                pass
+    
+    for junc in junctions:
+        inlet_vessels = junc.get('inlet_vessels', [])
+        outlet_vessels = junc.get('outlet_vessels', [])
+        junc_name = junc.get('junction_name', '')
+        junc_type = junc.get('junction_type', 'NORMAL_JUNCTION')
+        
+        # Skip junctions that are already bifurcations or simpler
+        if len(outlet_vessels) <= 2:
+            new_junctions.append(junc)
+            continue
+        
+        if len(inlet_vessels) != 1:
+            print(f"  Warning: Junction {junc_name} has {len(inlet_vessels)} inlets, keeping as-is")
+            new_junctions.append(junc)
+            continue
+        
+        inlet_vessel_id = inlet_vessels[0]
+        inlet_vessel = vessel_by_id.get(inlet_vessel_id)
+        if inlet_vessel is None:
+            print(f"  Warning: Inlet vessel {inlet_vessel_id} not found for junction {junc_name}")
+            new_junctions.append(junc)
+            continue
+        
+        inlet_branch_id = get_branch_id(inlet_vessel['vessel_name'])
+        if inlet_branch_id is None:
+            print(f"  Warning: Could not parse branch ID from {inlet_vessel['vessel_name']}")
+            new_junctions.append(junc)
+            continue
+        
+        print(f"  Splitting junction {junc_name}: inlet={inlet_vessel['vessel_name']} (branch {inlet_branch_id}), {len(outlet_vessels)} outlets")
+        
+        # Identify main outlet (branchId = inlet_branch_id + 1)
+        main_outlet_id = None
+        side_outlets = []
+        
+        for outlet_id in outlet_vessels:
+            outlet_vessel = vessel_by_id.get(outlet_id)
+            if outlet_vessel is None:
+                continue
+            
+            outlet_branch_id = get_branch_id(outlet_vessel['vessel_name'])
+            if outlet_branch_id == inlet_branch_id + 1:
+                main_outlet_id = outlet_id
+                print(f"    Main outlet: {outlet_vessel['vessel_name']} (branch {outlet_branch_id})")
+            else:
+                side_outlets.append(outlet_id)
+        
+        # If no main outlet found, use the first outlet as main
+        if main_outlet_id is None:
+            main_outlet_id = outlet_vessels[0]
+            side_outlets = outlet_vessels[1:]
+            main_vessel = vessel_by_id.get(main_outlet_id)
+            print(f"    Warning: No branch {inlet_branch_id + 1} found, using {main_vessel['vessel_name']} as main outlet")
+        
+        # Sort side outlets by their bifurcation position along the inlet branch
+        # (earlier bifurcations come first)
+        def get_bifurcation_position(outlet_id):
+            outlet_vessel = vessel_by_id.get(outlet_id)
+            if outlet_vessel is None:
+                return float('inf')
+            outlet_branch_id = get_branch_id(outlet_vessel['vessel_name'])
+            if outlet_branch_id is None:
+                return float('inf')
+            return branch_bifurcation_path.get(outlet_branch_id, float('inf'))
+        
+        side_outlets.sort(key=get_bifurcation_position)
+        
+        for i, outlet_id in enumerate(side_outlets):
+            outlet_vessel = vessel_by_id.get(outlet_id)
+            outlet_branch_id = get_branch_id(outlet_vessel['vessel_name']) if outlet_vessel else None
+            bifurc_pos = branch_bifurcation_path.get(outlet_branch_id, float('inf')) if outlet_branch_id else float('inf')
+            print(f"    Side outlet {i+1}: {outlet_vessel['vessel_name'] if outlet_vessel else outlet_id} (bifurcation path: {bifurc_pos:.4f})")
+        
+        # Create cascading bifurcations
+        # Each bifurcation has:
+        # - Inlet from previous connector (or original inlet for first)
+        # - One side outlet
+        # - One outlet to next connector (or main outlet for last)
+        
+        current_inlet_id = inlet_vessel_id
+        
+        for i, side_outlet_id in enumerate(side_outlets):
+            is_last = (i == len(side_outlets) - 1)
+            
+            # Create new junction
+            new_junc_name = f"J{next_junction_id}"
+            next_junction_id += 1
+            
+            if is_last:
+                # Last bifurcation: connects to main outlet
+                new_junc = {
+                    "inlet_vessels": [current_inlet_id],
+                    "junction_name": new_junc_name,
+                    "junction_type": junc_type,
+                    "outlet_vessels": [side_outlet_id, main_outlet_id]
+                }
+                print(f"    Created {new_junc_name}: inlet={current_inlet_id}, outlets=[{side_outlet_id}, {main_outlet_id}] (final)")
+            else:
+                # Create connector vessel to next bifurcation
+                connector_name = f"branch{inlet_branch_id}_connector_{i}"
+                
+                # Use properties from inlet vessel (scaled)
+                connector_vessel = {
+                    "vessel_id": next_vessel_id,
+                    "vessel_length": inlet_vessel['vessel_length'] * 0.01,  # Small connector
+                    "vessel_name": connector_name,
+                    "zero_d_element_type": "BloodVessel",
+                    "zero_d_element_values": {
+                        "C": inlet_vessel['zero_d_element_values'].get('C', 1e-10) * 0.01,
+                        "L": inlet_vessel['zero_d_element_values'].get('L', 1.0) * 0.01,
+                        "R_poiseuille": inlet_vessel['zero_d_element_values'].get('R_poiseuille', 1.0) * 0.01,
+                        "stenosis_coefficient": 0.0
+                    }
+                }
+                
+                new_vessels.append(connector_vessel)
+                vessel_by_id[next_vessel_id] = connector_vessel
+                vessel_by_name[connector_name] = connector_vessel
+                
+                # Create bifurcation junction
+                new_junc = {
+                    "inlet_vessels": [current_inlet_id],
+                    "junction_name": new_junc_name,
+                    "junction_type": junc_type,
+                    "outlet_vessels": [side_outlet_id, next_vessel_id]
+                }
+                print(f"    Created {new_junc_name}: inlet={current_inlet_id}, outlets=[{side_outlet_id}, {next_vessel_id}] (connector)")
+                
+                current_inlet_id = next_vessel_id
+                next_vessel_id += 1
+            
+            new_junctions.append(new_junc)
+    
+    # Update result
+    result['vessels'] = new_vessels
+    result['junctions'] = new_junctions
+    
+    # Update vessel_id in vessels to ensure they're sequential
+    for i, vessel in enumerate(result['vessels']):
+        vessel['vessel_id'] = i
+    
+    # Update vessel references in junctions to match new IDs
+    vessel_name_to_new_id = {v['vessel_name']: v['vessel_id'] for v in result['vessels']}
+    for junc in result['junctions']:
+        # Convert vessel IDs if needed (they might reference by old ID)
+        # Since we kept original vessels and only added new ones, this should be OK
+        pass
+    
+    print(f"  Split complete: {len(junctions)} junctions -> {len(new_junctions)} junctions")
+    print(f"  Vessels: {len(vessels)} -> {len(new_vessels)}")
+    
+    return result
+
+
+def split_junctions_from_files(geometric_input_path, centerline_path, output_path=None):
+    """
+    Load geometry and centerline files, split multi-outlet junctions, and save result.
+    
+    Args:
+        geometric_input_path: Path to geometric input JSON
+        centerline_path: Path to centerline VTP file
+        output_path: Path to save modified geometry (default: overwrite input)
+    
+    Returns:
+        Modified geometric input dictionary
+    """
+    print(f"\nSplitting multi-outlet junctions...")
+    print(f"  Geometric input: {geometric_input_path}")
+    print(f"  Centerline: {centerline_path}")
+    
+    # Load geometric input
+    with open(geometric_input_path, 'r') as f:
+        geometric_input = json.load(f)
+    
+    # Load centerline
+    centerline_data, _ = read_centerline_vtp(centerline_path)
+    
+    # Split junctions
+    result = split_junctions(geometric_input, centerline_data)
+    
+    # Save result
+    if output_path is None:
+        output_path = geometric_input_path
+    
+    with open(output_path, 'w') as f:
+        json.dump(result, f, indent=4)
+    
+    print(f"  Saved to: {output_path}")
+    
+    return result
