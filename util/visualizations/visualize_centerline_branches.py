@@ -18,9 +18,76 @@ try:
     matplotlib.use('Agg')  # Use non-interactive backend
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
+    
+    # Enable LaTeX rendering with Computer Modern font
+    plt.rcParams.update({
+        'text.usetex': True,
+        'font.family': 'serif',
+        'font.serif': ['Computer Modern Roman'],
+        'text.latex.preamble': r'\usepackage{amsmath}',
+        'text.color': 'black',
+        'axes.labelcolor': 'black',
+        'xtick.color': 'black',
+        'ytick.color': 'black',
+    })
 except ImportError:
     print("Error: Matplotlib is required.")
     sys.exit(1)
+
+
+# =============================================================================
+# FONT CONFIGURATION
+# =============================================================================
+# Define font sizes for different elements here.
+
+FONT_CONFIG = {
+    'vessel_label': 24,
+    'node_label': 24,
+    'title': 18,
+    'axis_label': 14,
+    'legend': 12,
+}
+# =============================================================================
+
+
+# =============================================================================
+# COLOR CONFIGURATION
+# =============================================================================
+# Define colors for different element types here.
+# Each element type has an 'edge' color (outline) and optional 'linewidth'.
+# All labels use white background with black text.
+
+ELEMENT_COLORS = {
+    'inlet_bc': {
+        'edge': 'slategray',
+        'linewidth': 3,
+    },
+    'outlet_bc': {
+        'edge': 'slategray',
+        'linewidth': 3,
+    },
+    'junction': {
+        'edge': 'lightcoral',
+        'linewidth': 2.5,
+    },
+    'bifurcation_junction': {
+        'edge': 'crimson',
+        'linewidth': 2.5,
+    },
+    'vessel': {
+        'edge': 'lightskyblue',
+        'linewidth': 2,
+    },
+    'connector_vessel': {
+        'edge': 'royalblue',
+        'linewidth': 3,
+    },
+    'line': {
+        'color': 'black',
+        'linewidth': 2.5,
+    },
+}
+# =============================================================================
 
 
 def find_centerline_file(set_name, geo_name):
@@ -129,6 +196,114 @@ def build_tree_structure(geometric_input_path):
     return vessel_id_to_name, tree, root_vessel_id, terminal_vessels
 
 
+def build_junction_graph(geometric_input_path):
+    """
+    Build a graph structure where junctions are nodes and vessels are edges.
+    
+    Returns:
+        nodes: Dictionary mapping node_id -> node_info dict
+               node_info contains 'name', 'type' ('inlet_bc', 'outlet_bc', 'junction')
+        edges: List of (from_node, to_node, vessel_name) tuples
+        root_node: ID of the root node (inlet BC)
+    """
+    with open(geometric_input_path, 'r') as f:
+        geometric_input = json.load(f)
+    
+    vessels = geometric_input.get('vessels', [])
+    junctions = geometric_input.get('junctions', [])
+    
+    nodes = {}
+    edges = []
+    
+    # Create mapping from vessel_id to vessel info
+    vessel_by_id = {i: v for i, v in enumerate(vessels)}
+    
+    # Create junction nodes
+    junction_name_to_node_id = {}
+    for junc in junctions:
+        junc_name = junc.get('junction_name', f"J{len(junction_name_to_node_id)}")
+        node_id = f"junc_{junc_name}"
+        nodes[node_id] = {
+            'name': junc_name,
+            'type': 'junction',
+            'inlet_vessels': junc.get('inlet_vessels', []),
+            'outlet_vessels': junc.get('outlet_vessels', [])
+        }
+        junction_name_to_node_id[junc_name] = node_id
+    
+    # Find vessels with inlet/outlet BCs and create BC nodes
+    inlet_bc_node = None
+    outlet_bc_nodes = {}
+    
+    for i, vessel in enumerate(vessels):
+        vessel_name = vessel.get('vessel_name', f'vessel_{i}')
+        
+        if 'boundary_conditions' in vessel:
+            if 'inlet' in vessel['boundary_conditions']:
+                bc_name = vessel['boundary_conditions']['inlet']
+                node_id = f"bc_{bc_name}"
+                nodes[node_id] = {
+                    'name': bc_name,
+                    'type': 'inlet_bc',
+                    'vessel_id': i
+                }
+                inlet_bc_node = node_id
+            
+            if 'outlet' in vessel['boundary_conditions']:
+                bc_name = vessel['boundary_conditions']['outlet']
+                node_id = f"bc_{bc_name}"
+                nodes[node_id] = {
+                    'name': bc_name,
+                    'type': 'outlet_bc',
+                    'vessel_id': i
+                }
+                outlet_bc_nodes[i] = node_id
+    
+    # Build mapping: vessel_id -> (upstream_junction, downstream_junction/bc)
+    vessel_upstream = {}  # vessel_id -> node_id where vessel is outlet
+    vessel_downstream = {}  # vessel_id -> node_id where vessel is inlet
+    
+    for junc in junctions:
+        junc_name = junc.get('junction_name')
+        node_id = junction_name_to_node_id[junc_name]
+        
+        for inlet_vessel_id in junc.get('inlet_vessels', []):
+            vessel_downstream[inlet_vessel_id] = node_id
+        
+        for outlet_vessel_id in junc.get('outlet_vessels', []):
+            vessel_upstream[outlet_vessel_id] = node_id
+    
+    # Create edges (vessels connect nodes)
+    for i, vessel in enumerate(vessels):
+        vessel_name = vessel.get('vessel_name', f'vessel_{i}')
+        
+        # Determine from_node (upstream end of vessel)
+        if i in vessel_upstream:
+            from_node = vessel_upstream[i]
+        elif 'boundary_conditions' in vessel and 'inlet' in vessel['boundary_conditions']:
+            from_node = inlet_bc_node
+        else:
+            # Vessel has no upstream - create implicit inlet node
+            from_node = f"implicit_inlet_{i}"
+            nodes[from_node] = {'name': 'INLET', 'type': 'inlet_bc', 'vessel_id': i}
+            if inlet_bc_node is None:
+                inlet_bc_node = from_node
+        
+        # Determine to_node (downstream end of vessel)
+        if i in vessel_downstream:
+            to_node = vessel_downstream[i]
+        elif i in outlet_bc_nodes:
+            to_node = outlet_bc_nodes[i]
+        else:
+            # Vessel has no downstream - create implicit outlet node
+            to_node = f"implicit_outlet_{i}"
+            nodes[to_node] = {'name': f'OUT_{i}', 'type': 'outlet_bc', 'vessel_id': i}
+        
+        edges.append((from_node, to_node, vessel_name, i))
+    
+    return nodes, edges, inlet_bc_node
+
+
 def compute_tree_layout(tree, root_vessel_id, vessel_id_to_name):
     """
     Compute 2D positions for tree nodes using hierarchical layout.
@@ -188,9 +363,93 @@ def compute_tree_layout(tree, root_vessel_id, vessel_id_to_name):
     return positions
 
 
+def compute_junction_layout(nodes, edges, root_node):
+    """
+    Compute 2D positions for junction nodes using hierarchical layout.
+    Single-child nodes place child directly below (vertically aligned).
+    
+    Returns:
+        positions: Dictionary mapping node_id -> (x, y) tuple
+    """
+    positions = {}
+    
+    if root_node is None:
+        return positions
+    
+    # Build adjacency list from edges (downstream direction)
+    children = defaultdict(list)
+    for from_node, to_node, vessel_name, vessel_id in edges:
+        children[from_node].append(to_node)
+    
+    # BFS to assign levels (depth from root)
+    levels = {}
+    parent_of = {}  # Track parent of each node
+    queue = deque([(root_node, 0, None)])
+    levels[root_node] = 0
+    max_level = 0
+    
+    while queue:
+        node_id, level, parent = queue.popleft()
+        max_level = max(max_level, level)
+        parent_of[node_id] = parent
+        
+        for child_id in children.get(node_id, []):
+            if child_id not in levels:
+                levels[child_id] = level + 1
+                queue.append((child_id, level + 1, node_id))
+    
+    # Handle any nodes not connected to root
+    for node_id in nodes:
+        if node_id not in levels:
+            levels[node_id] = max_level + 1
+    
+    max_level = max(levels.values()) if levels else 0
+    
+    # Count leaf nodes in subtree for each node (for width allocation)
+    def count_leaves(node_id):
+        child_list = children.get(node_id, [])
+        if not child_list:
+            return 1
+        return sum(count_leaves(c) for c in child_list)
+    
+    leaf_counts = {node_id: count_leaves(node_id) for node_id in nodes}
+    
+    # Assign positions using recursive approach
+    level_height = 3.0
+    leaf_spacing = 3.0  # Space per leaf node
+    
+    def assign_positions(node_id, x_center, y_pos):
+        positions[node_id] = (x_center, y_pos)
+        
+        child_list = children.get(node_id, [])
+        if not child_list:
+            return
+        
+        child_y = y_pos - level_height
+        
+        if len(child_list) == 1:
+            # Single child: place directly below (vertical alignment)
+            assign_positions(child_list[0], x_center, child_y)
+        else:
+            # Multiple children: distribute based on their subtree widths
+            total_width = sum(leaf_counts[c] for c in child_list) * leaf_spacing
+            current_x = x_center - total_width / 2
+            
+            for child_id in child_list:
+                child_width = leaf_counts[child_id] * leaf_spacing
+                child_x = current_x + child_width / 2
+                assign_positions(child_id, child_x, child_y)
+                current_x += child_width
+    
+    # Start layout from root
+    assign_positions(root_node, 0.0, 0.0)
+    
+    return positions
+
+
 def visualize_centerline_as_tree(geometric_input_path, output_path, geometry_type='original'):
     """
-    Create 2D tree visualization of centerline with branch labels.
+    Create 2D tree visualization with junction names on nodes and vessel names on edges.
     
     Args:
         geometric_input_path: Path to geometric 0D input JSON
@@ -198,123 +457,150 @@ def visualize_centerline_as_tree(geometric_input_path, output_path, geometry_typ
         geometry_type: 'original' or 'bifurcations'
     """
     print(f"Reading geometric input from: {geometric_input_path}")
-    vessel_id_to_name, tree, root_vessel_id, terminal_vessels = build_tree_structure(geometric_input_path)
     
-    if root_vessel_id is None:
-        print("Error: Could not find root vessel (inlet)")
+    # Build junction-based graph
+    nodes, edges, root_node = build_junction_graph(geometric_input_path)
+    
+    if root_node is None:
+        print("Error: Could not find root node (inlet)")
         return False
     
-    print(f"Found {len(vessel_id_to_name)} vessels")
-    print(f"Root vessel: {vessel_id_to_name[root_vessel_id]}")
-    print(f"Terminal vessels: {[vessel_id_to_name[v] for v in terminal_vessels]}")
+    num_junctions = sum(1 for n in nodes.values() if n['type'] == 'junction')
+    num_inlet_bcs = sum(1 for n in nodes.values() if n['type'] == 'inlet_bc')
+    num_outlet_bcs = sum(1 for n in nodes.values() if n['type'] == 'outlet_bc')
     
-    # Compute positions
-    positions = compute_tree_layout(tree, root_vessel_id, vessel_id_to_name)
+    print(f"Found {len(nodes)} nodes: {num_junctions} junctions, {num_inlet_bcs} inlet BC(s), {num_outlet_bcs} outlet BC(s)")
+    print(f"Found {len(edges)} vessels (edges)")
+    
+    # Compute positions for junction nodes
+    positions = compute_junction_layout(nodes, edges, root_node)
     
     if not positions:
         print("Error: Could not compute tree layout")
         return False
     
     # Create figure - larger for bifurcations geometry which may have more nodes
-    fig_width = 18 if geometry_type == 'bifurcations' else 14
-    fig_height = 12 if geometry_type == 'bifurcations' else 10
+    fig_width = 26 if geometry_type == 'bifurcations' else 22
+    fig_height = 20 if geometry_type == 'bifurcations' else 18
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     
-    # Color map for branches
-    num_vessels = len(vessel_id_to_name)
-    colors = plt.cm.tab20(np.linspace(0, 1, num_vessels))
-    
-    # Draw edges (connections)
-    for parent_id, child_ids in tree.items():
-        if parent_id not in positions:
+    # Draw edges (vessels) with labels
+    for i, (from_node, to_node, vessel_name, vessel_id) in enumerate(edges):
+        if from_node not in positions or to_node not in positions:
             continue
-        parent_pos = positions[parent_id]
         
-        for child_id in child_ids:
-            if child_id not in positions:
-                continue
-            child_pos = positions[child_id]
-            
-            # Draw line from parent to child
-            ax.plot([parent_pos[0], child_pos[0]], [parent_pos[1], child_pos[1]],
-                   'k-', linewidth=2, alpha=0.5, zorder=1)
-    
-    # Draw nodes (vessels)
-    for vessel_id, (x, y) in positions.items():
-        vessel_name = vessel_id_to_name[vessel_id]
-        color = colors[vessel_id % len(colors)]
+        from_pos = positions[from_node]
+        to_pos = positions[to_node]
         
-        # Determine node style
-        is_connector = '_connector' in vessel_name
+        # Get line style from config
+        line_config = ELEMENT_COLORS['line']
         
-        if vessel_id == root_vessel_id:
-            # Root (inlet) - larger circle
-            node_size = 300
-            node_color = 'green'
-            node_shape = 'o'
-        elif vessel_id in terminal_vessels:
-            # Terminal (outlet) - square
-            node_size = 250
-            node_color = 'red'
-            node_shape = 's'
-        elif is_connector:
-            # Connector vessel (bifurcations geometry) - diamond
-            node_size = 200
-            node_color = 'orange'
-            node_shape = 'D'
+        # Draw line from parent to child
+        ax.plot([from_pos[0], to_pos[0]], [from_pos[1], to_pos[1]],
+               '-', color=line_config['color'], linewidth=line_config['linewidth'], 
+               alpha=0.7, zorder=1)
+        
+        # Add vessel name label at midpoint of edge
+        mid_x = (from_pos[0] + to_pos[0]) / 2
+        mid_y = (from_pos[1] + to_pos[1]) / 2
+        
+        # Offset label slightly to avoid overlap with line
+        dx = to_pos[0] - from_pos[0]
+        dy = to_pos[1] - from_pos[1]
+        length = np.sqrt(dx**2 + dy**2)
+        if length > 0:
+            # Perpendicular offset
+            offset_x = -dy / length * 0.2
+            offset_y = dx / length * 0.2
         else:
-            # Internal - circle
-            node_size = 200
-            node_color = color
-            node_shape = 'o'
+            offset_x, offset_y = 0.1, 0
         
-        # Draw node
-        ax.scatter(x, y, s=node_size, c=node_color, marker=node_shape, 
-                  edgecolors='black', linewidths=2, zorder=3, alpha=0.8)
+        # Get label style from config based on vessel type
+        is_connector = '_connector' in vessel_name
+        if is_connector:
+            vessel_config = ELEMENT_COLORS['connector_vessel']
+        else:
+            vessel_config = ELEMENT_COLORS['vessel']
         
-        # Add label - smaller font for bifurcations geometry
-        fontsize = 8 if geometry_type == 'bifurcations' else 10
-        ax.text(x, y, vessel_name, fontsize=fontsize, ha='center', va='center',
-               weight='bold', zorder=4,
+        # Horizontal labels (no rotation), white background
+        ax.text(mid_x + offset_x, mid_y + offset_y, vessel_name, 
+               fontsize=FONT_CONFIG['vessel_label'], ha='center', va='center',
+               color='black', weight='bold',
                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
-                        alpha=0.9, edgecolor=node_color, linewidth=1.5))
+                        alpha=0.95, edgecolor=vessel_config['edge'], 
+                        linewidth=vessel_config['linewidth']))
+    
+    # Draw nodes (junctions and BCs) as rectangular labels with white background
+    for node_id, (x, y) in positions.items():
+        node_info = nodes[node_id]
+        node_name = node_info['name']
+        node_type = node_info['type']
+        
+        # Get style from config based on node type
+        if node_type == 'inlet_bc':
+            node_config = ELEMENT_COLORS['inlet_bc']
+        elif node_type == 'outlet_bc':
+            node_config = ELEMENT_COLORS['outlet_bc']
+        else:  # junction
+            # Check if it's a bifurcation junction (from split)
+            is_bif_junction = '_bif' in node_name
+            if is_bif_junction:
+                node_config = ELEMENT_COLORS['bifurcation_junction']
+            else:
+                node_config = ELEMENT_COLORS['junction']
+        
+        # Add junction/BC name as rectangular label with white background
+        ax.text(x, y, node_name, fontsize=FONT_CONFIG['node_label'], ha='center', va='center',
+               weight='bold', zorder=4, color='black',
+               bbox=dict(boxstyle='round,pad=0.4', facecolor='white', 
+                        alpha=0.95, edgecolor=node_config['edge'], 
+                        linewidth=node_config['linewidth']))
     
     # Set labels and title
-    ax.set_xlabel('Branch Position', fontsize=14)
-    ax.set_ylabel('Tree Level', fontsize=14)
+    ax.set_xlabel('Branch Position', fontsize=FONT_CONFIG['axis_label'])
+    ax.set_ylabel('Tree Level', fontsize=FONT_CONFIG['axis_label'])
     
     if geometry_type == 'bifurcations':
-        title = '1D Centerline Tree Structure (Bifurcations-Only 0D Representation)'
+        title = r'0D Network Structure (Bifurcations-Only)'
     else:
-        title = '1D Centerline Tree Structure (Original 0D Representation)'
-    ax.set_title(title, fontsize=16, weight='bold')
+        title = r'0D Network Structure (Original)'
+    ax.set_title(title, fontsize=FONT_CONFIG['title'], weight='bold')
     
-    # Add legend
+    # Add legend - white backgrounds with different outline colors (from config)
     legend_elements = [
-        mpatches.Patch(color='green', label='Inlet (Root)'),
-        mpatches.Patch(color='red', label='Terminal Outlet (BC)'),
-        mpatches.Patch(color='blue', label='Internal Branch'),
+        mpatches.Patch(facecolor='white', edgecolor=ELEMENT_COLORS['inlet_bc']['edge'], 
+                      linewidth=ELEMENT_COLORS['inlet_bc']['linewidth'], label='Inlet BC'),
+        mpatches.Patch(facecolor='white', edgecolor=ELEMENT_COLORS['outlet_bc']['edge'], 
+                      linewidth=ELEMENT_COLORS['outlet_bc']['linewidth'], label='Outlet BC'),
+        mpatches.Patch(facecolor='white', edgecolor=ELEMENT_COLORS['junction']['edge'], 
+                      linewidth=ELEMENT_COLORS['junction']['linewidth'], label='Junction'),
+        mpatches.Patch(facecolor='white', edgecolor=ELEMENT_COLORS['vessel']['edge'], 
+                      linewidth=ELEMENT_COLORS['vessel']['linewidth'], label='Vessel'),
     ]
     if geometry_type == 'bifurcations':
-        legend_elements.append(mpatches.Patch(color='orange', label='Connector Vessel'))
-    ax.legend(handles=legend_elements, loc='upper right', fontsize=12)
+        legend_elements.insert(3, mpatches.Patch(facecolor='white', 
+                      edgecolor=ELEMENT_COLORS['bifurcation_junction']['edge'], 
+                      linewidth=ELEMENT_COLORS['bifurcation_junction']['linewidth'], 
+                      label='Bifurcation Junction'))
+        legend_elements.append(mpatches.Patch(facecolor='white', 
+                      edgecolor=ELEMENT_COLORS['connector_vessel']['edge'], 
+                      linewidth=ELEMENT_COLORS['connector_vessel']['linewidth'], 
+                      label='Connector Vessel'))
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=FONT_CONFIG['legend'])
     
     # Remove axes ticks
     ax.set_xticks([])
     ax.set_yticks([])
     
-    # Set equal aspect ratio
-    ax.set_aspect('equal', adjustable='box')
-    
     # Add some padding
     all_x = [pos[0] for pos in positions.values()]
     all_y = [pos[1] for pos in positions.values()]
     if all_x and all_y:
-        x_range = max(all_x) - min(all_x)
-        y_range = max(all_y) - min(all_y)
-        padding = 0.1
-        ax.set_xlim(min(all_x) - padding * x_range, max(all_x) + padding * x_range)
-        ax.set_ylim(min(all_y) - padding * y_range, max(all_y) + padding * y_range)
+        x_range = max(all_x) - min(all_x) if max(all_x) != min(all_x) else 1
+        y_range = max(all_y) - min(all_y) if max(all_y) != min(all_y) else 1
+        padding = 0.15
+        ax.set_xlim(min(all_x) - padding * x_range - 0.5, max(all_x) + padding * x_range + 0.5)
+        ax.set_ylim(min(all_y) - padding * y_range - 0.5, max(all_y) + padding * y_range + 0.5)
     
     # Save figure
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
