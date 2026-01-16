@@ -1712,15 +1712,19 @@ def split_junctions(geometric_input, centerline_data):
         # - Inlet from previous connector (or original inlet for first)
         # - One side outlet
         # - One outlet to next connector (or main outlet for last)
+        #
+        # Naming convention:
+        # - New junctions: {original_junction}_bif{i} (e.g., J0_bif0, J0_bif1)
+        # - Connector vessels: {inlet_vessel}_connector{i} (e.g., branch0_seg0_connector0)
         
         current_inlet_id = inlet_vessel_id
+        inlet_vessel_name = inlet_vessel['vessel_name']
         
         for i, side_outlet_id in enumerate(side_outlets):
             is_last = (i == len(side_outlets) - 1)
             
-            # Create new junction
-            new_junc_name = f"J{next_junction_id}"
-            next_junction_id += 1
+            # Create new junction with name derived from original junction
+            new_junc_name = f"{junc_name}_bif{i}"
             
             if is_last:
                 # Last bifurcation: connects to main outlet
@@ -1733,7 +1737,8 @@ def split_junctions(geometric_input, centerline_data):
                 print(f"    Created {new_junc_name}: inlet={current_inlet_id}, outlets=[{side_outlet_id}, {main_outlet_id}] (final)")
             else:
                 # Create connector vessel to next bifurcation
-                connector_name = f"branch{inlet_branch_id}_connector_{i}"
+                # Name derived from inlet vessel name
+                connector_name = f"{inlet_vessel_name}_connector{i}"
                 
                 # Use properties from inlet vessel (scaled)
                 connector_vessel = {
@@ -1760,7 +1765,7 @@ def split_junctions(geometric_input, centerline_data):
                     "junction_type": junc_type,
                     "outlet_vessels": [side_outlet_id, next_vessel_id]
                 }
-                print(f"    Created {new_junc_name}: inlet={current_inlet_id}, outlets=[{side_outlet_id}, {next_vessel_id}] (connector)")
+                print(f"    Created {new_junc_name}: inlet={current_inlet_id}, outlets=[{side_outlet_id}, {next_vessel_id}] (connector: {connector_name})")
                 
                 current_inlet_id = next_vessel_id
                 next_vessel_id += 1
@@ -1824,3 +1829,317 @@ def split_junctions_from_files(geometric_input_path, centerline_path, output_pat
     print(f"  Saved to: {output_path}")
     
     return result
+
+
+def generate_connector_observations(original_observations, original_geometric_input, 
+                                     bifurcated_geometric_input, centerline_data):
+    """
+    Generate synthetic observations for connector vessels created during junction splitting.
+    
+    For connector vessels:
+    - Flow: inlet_flow - sum(flows of side outlets that have already branched off)
+    - Pressure: linear interpolation between inlet pressure and main outlet pressure
+    
+    Args:
+        original_observations: Dictionary with 'y' and 'dy' observations from original geometry
+        original_geometric_input: Original geometric input (before splitting)
+        bifurcated_geometric_input: Bifurcated geometric input (after splitting)
+        centerline_data: Centerline data with BranchId and Path arrays
+    
+    Returns:
+        Updated observations dictionary with connector vessel observations
+    """
+    import copy
+    
+    # Deep copy observations
+    new_observations = copy.deepcopy(original_observations)
+    
+    # Get vessel and junction info from both geometries
+    orig_vessels = original_geometric_input.get('vessels', [])
+    orig_junctions = original_geometric_input.get('junctions', [])
+    bif_vessels = bifurcated_geometric_input.get('vessels', [])
+    bif_junctions = bifurcated_geometric_input.get('junctions', [])
+    
+    # Build lookup tables
+    orig_vessel_by_id = {v['vessel_id']: v for v in orig_vessels}
+    orig_vessel_by_name = {v['vessel_name']: v for v in orig_vessels}
+    bif_vessel_by_id = {v['vessel_id']: v for v in bif_vessels}
+    bif_vessel_by_name = {v['vessel_name']: v for v in bif_vessels}
+    
+    # Get y and dy dicts
+    y_dict = new_observations.get('y', {})
+    dy_dict = new_observations.get('dy', {})
+    
+    # Helper to extract branchId from vessel name
+    def get_branch_id(vessel_name):
+        try:
+            branch_part = vessel_name.split('_')[0]
+            return int(branch_part.replace('branch', ''))
+        except (ValueError, IndexError):
+            return None
+    
+    # Build mapping from vessel names to their junction connections in bifurcated geometry
+    # For each vessel, find which junction it connects to as an inlet
+    vessel_to_outlet_junction = {}  # vessel_name -> junction_name (where vessel is inlet)
+    for junc in bif_junctions:
+        for inlet_id in junc.get('inlet_vessels', []):
+            inlet_vessel = bif_vessel_by_id.get(inlet_id)
+            if inlet_vessel:
+                vessel_to_outlet_junction[inlet_vessel['vessel_name']] = junc['junction_name']
+    
+    # Build mapping from outlet vessel names to their inlet junction in bifurcated geometry
+    # For each vessel, find which junction it connects to as an outlet
+    vessel_to_inlet_junction = {}  # vessel_name -> junction_name (where vessel is outlet)
+    for junc in bif_junctions:
+        for outlet_id in junc.get('outlet_vessels', []):
+            outlet_vessel = bif_vessel_by_id.get(outlet_id)
+            if outlet_vessel:
+                vessel_to_inlet_junction[outlet_vessel['vessel_name']] = junc['junction_name']
+    
+    # Rename existing observation keys to use new junction names
+    print(f"  Renaming observation keys to match bifurcated junction names...")
+    renamed_y_dict = {}
+    renamed_dy_dict = {}
+    
+    for key, value in y_dict.items():
+        # Parse observation key: "type:A:B" where A and B can be vessel or junction
+        parts = key.split(':')
+        if len(parts) == 3:
+            obs_type, first, second = parts
+            new_key = key  # default: keep unchanged
+            
+            # Case 1: "type:vessel:junction" - vessel as inlet to junction
+            if first in vessel_to_outlet_junction:
+                new_junction = vessel_to_outlet_junction[first]
+                # Only rename if second is an old junction name (starts with J, no _bif)
+                if second.startswith('J') and '_bif' not in second:
+                    new_key = f"{obs_type}:{first}:{new_junction}"
+                    print(f"    Renamed: {key} -> {new_key}")
+            
+            # Case 2: "type:junction:vessel" - junction to outlet vessel
+            elif first.startswith('J') and '_bif' not in first:
+                # The second part is the outlet vessel - find which junction it's an outlet of
+                if second in vessel_to_inlet_junction:
+                    new_junction = vessel_to_inlet_junction[second]
+                    new_key = f"{obs_type}:{new_junction}:{second}"
+                    print(f"    Renamed: {key} -> {new_key}")
+            
+            renamed_y_dict[new_key] = value
+            if key in dy_dict:
+                renamed_dy_dict[new_key] = dy_dict[key]
+        else:
+            # Keep unchanged
+            renamed_y_dict[key] = value
+            if key in dy_dict:
+                renamed_dy_dict[key] = dy_dict[key]
+    
+    y_dict = renamed_y_dict
+    dy_dict = renamed_dy_dict
+    
+    # Get bifurcation positions from centerline
+    branch_id_array = centerline_data.get('BranchId', None)
+    path_array = centerline_data.get('Path', None)
+    
+    branch_bifurcation_path = {}
+    if branch_id_array is not None and path_array is not None:
+        for branch in np.unique(branch_id_array):
+            branch_mask = branch_id_array == branch
+            branch_paths = path_array[branch_mask]
+            if len(branch_paths) > 0:
+                branch_bifurcation_path[int(branch)] = float(np.min(branch_paths))
+    
+    # Find connector vessels (vessels that exist in bifurcated but not in original)
+    orig_vessel_names = set(v['vessel_name'] for v in orig_vessels)
+    connector_vessels = [v for v in bif_vessels if v['vessel_name'] not in orig_vessel_names]
+    
+    if not connector_vessels:
+        print("  No connector vessels found, no new observations needed")
+        return new_observations
+    
+    print(f"  Generating observations for {len(connector_vessels)} connector vessel(s)...")
+    
+    # For each connector vessel, find its context (what junction it's part of, what flows through it)
+    for connector in connector_vessels:
+        connector_name = connector['vessel_name']
+        connector_id = connector['vessel_id']
+        
+        # Parse connector name to get inlet vessel name and connector index
+        # Format: "{inlet_vessel_name}_connector{i}" (e.g., "branch0_seg0_connector0")
+        import re
+        connector_match = re.match(r'(.+)_connector(\d+)$', connector_name)
+        if not connector_match:
+            print(f"    Warning: Could not parse connector name: {connector_name}")
+            continue
+        
+        inlet_vessel_name_from_connector = connector_match.group(1)
+        connector_idx = int(connector_match.group(2))
+        inlet_branch_id = get_branch_id(connector_name)
+        
+        # Find the junction where this connector is an outlet
+        inlet_junction = None
+        for junc in bif_junctions:
+            if connector_id in junc.get('outlet_vessels', []):
+                inlet_junction = junc
+                break
+        
+        # Find the junction where this connector is an inlet
+        outlet_junction = None
+        for junc in bif_junctions:
+            if connector_id in junc.get('inlet_vessels', []):
+                outlet_junction = junc
+                break
+        
+        if inlet_junction is None or outlet_junction is None:
+            print(f"    Warning: Could not find junctions for connector {connector_name}")
+            continue
+        
+        # Get the inlet vessel of the inlet junction
+        inlet_vessel_id = inlet_junction['inlet_vessels'][0]
+        inlet_vessel = bif_vessel_by_id.get(inlet_vessel_id)
+        if inlet_vessel is None:
+            print(f"    Warning: Could not find inlet vessel {inlet_vessel_id}")
+            continue
+        
+        # Get the side outlet vessel that branches off at this junction
+        side_outlet_id = None
+        for out_id in inlet_junction['outlet_vessels']:
+            if out_id != connector_id:
+                side_outlet_id = out_id
+                break
+        
+        side_outlet = bif_vessel_by_id.get(side_outlet_id)
+        if side_outlet is None:
+            print(f"    Warning: Could not find side outlet vessel {side_outlet_id}")
+            continue
+        
+        # Find the main outlet vessel (at the end of the connector chain)
+        # This is the vessel with branchId = inlet_branch_id + 1
+        main_outlet = None
+        for v in orig_vessels:
+            if get_branch_id(v['vessel_name']) == inlet_branch_id + 1:
+                main_outlet = v
+                break
+        
+        if main_outlet is None:
+            # Fall back to finding main outlet from bifurcated junctions
+            # Look for the outlet vessel at the end of the connector chain
+            for junc in bif_junctions:
+                if connector_id in junc.get('inlet_vessels', []) or any(
+                    '_connector' in bif_vessel_by_id.get(vid, {}).get('vessel_name', '')
+                    for vid in junc.get('inlet_vessels', [])
+                ):
+                    for out_id in junc.get('outlet_vessels', []):
+                        out_vessel = bif_vessel_by_id.get(out_id)
+                        if out_vessel and get_branch_id(out_vessel['vessel_name']) == inlet_branch_id + 1:
+                            main_outlet = out_vessel
+                            break
+        
+        # Get inlet vessel name (could be the original inlet or a previous connector)
+        inlet_vessel_name = inlet_vessel['vessel_name']
+        
+        # Get observation keys for flow calculation
+        # Flow into connector = inlet flow - side outlet flow
+        # We need to find the flow observation for the inlet vessel at its outlet
+        
+        # Find inlet flow observation key
+        # This could be at a junction or BC
+        inlet_flow_key = None
+        for key in y_dict.keys():
+            if key.startswith(f'flow:{inlet_vessel_name}:'):
+                inlet_flow_key = key
+                break
+        
+        # If inlet is a connector, we need to use the connector's calculated flow
+        if inlet_flow_key is None and '_connector' in inlet_vessel_name:
+            # This connector's flow should have been calculated already
+            # Look for it in our newly added observations
+            for key in y_dict.keys():
+                if key.startswith(f'flow:{inlet_vessel_name}:'):
+                    inlet_flow_key = key
+                    break
+        
+        # Find side outlet flow observation key
+        side_outlet_name = side_outlet['vessel_name']
+        side_outlet_flow_key = None
+        for key in y_dict.keys():
+            if key.startswith(f'flow:{side_outlet_name}:'):
+                side_outlet_flow_key = key
+                break
+        
+        # Find inlet pressure observation key
+        inlet_pressure_key = None
+        for key in y_dict.keys():
+            if key.startswith(f'pressure:{inlet_vessel_name}:'):
+                inlet_pressure_key = key
+                break
+        
+        # Find main outlet pressure observation key
+        main_outlet_pressure_key = None
+        if main_outlet:
+            main_outlet_name = main_outlet['vessel_name']
+            for key in y_dict.keys():
+                if key.startswith(f'pressure:{main_outlet_name}:'):
+                    main_outlet_pressure_key = key
+                    break
+        
+        # Calculate connector flow: inlet_flow - side_outlet_flow
+        connector_flow = None
+        if inlet_flow_key and side_outlet_flow_key:
+            inlet_flow = np.array(y_dict[inlet_flow_key])
+            side_outlet_flow = np.array(y_dict[side_outlet_flow_key])
+            connector_flow = inlet_flow - side_outlet_flow
+            print(f"    {connector_name}: flow = {inlet_vessel_name} - {side_outlet_name}")
+        elif inlet_flow_key:
+            # If we don't have side outlet flow, use inlet flow directly
+            connector_flow = np.array(y_dict[inlet_flow_key])
+            print(f"    {connector_name}: flow = {inlet_vessel_name} (no side outlet flow found)")
+        else:
+            print(f"    Warning: Could not find inlet flow for {connector_name}")
+        
+        # Calculate connector pressure: linear interpolation between inlet and main outlet
+        connector_pressure = None
+        if inlet_pressure_key and main_outlet_pressure_key:
+            inlet_pressure = np.array(y_dict[inlet_pressure_key])
+            main_outlet_pressure = np.array(y_dict[main_outlet_pressure_key])
+            # Linear interpolation - connector is between inlet and main outlet
+            # Weight based on connector index (more connectors = closer to inlet for early ones)
+            # For simplicity, use midpoint
+            alpha = 0.5 + 0.1 * connector_idx  # Slightly bias towards outlet for later connectors
+            alpha = min(alpha, 0.9)
+            connector_pressure = (1 - alpha) * inlet_pressure + alpha * main_outlet_pressure
+            print(f"    {connector_name}: pressure = {1-alpha:.2f}*{inlet_vessel_name} + {alpha:.2f}*{main_outlet_name}")
+        elif inlet_pressure_key:
+            connector_pressure = np.array(y_dict[inlet_pressure_key])
+            print(f"    {connector_name}: pressure = {inlet_vessel_name} (no main outlet pressure found)")
+        else:
+            print(f"    Warning: Could not find inlet pressure for {connector_name}")
+        
+        # Add observations for the connector at its outlet junction
+        outlet_junction_name = outlet_junction['junction_name']
+        
+        if connector_flow is not None:
+            flow_key = f"flow:{connector_name}:{outlet_junction_name}"
+            y_dict[flow_key] = connector_flow.tolist()
+            # Calculate derivative using central differences
+            if len(connector_flow) > 2:
+                dy = np.gradient(connector_flow)
+                dy_dict[flow_key] = dy.tolist()
+            else:
+                dy_dict[flow_key] = [0.0] * len(connector_flow)
+        
+        if connector_pressure is not None:
+            pressure_key = f"pressure:{connector_name}:{outlet_junction_name}"
+            y_dict[pressure_key] = connector_pressure.tolist()
+            # Calculate derivative using central differences
+            if len(connector_pressure) > 2:
+                dy = np.gradient(connector_pressure)
+                dy_dict[pressure_key] = dy.tolist()
+            else:
+                dy_dict[pressure_key] = [0.0] * len(connector_pressure)
+    
+    new_observations['y'] = y_dict
+    new_observations['dy'] = dy_dict
+    
+    print(f"  Added observations for connector vessels")
+    
+    return new_observations

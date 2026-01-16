@@ -42,11 +42,26 @@ def find_centerline_file(set_name, geo_name):
     return None
 
 
-def find_geometric_input(set_name, geo_name):
-    """Find geometric 0D input JSON file."""
-    possible_paths = [
-        os.path.join('data', 'zeroD', set_name, geo_name, 'geometric_input.json'),
-    ]
+def find_geometric_input(set_name, geo_name, geometry_type='original'):
+    """
+    Find geometric 0D input JSON file.
+    
+    Args:
+        set_name: Set name (e.g., 'VMR')
+        geo_name: Geometry name (e.g., '0063_1001')
+        geometry_type: 'original' or 'bifurcations'
+    
+    Returns:
+        Path to geometric input file, or None if not found
+    """
+    if geometry_type == 'bifurcations':
+        possible_paths = [
+            os.path.join('data', 'zeroD', set_name, geo_name, 'bifurcations_geometric_input.json'),
+        ]
+    else:
+        possible_paths = [
+            os.path.join('data', 'zeroD', set_name, geo_name, 'geometric_input.json'),
+        ]
     
     for path in possible_paths:
         if os.path.exists(path):
@@ -173,13 +188,14 @@ def compute_tree_layout(tree, root_vessel_id, vessel_id_to_name):
     return positions
 
 
-def visualize_centerline_as_tree(geometric_input_path, output_path):
+def visualize_centerline_as_tree(geometric_input_path, output_path, geometry_type='original'):
     """
     Create 2D tree visualization of centerline with branch labels.
     
     Args:
         geometric_input_path: Path to geometric 0D input JSON
         output_path: Path to save output image
+        geometry_type: 'original' or 'bifurcations'
     """
     print(f"Reading geometric input from: {geometric_input_path}")
     vessel_id_to_name, tree, root_vessel_id, terminal_vessels = build_tree_structure(geometric_input_path)
@@ -199,8 +215,10 @@ def visualize_centerline_as_tree(geometric_input_path, output_path):
         print("Error: Could not compute tree layout")
         return False
     
-    # Create figure
-    fig, ax = plt.subplots(figsize=(14, 10))
+    # Create figure - larger for bifurcations geometry which may have more nodes
+    fig_width = 18 if geometry_type == 'bifurcations' else 14
+    fig_height = 12 if geometry_type == 'bifurcations' else 10
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     
     # Color map for branches
     num_vessels = len(vessel_id_to_name)
@@ -227,6 +245,8 @@ def visualize_centerline_as_tree(geometric_input_path, output_path):
         color = colors[vessel_id % len(colors)]
         
         # Determine node style
+        is_connector = '_connector' in vessel_name
+        
         if vessel_id == root_vessel_id:
             # Root (inlet) - larger circle
             node_size = 300
@@ -237,6 +257,11 @@ def visualize_centerline_as_tree(geometric_input_path, output_path):
             node_size = 250
             node_color = 'red'
             node_shape = 's'
+        elif is_connector:
+            # Connector vessel (bifurcations geometry) - diamond
+            node_size = 200
+            node_color = 'orange'
+            node_shape = 'D'
         else:
             # Internal - circle
             node_size = 200
@@ -244,15 +269,12 @@ def visualize_centerline_as_tree(geometric_input_path, output_path):
             node_shape = 'o'
         
         # Draw node
-        if node_shape == 'o':
-            ax.scatter(x, y, s=node_size, c=node_color, marker='o', 
-                      edgecolors='black', linewidths=2, zorder=3, alpha=0.8)
-        else:
-            ax.scatter(x, y, s=node_size, c=node_color, marker='s', 
-                      edgecolors='black', linewidths=2, zorder=3, alpha=0.8)
+        ax.scatter(x, y, s=node_size, c=node_color, marker=node_shape, 
+                  edgecolors='black', linewidths=2, zorder=3, alpha=0.8)
         
-        # Add label
-        ax.text(x, y, vessel_name, fontsize=10, ha='center', va='center',
+        # Add label - smaller font for bifurcations geometry
+        fontsize = 8 if geometry_type == 'bifurcations' else 10
+        ax.text(x, y, vessel_name, fontsize=fontsize, ha='center', va='center',
                weight='bold', zorder=4,
                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                         alpha=0.9, edgecolor=node_color, linewidth=1.5))
@@ -260,7 +282,12 @@ def visualize_centerline_as_tree(geometric_input_path, output_path):
     # Set labels and title
     ax.set_xlabel('Branch Position', fontsize=14)
     ax.set_ylabel('Tree Level', fontsize=14)
-    ax.set_title('1D Centerline Tree Structure (0D Representation)', fontsize=16, weight='bold')
+    
+    if geometry_type == 'bifurcations':
+        title = '1D Centerline Tree Structure (Bifurcations-Only 0D Representation)'
+    else:
+        title = '1D Centerline Tree Structure (Original 0D Representation)'
+    ax.set_title(title, fontsize=16, weight='bold')
     
     # Add legend
     legend_elements = [
@@ -268,6 +295,8 @@ def visualize_centerline_as_tree(geometric_input_path, output_path):
         mpatches.Patch(color='red', label='Terminal Outlet (BC)'),
         mpatches.Patch(color='blue', label='Internal Branch'),
     ]
+    if geometry_type == 'bifurcations':
+        legend_elements.append(mpatches.Patch(color='orange', label='Connector Vessel'))
     ax.legend(handles=legend_elements, loc='upper right', fontsize=12)
     
     # Remove axes ticks
@@ -305,16 +334,23 @@ def main():
                        help='Set name (e.g., set_3)')
     parser.add_argument('--geo-name', type=str, required=True,
                        help='Geometry name (e.g., tree_002)')
+    parser.add_argument('--geometry-type', type=str, default='original',
+                       choices=['original', 'bifurcations'],
+                       help='Geometry type: original or bifurcations (default: original)')
     parser.add_argument('--output', type=str, default=None,
-                       help='Output path for image (default: results/centerline_labels/{set_name}/{geo_name}/centerline_labels.png)')
+                       help='Output path for image (default: results/centerline_labels/{set_name}/{geo_name}/centerline_labels_{geometry_type}.png)')
     
     args = parser.parse_args()
     
     # Find geometric input (centerline file not needed for tree visualization)
-    geometric_input_path = find_geometric_input(args.set_name, args.geo_name)
+    geometric_input_path = find_geometric_input(args.set_name, args.geo_name, args.geometry_type)
     if geometric_input_path is None:
+        if args.geometry_type == 'bifurcations':
+            expected_file = 'bifurcations_geometric_input.json'
+        else:
+            expected_file = 'geometric_input.json'
         print(f"Error: Could not find geometric input file for {args.set_name}/{args.geo_name}")
-        print("  Expected: data/zeroD/{set_name}/{geo_name}/geometric_input.json")
+        print(f"  Expected: data/zeroD/{args.set_name}/{args.geo_name}/{expected_file}")
         sys.exit(1)
     
     # Determine output path
@@ -322,10 +358,10 @@ def main():
         output_path = args.output
     else:
         output_path = os.path.join('results', 'centerline_labels', args.set_name, 
-                                   args.geo_name, 'centerline_labels.png')
+                                   args.geo_name, f'centerline_labels_{args.geometry_type}.png')
     
     # Create visualization
-    success = visualize_centerline_as_tree(geometric_input_path, output_path)
+    success = visualize_centerline_as_tree(geometric_input_path, output_path, args.geometry_type)
     
     if success:
         print(f"\n✓ Successfully created visualization")

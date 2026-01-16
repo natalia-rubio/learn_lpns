@@ -1230,9 +1230,34 @@ def main():
                 print(f"\n  Creating base calibration input for {geo_variant_name}...")
                 
                 try:
-                    # Create calibration input with time computation from 1D solution
-                    create_calibration_input(variant_geometric_input, observations, variant_calibration_input,
-                                           centerline_soln_path=soln_path, geo_dir=geo_dir)
+                    # For bifurcations geometry, we need to generate observations for connector vessels
+                    if geo_variant_name == 'bifurcations':
+                        # Load the original geometric input and centerline data
+                        original_geometric_input_path = geometry_variants['original']['geometric_input']
+                        with open(original_geometric_input_path, 'r') as f:
+                            original_geometric_input = json.load(f)
+                        with open(variant_geometric_input, 'r') as f:
+                            bifurcated_geometric_input = json.load(f)
+                        
+                        # Read centerline data
+                        centerline_data, _ = read_centerline_vtp(centerline_path)
+                        
+                        # Generate observations for connector vessels
+                        print(f"    Generating observations for connector vessels...")
+                        augmented_observations = generate_connector_observations(
+                            observations, 
+                            original_geometric_input, 
+                            bifurcated_geometric_input,
+                            centerline_data
+                        )
+                        
+                        # Create calibration input with augmented observations
+                        create_calibration_input(variant_geometric_input, augmented_observations, variant_calibration_input,
+                                               centerline_soln_path=soln_path, geo_dir=geo_dir)
+                    else:
+                        # Create calibration input with time computation from 1D solution
+                        create_calibration_input(variant_geometric_input, observations, variant_calibration_input,
+                                               centerline_soln_path=soln_path, geo_dir=geo_dir)
                     
                     print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
                     
