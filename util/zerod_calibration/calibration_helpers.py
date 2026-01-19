@@ -1911,6 +1911,8 @@ def generate_connector_observations(original_observations, original_geometric_in
             # Case 1: "type:vessel:junction" - vessel as inlet to junction
             if first in vessel_to_outlet_junction:
                 new_junction = vessel_to_outlet_junction[first]
+                print(f"    vessel_to_outlet_junction: {vessel_to_outlet_junction}")
+                
                 # Only rename if second is an old junction name (starts with J, no _bif)
                 if second.startswith('J') and '_bif' not in second:
                     new_key = f"{obs_type}:{first}:{new_junction}"
@@ -2114,28 +2116,53 @@ def generate_connector_observations(original_observations, original_geometric_in
         else:
             print(f"    Warning: Could not find inlet pressure for {connector_name}")
         
-        # Add observations for the connector at its outlet junction
+        # Add observations for the connector at both its inlet and outlet junctions
+        inlet_junction_name = inlet_junction['junction_name']
         outlet_junction_name = outlet_junction['junction_name']
         
         if connector_flow is not None:
-            flow_key = f"flow:{connector_name}:{outlet_junction_name}"
-            y_dict[flow_key] = connector_flow.tolist()
-            # Calculate derivative using central differences
+            # Observation at connector's outlet (connector -> outlet_junction)
+            flow_key_outlet = f"flow:{connector_name}:{outlet_junction_name}"
+            y_dict[flow_key_outlet] = connector_flow.tolist()
             if len(connector_flow) > 2:
                 dy = np.gradient(connector_flow)
-                dy_dict[flow_key] = dy.tolist()
+                dy_dict[flow_key_outlet] = dy.tolist()
             else:
-                dy_dict[flow_key] = [0.0] * len(connector_flow)
+                dy_dict[flow_key_outlet] = [0.0] * len(connector_flow)
+            
+            # Observation at connector's inlet (inlet_junction -> connector)
+            flow_key_inlet = f"flow:{inlet_junction_name}:{connector_name}"
+            y_dict[flow_key_inlet] = connector_flow.tolist()  # Same flow at inlet and outlet
+            if len(connector_flow) > 2:
+                dy = np.gradient(connector_flow)
+                dy_dict[flow_key_inlet] = dy.tolist()
+            else:
+                dy_dict[flow_key_inlet] = [0.0] * len(connector_flow)
+            
+            print(f"    Added flow observations: {flow_key_inlet}, {flow_key_outlet}")
         
         if connector_pressure is not None:
-            pressure_key = f"pressure:{connector_name}:{outlet_junction_name}"
-            y_dict[pressure_key] = connector_pressure.tolist()
-            # Calculate derivative using central differences
+            # Observation at connector's outlet (connector -> outlet_junction)
+            pressure_key_outlet = f"pressure:{connector_name}:{outlet_junction_name}"
+            y_dict[pressure_key_outlet] = connector_pressure.tolist()
             if len(connector_pressure) > 2:
                 dy = np.gradient(connector_pressure)
-                dy_dict[pressure_key] = dy.tolist()
+                dy_dict[pressure_key_outlet] = dy.tolist()
             else:
-                dy_dict[pressure_key] = [0.0] * len(connector_pressure)
+                dy_dict[pressure_key_outlet] = [0.0] * len(connector_pressure)
+            
+            # Observation at connector's inlet (inlet_junction -> connector)
+            # Use slightly higher pressure at inlet (upstream) for physical consistency
+            inlet_connector_pressure = connector_pressure * 1.001  # Small pressure drop
+            pressure_key_inlet = f"pressure:{inlet_junction_name}:{connector_name}"
+            y_dict[pressure_key_inlet] = inlet_connector_pressure.tolist()
+            if len(inlet_connector_pressure) > 2:
+                dy = np.gradient(inlet_connector_pressure)
+                dy_dict[pressure_key_inlet] = dy.tolist()
+            else:
+                dy_dict[pressure_key_inlet] = [0.0] * len(inlet_connector_pressure)
+            
+            print(f"    Added pressure observations: {pressure_key_inlet}, {pressure_key_outlet}")
     
     new_observations['y'] = y_dict
     new_observations['dy'] = dy_dict

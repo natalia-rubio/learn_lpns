@@ -65,6 +65,183 @@ except ImportError:
     sys.exit(1)
 
 
+# =============================================================================
+# LINE STYLE CONFIGURATION
+# =============================================================================
+# Define colors and styles for different data sources here.
+# Each source has: 'color', 'linestyle', 'linewidth', 'label'
+
+# Colors for each junction type (same color for original and bifurcations variants)
+JUNCTION_COLORS = {
+    'NORMAL_JUNCTION': 'red',
+    'BloodVesselJunction': 'orange',
+    'DirIndepJunction': 'dodgerblue',
+    'HybridJunction': 'violet',
+}
+
+# Line styles for geometry variants
+GEOMETRY_LINESTYLES = {
+    'original': '--',      # Dashed for original geometry
+    'bifurcations': ':',   # Dotted for bifurcations-only geometry
+}
+
+LINE_STYLES = {
+    # Reference data (3D model)
+    '3d_model': {
+        'color': 'black',
+        'linestyle': '-',
+        'linewidth': 8,
+        'label': '3D Model',
+        'alpha': 1.0,
+    },
+    # Geometric 0D (uncalibrated) - original geometry
+    'geometric_0d': {
+        'color': 'green',
+        'linestyle': '--',
+        'linewidth': 3,
+        'label': 'Geometric 0D',
+        'alpha': 1.0,
+    },
+    # Geometric 0D (uncalibrated) - bifurcations geometry
+    'bifurcations_geometric_0d': {
+        'color': 'green',
+        'linestyle': ':',
+        'linewidth': 3,
+        'label': 'Geometric 0D (bif)',
+        'alpha': 1.0,
+    },
+    # Original geometry calibrated results
+    'original_NORMAL_JUNCTION': {
+        'color': 'red',
+        'linestyle': '--',
+        'linewidth': 3,
+        'label': 'Normal Junction (orig)',
+        'alpha': 1.0,
+    },
+    'original_BloodVesselJunction': {
+        'color': 'orange',
+        'linestyle': '--',
+        'linewidth': 3,
+        'label': 'Blood Vessel Junction (orig)',
+        'alpha': 1.0,
+    },
+    'original_DirIndepJunction': {
+        'color': 'dodgerblue',
+        'linestyle': '--',
+        'linewidth': 3,
+        'label': 'Dir-Indep Junction (orig)',
+        'alpha': 1.0,
+    },
+    'original_HybridJunction': {
+        'color': 'violet',
+        'linestyle': '--',
+        'linewidth': 3,
+        'label': 'Hybrid Junction (orig)',
+        'alpha': 1.0,
+    },
+    # Bifurcations geometry calibrated results
+    'bifurcations_NORMAL_JUNCTION': {
+        'color': 'red',
+        'linestyle': ':',
+        'linewidth': 3,
+        'label': 'Normal Junction (bif)',
+        'alpha': 1.0,
+    },
+    'bifurcations_BloodVesselJunction': {
+        'color': 'orange',
+        'linestyle': ':',
+        'linewidth': 3,
+        'label': 'Blood Vessel Junction (bif)',
+        'alpha': 1.0,
+    },
+    'bifurcations_DirIndepJunction': {
+        'color': 'dodgerblue',
+        'linestyle': ':',
+        'linewidth': 3,
+        'label': 'Dir-Indep Junction (bif)',
+        'alpha': 1.0,
+    },
+    'bifurcations_HybridJunction': {
+        'color': 'violet',
+        'linestyle': ':',
+        'linewidth': 3,
+        'label': 'Hybrid Junction (bif)',
+        'alpha': 1.0,
+    },
+    # Legacy support for old naming (without geometry prefix)
+    'NORMAL_JUNCTION': {
+        'color': 'red',
+        'linestyle': '--',
+        'linewidth': 3,
+        'label': 'Normal Junction',
+        'alpha': 1.0,
+    },
+    'BloodVesselJunction': {
+        'color': 'orange',
+        'linestyle': '--',
+        'linewidth': 3,
+        'label': 'Blood Vessel Junction',
+        'alpha': 1.0,
+    },
+    'DirIndepJunction': {
+        'color': 'dodgerblue',
+        'linestyle': '--',
+        'linewidth': 3,
+        'label': 'Dir-Indep Junction',
+        'alpha': 1.0,
+    },
+    'HybridJunction': {
+        'color': 'violet',
+        'linestyle': '--',
+        'linewidth': 3,
+        'label': 'Hybrid Junction',
+        'alpha': 1.0,
+    },
+}
+
+
+def get_line_style(key):
+    """
+    Get line style for a given key. Handles dynamic generation for 
+    {geometry}_{junction_type} patterns not explicitly defined.
+    
+    Args:
+        key: Style key like 'original_NORMAL_JUNCTION' or 'bifurcations_BloodVesselJunction'
+    
+    Returns:
+        Dictionary with color, linestyle, linewidth, label, alpha
+    """
+    # If key is directly defined, return it
+    if key in LINE_STYLES:
+        return LINE_STYLES[key]
+    
+    # Try to parse as {geometry}_{junction_type}
+    for geometry in ['original', 'bifurcations']:
+        if key.startswith(f'{geometry}_'):
+            junction_type = key[len(f'{geometry}_'):]
+            color = JUNCTION_COLORS.get(junction_type, 'gray')
+            linestyle = GEOMETRY_LINESTYLES.get(geometry, '-')
+            suffix = '(orig)' if geometry == 'original' else '(bif)'
+            label = f'{junction_type} {suffix}'
+            return {
+                'color': color,
+                'linestyle': linestyle,
+                'linewidth': 3,
+                'label': label,
+                'alpha': 1.0,
+            }
+    
+    # Fallback default
+    return {
+        'color': 'gray',
+        'linestyle': '-',
+        'linewidth': 3,
+        'label': key,
+        'alpha': 1.0,
+    }
+# =============================================================================
+
+
 def parse_location(location):
     """
     Parse a location string into its components.
@@ -330,14 +507,14 @@ def get_time_period(set_name, geo_name):
 def plot_location_comparison(calibration_input_path, geometric_csv_path, calibrated_csv_paths,
                              location, output_path, set_name=None, geo_name=None, time_period=None,
                              geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, 
-                             verbose=False):
+                             verbose=False, geometric_csv_paths=None):
     """
     Plot pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models
     at a specific location.
     
     Args:
         calibration_input_path: Path to calibration input JSON (for 3D observations)
-        geometric_csv_path: Path to geometric 0D results CSV
+        geometric_csv_path: Path to geometric 0D results CSV (legacy, single file)
         calibrated_csv_paths: Dictionary mapping junction type names to CSV paths
         location: Location string (e.g., "INFLOW:branch0_seg0" or "branch0_seg0:J0")
         output_path: Path to save plot
@@ -348,6 +525,9 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         zoom_start_idx: Start index for zoom window
         zoom_end_idx: End index for zoom window
         verbose: If True, print detailed information
+        geometric_csv_paths: Dictionary mapping geometry variant names to CSV paths
+                            (e.g., {'original': '...csv', 'bifurcations': '...csv'})
+                            If provided, overrides geometric_csv_path
     
     Returns:
         True if successful, False otherwise
@@ -384,19 +564,46 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         if verbose:
             print(f"  Time period: {time_period:.4f} s")
     
-    # Extract geometric 0D results
-    times_geo, pressures_geo, flows_geo = extract_data_from_csv(
-        geometric_csv_path, vessel_name, is_inlet)
+    # Extract geometric 0D results (support both single path and dictionary of paths)
+    geometric_results = {}
+    times_geo = None
+    
+    # Build dictionary of geometric CSV paths
+    geo_csv_dict = {}
+    if geometric_csv_paths and isinstance(geometric_csv_paths, dict):
+        geo_csv_dict = geometric_csv_paths
+    elif geometric_csv_path:
+        # Legacy: single path treated as 'original'
+        geo_csv_dict = {'original': geometric_csv_path}
+    
+    for geo_variant, csv_path in geo_csv_dict.items():
+        if csv_path and os.path.exists(csv_path):
+            times_var, pressures_var, flows_var = extract_data_from_csv(
+                csv_path, vessel_name, is_inlet)
+            if times_var is not None:
+                pressures_var_mmhg = pressures_var / 1333.0 if pressures_var is not None else None
+                # Use style key format: geometric_0d or bifurcations_geometric_0d
+                if geo_variant == 'original':
+                    style_key = 'geometric_0d'
+                else:
+                    style_key = f'{geo_variant}_geometric_0d'
+                geometric_results[style_key] = {
+                    'times': times_var,
+                    'pressures': pressures_var_mmhg,
+                    'flows': flows_var
+                }
+                if times_geo is None:
+                    times_geo = times_var  # Use first one as reference
+                if verbose:
+                    print(f"  Found {len(times_var)} {geo_variant} geometric 0D time points")
     
     if times_geo is None:
-        print(f"  Error: Could not extract geometric 0D results for {vessel_name}")
+        print(f"  Error: Could not extract any geometric 0D results for {vessel_name}")
         return False
     
-    # Convert pressure to mmHg
-    pressures_geo_mmhg = pressures_geo / 1333.0 if pressures_geo is not None else None
-    
-    if verbose:
-        print(f"  Found {len(times_geo)} geometric 0D time points")
+    # For backward compatibility, also set these variables
+    pressures_geo_mmhg = geometric_results.get('geometric_0d', {}).get('pressures')
+    flows_geo = geometric_results.get('geometric_0d', {}).get('flows')
     
     # Extract 3D observations from calibration input
     times_3d_norm, pressures_3d, flows_3d = extract_data_from_calibration_input(
@@ -451,13 +658,9 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     axes[1].tick_params(labelbottom=True)
     axes[3].tick_params(labelbottom=True)
     
-    # Define styles for junction types
-    junction_styles = {
-        'BloodVesselJunction': {'color': 'orange', 'linestyle': '-', 'label': 'Blood Vessel Junction'},
-        'NORMAL_JUNCTION': {'color': 'red', 'linestyle': '--', 'label': 'Normal Junction'},
-        'DirIndepJunction': {'color': 'skyblue', 'linestyle': '-.', 'label': 'Dir-Indep Junction'},
-        'HybridJunction': {'color': 'violet', 'linestyle': ':', 'label': 'Hybrid Junction'},
-    }
+    # Get styles from configuration
+    style_3d = LINE_STYLES['3d_model']
+    style_geo = LINE_STYLES['geometric_0d']
     
     # Determine zoom window
     num_time_steps = len(times_geo)
@@ -490,9 +693,20 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     
     # Prepare zoomed data
     pressures_3d_zoom = pressures_3d_mmhg[zoom_start_idx:zoom_end_idx] if pressures_3d_mmhg is not None else None
-    pressures_geo_zoom = pressures_geo_mmhg[zoom_start_idx:zoom_end_idx] if pressures_geo_mmhg is not None else None
     flows_3d_zoom = flows_3d[zoom_start_idx:zoom_end_idx] if flows_3d is not None else None
-    flows_geo_zoom = flows_geo[zoom_start_idx:zoom_end_idx] if flows_geo is not None else None
+    
+    # Prepare zoomed geometric results
+    geometric_results_zoom = {}
+    for geo_key, geo_data in geometric_results.items():
+        if geo_data['times'] is not None and len(geo_data['times']) > 0:
+            times_geo_arr = np.array(geo_data['times'])
+            zoom_mask = (times_geo_arr >= time_zoom_start) & (times_geo_arr <= time_zoom_end)
+            if np.any(zoom_mask):
+                geometric_results_zoom[geo_key] = {
+                    'times': times_geo_arr[zoom_mask],
+                    'pressures': np.array(geo_data['pressures'])[zoom_mask] if geo_data['pressures'] is not None else None,
+                    'flows': np.array(geo_data['flows'])[zoom_mask] if geo_data['flows'] is not None else None
+                }
     
     calibrated_results_zoom = {}
     for jtype, data in calibrated_results.items():
@@ -507,27 +721,38 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
                 }
     
     # Helper functions for plotting
-    def plot_pressure_data(ax, times_data, pressures_3d_data, times_geo_data, pressures_geo_data, 
+    def plot_pressure_data(ax, times_data, pressures_3d_data, geometric_data_dict, 
                           calibrated_data_dict, set_ylim_from_3d=True):
         if pressures_3d_data is not None:
-            ax.plot(times_data, pressures_3d_data, 'k-', linewidth=8, label='3D Model', alpha=1)
+            ax.plot(times_data, pressures_3d_data, 
+                   color=style_3d['color'], linestyle=style_3d['linestyle'],
+                   linewidth=style_3d['linewidth'], label=style_3d['label'], 
+                   alpha=style_3d['alpha'])
         
-        if pressures_geo_data is not None:
-            ax.plot(times_geo_data, pressures_geo_data, 'g--', linewidth=3, label='Geometric 0D', alpha=1)
+        # Plot geometric 0D results (can be multiple: original, bifurcations)
+        for geo_key, geo_data in geometric_data_dict.items():
+            if geo_data.get('pressures') is not None:
+                style = get_line_style(geo_key)
+                ax.plot(geo_data['times'], geo_data['pressures'], 
+                       color=style['color'], linestyle=style['linestyle'],
+                       linewidth=style['linewidth'], label=style['label'], 
+                       alpha=style['alpha'])
         
         for jtype, data in calibrated_data_dict.items():
             if data['pressures'] is not None:
-                style = junction_styles.get(jtype, {'color': 'red', 'linestyle': '--', 'label': jtype})
+                style = get_line_style(jtype)
                 ax.plot(data['times'], data['pressures'], 
-                       color=style['color'], linewidth=3, 
-                       label=style['label'], alpha=1, linestyle=style['linestyle'])
+                       color=style['color'], linestyle=style['linestyle'],
+                       linewidth=style['linewidth'], label=style['label'], 
+                       alpha=style['alpha'])
         
         # Set y-limits
         all_pressures = []
         if pressures_3d_data is not None:
             all_pressures.extend(pressures_3d_data)
-        if pressures_geo_data is not None:
-            all_pressures.extend(pressures_geo_data)
+        for geo_data in geometric_data_dict.values():
+            if geo_data.get('pressures') is not None:
+                all_pressures.extend(geo_data['pressures'])
         for data in calibrated_data_dict.values():
             if data['pressures'] is not None:
                 all_pressures.extend(data['pressures'])
@@ -539,27 +764,38 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
             if pressure_range > 0:
                 ax.set_ylim(pressure_min - 0.1 * pressure_range, pressure_max + 0.1 * pressure_range)
     
-    def plot_flow_data(ax, times_data, flows_3d_data, times_geo_data, flows_geo_data, 
+    def plot_flow_data(ax, times_data, flows_3d_data, geometric_data_dict, 
                       calibrated_data_dict, set_ylim_from_3d=True):
         if flows_3d_data is not None:
-            ax.plot(times_data, flows_3d_data, 'k-', linewidth=8, label='3D Model', alpha=1)
+            ax.plot(times_data, flows_3d_data, 
+                   color=style_3d['color'], linestyle=style_3d['linestyle'],
+                   linewidth=style_3d['linewidth'], label=style_3d['label'], 
+                   alpha=style_3d['alpha'])
         
-        if flows_geo_data is not None:
-            ax.plot(times_geo_data, flows_geo_data, 'g:', linewidth=3, label='Geometric 0D', alpha=1)
+        # Plot geometric 0D results (can be multiple: original, bifurcations)
+        for geo_key, geo_data in geometric_data_dict.items():
+            if geo_data.get('flows') is not None:
+                style = get_line_style(geo_key)
+                ax.plot(geo_data['times'], geo_data['flows'], 
+                       color=style['color'], linestyle=style['linestyle'],
+                       linewidth=style['linewidth'], label=style['label'], 
+                       alpha=style['alpha'])
         
         for jtype, data in calibrated_data_dict.items():
             if data['flows'] is not None:
-                style = junction_styles.get(jtype, {'color': 'red', 'linestyle': '--', 'label': jtype})
+                style = get_line_style(jtype)
                 ax.plot(data['times'], data['flows'], 
-                       color=style['color'], linewidth=2, 
-                       label=style['label'], alpha=1, linestyle=style['linestyle'])
+                       color=style['color'], linestyle=style['linestyle'],
+                       linewidth=style['linewidth'], label=style['label'], 
+                       alpha=style['alpha'])
         
         # Set y-limits
         all_flows = []
         if flows_3d_data is not None:
             all_flows.extend(flows_3d_data)
-        if flows_geo_data is not None:
-            all_flows.extend(flows_geo_data)
+        for geo_data in geometric_data_dict.values():
+            if geo_data.get('flows') is not None:
+                all_flows.extend(geo_data['flows'])
         for data in calibrated_data_dict.values():
             if data['flows'] is not None:
                 all_flows.extend(data['flows'])
@@ -581,7 +817,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     
     # Plot 1: Zoomed pressure
     ax = axes[0]
-    plot_pressure_data(ax, zoom_times, pressures_3d_zoom, zoom_times, pressures_geo_zoom, 
+    plot_pressure_data(ax, zoom_times, pressures_3d_zoom, geometric_results_zoom, 
                       calibrated_results_zoom, set_ylim_from_3d=False)
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
     ax.set_xlim(time_zoom_start, time_zoom_end)
@@ -590,7 +826,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     
     # Plot 2: Zoomed flow
     ax = axes[1]
-    plot_flow_data(ax, zoom_times, flows_3d_zoom, zoom_times, flows_geo_zoom, 
+    plot_flow_data(ax, zoom_times, flows_3d_zoom, geometric_results_zoom, 
                    calibrated_results_zoom, set_ylim_from_3d=False)
     ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
     ax.set_xlim(time_zoom_start, time_zoom_end)
@@ -600,7 +836,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     # Plot 3: Full pressure
     ax = axes[2]
     ax.axvspan(time_zoom_start, time_zoom_end, alpha=0.4, color='gray', zorder=0)
-    plot_pressure_data(ax, times_3d_sec, pressures_3d_mmhg, times_geo, pressures_geo_mmhg, 
+    plot_pressure_data(ax, times_3d_sec, pressures_3d_mmhg, geometric_results, 
                       calibrated_results, set_ylim_from_3d=True)
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
     ax.set_xlim(time_min, time_max)
@@ -610,7 +846,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     # Plot 4: Full flow
     ax = axes[3]
     ax.axvspan(time_zoom_start, time_zoom_end, alpha=0.4, color='gray', zorder=0)
-    plot_flow_data(ax, times_3d_sec, flows_3d, times_geo, flows_geo, 
+    plot_flow_data(ax, times_3d_sec, flows_3d, geometric_results, 
                   calibrated_results, set_ylim_from_3d=True)
     ax.set_xlabel(r'Time (s)', fontsize=24)
     ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
@@ -664,8 +900,9 @@ def main():
     parser.add_argument('--calibration-input', help='Path to calibration input JSON (default: auto-detect)')
     parser.add_argument('--geometric-csv', help='Path to geometric 0D results CSV (default: auto-detect)')
     parser.add_argument('--junction-types', nargs='+', 
-                       default=['BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction'],
-                       help='Junction types to plot')
+                       default=['original_NORMAL_JUNCTION', 'bifurcations_NORMAL_JUNCTION',
+                                'original_BloodVesselJunction', 'bifurcations_BloodVesselJunction'],
+                       help='Junction types to plot (e.g., original_NORMAL_JUNCTION, bifurcations_NORMAL_JUNCTION)')
     parser.add_argument('--output-dir', default='results/location_comparison', 
                         help='Output directory for plots')
     parser.add_argument('--data-dir', default='data/zeroD', 
