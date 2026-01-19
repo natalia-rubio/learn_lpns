@@ -1487,17 +1487,19 @@ def main():
                 
                 # Build combined CSV paths dict: keys are "original_jtype" and "bifurcations_jtype"
                 combined_csv_paths = {}
+                # Build separate dictionaries for geometric and calibrated results
+                geometric_csv_paths = {}
                 for geo_variant_name, geo_variant_paths in geometry_variants.items():
                     variant_geometric_results = geo_variant_paths['geometric_results']
                     if os.path.exists(variant_geometric_results):
-                        combined_csv_paths[f'{geo_variant_name}_geometric'] = str(variant_geometric_results)
+                        geometric_csv_paths[geo_variant_name] = str(variant_geometric_results)
                     
                     for jtype in args.junction_types:
                         calibrated_results_csv = geo_variant_paths['junction_types'][jtype]['calibrated_results']
                         if os.path.exists(calibrated_results_csv):
                             combined_csv_paths[f'{geo_variant_name}_{jtype}'] = str(calibrated_results_csv)
                 
-                if combined_csv_paths:
+                if combined_csv_paths or geometric_csv_paths:
                     success_count = 0
                     for location in all_locations:
                         safe_location = location.replace(':', '_')
@@ -1515,7 +1517,8 @@ def main():
                                 geometric_input_path=str(geometry_variants['original']['geometric_input']),
                                 zoom_start_idx=args.zoom_start,
                                 zoom_end_idx=args.zoom_end,
-                                verbose=False
+                                verbose=False,
+                                geometric_csv_paths=geometric_csv_paths
                             )
                             if success:
                                 success_count += 1
