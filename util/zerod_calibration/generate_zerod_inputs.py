@@ -717,6 +717,46 @@ def refine_inlet_bc_for_forward_simulation(input_path, refinement_factor=2):
     print(f"Refined inlet boundary condition for forward simulation to: {input_path}")
     return
 
+def restore_junction_types_after_calibration(calibrated_output_path, target_junction_type):
+    """
+    Restore junction types after calibration.
+    
+    The svZeroDCalibrator always outputs BloodVesselJunction for multi-outlet junctions.
+    For NORMAL_JUNCTION type, we need to:
+    1. Change junction_type back to NORMAL_JUNCTION
+    2. Remove the junction_values field
+    
+    Args:
+        calibrated_output_path: Path to the calibrated output JSON file
+        target_junction_type: The desired junction type (e.g., 'NORMAL_JUNCTION')
+    """
+    import copy
+    
+    if target_junction_type != 'NORMAL_JUNCTION':
+        # For other junction types, the calibrator's output is appropriate
+        return
+    
+    with open(calibrated_output_path, 'r') as f:
+        config = json.load(f)
+    
+    modified = False
+    if 'junctions' in config:
+        for junc in config['junctions']:
+            num_outlets = len(junc.get('outlet_vessels', []))
+            
+            # For multi-outlet junctions, restore NORMAL_JUNCTION
+            if num_outlets > 1 and junc.get('junction_type') == 'BloodVesselJunction':
+                junc['junction_type'] = 'NORMAL_JUNCTION'
+                if 'junction_values' in junc:
+                    del junc['junction_values']
+                modified = True
+                print(f"      Restored {junc['junction_name']} to NORMAL_JUNCTION")
+    
+    if modified:
+        with open(calibrated_output_path, 'w') as f:
+            json.dump(config, f, indent=4)
+
+
 def modify_junction_types(config, junction_type):
     """
     Modify junction types in a config based on the number of outlets.
@@ -1302,6 +1342,10 @@ def main():
                         try:
                             calibrated_config = run_calibration(jtype_input_path, jtype_output_path)
                             print(f"      ✓ Calibration completed for {geo_variant_name}/{jtype}")
+                            
+                            # Restore junction types for NORMAL_JUNCTION
+                            # (calibrator always outputs BloodVesselJunction)
+                            restore_junction_types_after_calibration(jtype_output_path, jtype)
                         except Exception as e:
                             raise Exception(f"Calibration failed for {geo_variant_name}/{jtype}: {e}")
                     

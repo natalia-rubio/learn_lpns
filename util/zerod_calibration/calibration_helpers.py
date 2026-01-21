@@ -1592,31 +1592,164 @@ def split_junctions(geometric_input, centerline_data):
         except (ValueError, IndexError):
             return None
     
-    # Get bifurcation positions from centerline for each branch
-    # The bifurcation position is where a branch starts (minimum Path value for that branch)
+    # Get centerline data arrays
     branch_id_array = centerline_data.get('BranchId', None)
     path_array = centerline_data.get('Path', None)
     points_array = centerline_data.get('Points', None)
+    bifurcation_id_array = centerline_data.get('BifurcationId', None)
     
-    if branch_id_array is None or path_array is None:
-        print("  Warning: BranchId or Path not found in centerline data, cannot determine bifurcation order")
+    if branch_id_array is None or path_array is None or points_array is None:
+        print("  Warning: BranchId, Path, or Points not found in centerline data, cannot determine bifurcation order")
         return result
     
-    # Find bifurcation position for each branch (minimum path value where branch starts)
-    branch_bifurcation_path = {}
-    branch_start_point = {}
+    if bifurcation_id_array is None:
+        print("  Warning: BifurcationId not found in centerline data, using branch-based ordering")
+        bifurcation_id_array = np.full_like(branch_id_array, -1)
+    
+    # Find the inlet point (start) of each branch
+    branch_inlet_point = {}
+    branch_inlet_path = {}
     unique_branches = np.unique(branch_id_array)
     
     for branch in unique_branches:
         branch_mask = branch_id_array == branch
         branch_paths = path_array[branch_mask]
-        branch_points = points_array[branch_mask] if points_array is not None else None
+        branch_points = points_array[branch_mask]
         
         if len(branch_paths) > 0:
+            # Inlet is at minimum path value for this branch
             min_idx = np.argmin(branch_paths)
-            branch_bifurcation_path[int(branch)] = float(branch_paths[min_idx])
-            if branch_points is not None:
-                branch_start_point[int(branch)] = branch_points[min_idx]
+            branch_inlet_path[int(branch)] = float(branch_paths[min_idx])
+            branch_inlet_point[int(branch)] = branch_points[min_idx].copy()
+    
+    # Find the outlet point (end) of each branch - where it connects to downstream junction
+    branch_outlet_point = {}
+    for branch in unique_branches:
+        branch_mask = branch_id_array == branch
+        branch_paths = path_array[branch_mask]
+        branch_points = points_array[branch_mask]
+        
+        if len(branch_paths) > 0:
+            # Outlet is at maximum path value for this branch
+            max_idx = np.argmax(branch_paths)
+            branch_outlet_point[int(branch)] = branch_points[max_idx].copy()
+    
+    def compute_in_junction_path_lengths(inlet_branch_id, outlet_branch_ids, junction_bif_id):
+        """
+        Compute in-junction path lengths for each outlet.
+        
+        Within a junction region (BifurcationId == junction_bif_id), there are multiple path segments,
+        one for each route from inlet to outlet. The path length is max(Path) - min(Path)
+        for each segment.
+        
+        Args:
+            inlet_branch_id: BranchId of the inlet vessel
+            outlet_branch_ids: List of BranchIds for outlet vessels
+            junction_bif_id: The BifurcationId for this specific junction
+        
+        Returns:
+            Dictionary mapping outlet_branch_id -> in_junction_path_length
+        """
+        # Find the inlet branch outlet point (where it connects to this junction)
+        if inlet_branch_id not in branch_outlet_point:
+            print(f"    Warning: No outlet point found for inlet branch {inlet_branch_id}")
+            return {}
+        
+        inlet_endpoint = branch_outlet_point[inlet_branch_id]
+        
+        # Find all points in THIS specific junction region (BifurcationId == junction_bif_id)
+        junction_mask = bifurcation_id_array == junction_bif_id
+        
+        if not np.any(junction_mask):
+            print(f"    Warning: No junction region found with BifurcationId == {junction_bif_id}")
+            return {}
+        
+        junction_paths = path_array[junction_mask]
+        junction_points = points_array[junction_mask]
+        
+        print(f"    Found {len(junction_paths)} points in junction region (BifurcationId={junction_bif_id})")
+        
+        # Sort by Path to identify segments
+        sort_order = np.argsort(junction_paths)
+        sorted_paths = junction_paths[sort_order]
+        sorted_points = junction_points[sort_order]
+        
+        # Identify distinct path segments by finding discontinuities
+        # A discontinuity is where Path jumps (either backward or by a large amount)
+        segments = []
+        current_segment_start = 0
+        
+        for i in range(1, len(sorted_paths)):
+            path_diff = sorted_paths[i] - sorted_paths[i-1]
+            # Detect segment boundary: path jumps significantly (relative to typical increment)
+            if i > 1:
+                prev_diff = sorted_paths[i-1] - sorted_paths[i-2]
+                if abs(path_diff) > 10 * abs(prev_diff) + 0.01:  # Significant jump
+                    segments.append((current_segment_start, i))
+                    current_segment_start = i
+            elif path_diff < -0.001:  # Path decreased - new segment
+                segments.append((current_segment_start, i))
+                current_segment_start = i
+        
+        # Add final segment
+        segments.append((current_segment_start, len(sorted_paths)))
+        
+        # For each segment, find its endpoint and match to outlet branch
+        outlet_path_lengths = {}
+        
+        for seg_start, seg_end in segments:
+            seg_paths = sorted_paths[seg_start:seg_end]
+            seg_points = sorted_points[seg_start:seg_end]
+            
+            if len(seg_paths) == 0:
+                print(f"    Warning: No path segments found for segment {seg_start}-{seg_end}")
+                
+                continue
+            
+            # Path length along the segment (max - min of Path values)
+            segment_path_length = float(np.max(seg_paths) - np.min(seg_paths))
+            
+            # Start point of segment (where path is minimum)
+            min_path_idx = np.argmin(seg_paths)
+            startpoint = seg_points[min_path_idx]
+            
+            # Distance from segment start to junction inlet
+            # (some segments don't start at the inlet, so we need to add this distance)
+            distance_to_inlet = float(np.linalg.norm(startpoint - inlet_endpoint))
+            
+            # Total in-junction path length = segment path length + distance to inlet
+            path_length = segment_path_length + distance_to_inlet
+            
+            # Endpoint of segment (where path is maximum)
+            max_path_idx = np.argmax(seg_paths)
+            endpoint = seg_points[max_path_idx]
+            
+            # Match endpoint to closest outlet branch inlet
+            best_outlet = None
+            best_distance = float('inf')
+            
+            for outlet_branch_id in outlet_branch_ids:
+                if outlet_branch_id not in branch_inlet_point:
+                    continue
+                outlet_inlet = branch_inlet_point[outlet_branch_id]
+                
+                distance = np.linalg.norm(endpoint - outlet_inlet)
+                print(f"    Outlet inlet: {outlet_inlet},  Endpoint: {endpoint}, Distance: {distance}")
+                if distance < best_distance:
+                    best_distance = distance
+                    best_outlet = outlet_branch_id
+            
+            if best_outlet is not None and best_distance < 2.0:  # Matching threshold
+                # Only keep the longest path if we already have one for this outlet
+                print(f"    Best outlet: {best_outlet}, path length: {path_length:.4f} (segment: {segment_path_length:.4f} + inlet dist: {distance_to_inlet:.4f})")
+                if best_outlet not in outlet_path_lengths or path_length > outlet_path_lengths[best_outlet]:
+                    outlet_path_lengths[best_outlet] = path_length
+        
+        print(f"    Outlet path lengths: {outlet_path_lengths}")
+        return outlet_path_lengths
+    
+    # Legacy: also keep branch bifurcation path for fallback
+    branch_bifurcation_path = branch_inlet_path.copy()
     
     # Process junctions
     new_junctions = []
@@ -1665,47 +1798,98 @@ def split_junctions(geometric_input, centerline_data):
         
         print(f"  Splitting junction {junc_name}: inlet={inlet_vessel['vessel_name']} (branch {inlet_branch_id}), {len(outlet_vessels)} outlets")
         
-        # Identify main outlet (branchId = inlet_branch_id + 1)
-        main_outlet_id = None
-        side_outlets = []
-        
+        # Get branch IDs for all outlets
+        outlet_branch_ids = []
+        outlet_id_to_branch = {}
         for outlet_id in outlet_vessels:
             outlet_vessel = vessel_by_id.get(outlet_id)
             if outlet_vessel is None:
                 continue
-            
             outlet_branch_id = get_branch_id(outlet_vessel['vessel_name'])
-            if outlet_branch_id == inlet_branch_id + 1:
-                main_outlet_id = outlet_id
-                print(f"    Main outlet: {outlet_vessel['vessel_name']} (branch {outlet_branch_id})")
-            else:
-                side_outlets.append(outlet_id)
+            if outlet_branch_id is not None:
+                outlet_branch_ids.append(outlet_branch_id)
+                outlet_id_to_branch[outlet_id] = outlet_branch_id
+        
+        # Parse junction BifurcationId from junction name (e.g., "J0" -> 0, "J1" -> 1)
+        try:
+            junction_bif_id = int(junc_name[1:])  # Remove 'J' prefix and convert to int
+        except (ValueError, IndexError):
+            print(f"    Warning: Could not parse BifurcationId from junction name {junc_name}")
+            junction_bif_id = None
+        
+        # Compute in-junction path lengths to determine main outlet and ordering
+        if junction_bif_id is not None:
+            in_junction_path_lengths = compute_in_junction_path_lengths(inlet_branch_id, outlet_branch_ids, junction_bif_id)
+        else:
+            in_junction_path_lengths = {}
+
+        
+        if in_junction_path_lengths:
+            print(f"    In-junction path lengths:")
+            for branch_id, path_len in sorted(in_junction_path_lengths.items(), key=lambda x: -x[1]):
+                vessel_name = next((v['vessel_name'] for v in vessels if get_branch_id(v['vessel_name']) == branch_id), f"branch{branch_id}")
+                print(f"      {vessel_name}: {path_len:.4f}")
+        
+        # Identify main outlet (longest in-junction path length)
+        main_outlet_id = None
+        side_outlets = []
+        
+        if in_junction_path_lengths:
+            # Find outlet with longest path length
+            max_path_length = -1
+            for outlet_id in outlet_vessels:
+                outlet_branch_id = outlet_id_to_branch.get(outlet_id)
+                if outlet_branch_id is None:
+                    continue
+                path_length = in_junction_path_lengths.get(outlet_branch_id, 0)
+                if path_length > max_path_length:
+                    max_path_length = path_length
+                    main_outlet_id = outlet_id
+            
+            # Remaining outlets are side outlets
+            for outlet_id in outlet_vessels:
+                if outlet_id != main_outlet_id:
+                    side_outlets.append(outlet_id)
+            
+            if main_outlet_id is not None:
+                main_vessel = vessel_by_id.get(main_outlet_id)
+                main_branch_id = outlet_id_to_branch.get(main_outlet_id)
+                print(f"    Main outlet (longest path): {main_vessel['vessel_name']} (branch {main_branch_id}, path length: {max_path_length:.4f})")
+        else:
+            # Fallback: use branchId = inlet_branch_id + 1
+            for outlet_id in outlet_vessels:
+                outlet_vessel = vessel_by_id.get(outlet_id)
+                if outlet_vessel is None:
+                    continue
+                
+                outlet_branch_id = get_branch_id(outlet_vessel['vessel_name'])
+                if outlet_branch_id == inlet_branch_id + 1:
+                    main_outlet_id = outlet_id
+                    print(f"    Main outlet (by branchId): {outlet_vessel['vessel_name']} (branch {outlet_branch_id})")
+                else:
+                    side_outlets.append(outlet_id)
         
         # If no main outlet found, use the first outlet as main
         if main_outlet_id is None:
             main_outlet_id = outlet_vessels[0]
             side_outlets = outlet_vessels[1:]
             main_vessel = vessel_by_id.get(main_outlet_id)
-            print(f"    Warning: No branch {inlet_branch_id + 1} found, using {main_vessel['vessel_name']} as main outlet")
+            print(f"    Warning: Could not determine main outlet, using {main_vessel['vessel_name']} as main outlet")
         
-        # Sort side outlets by their bifurcation position along the inlet branch
-        # (earlier bifurcations come first)
-        def get_bifurcation_position(outlet_id):
-            outlet_vessel = vessel_by_id.get(outlet_id)
-            if outlet_vessel is None:
-                return float('inf')
-            outlet_branch_id = get_branch_id(outlet_vessel['vessel_name'])
+        # Sort side outlets by their in-junction path length (shortest first = branches off first)
+        def get_in_junction_path_length(outlet_id):
+            outlet_branch_id = outlet_id_to_branch.get(outlet_id)
             if outlet_branch_id is None:
                 return float('inf')
-            return branch_bifurcation_path.get(outlet_branch_id, float('inf'))
+            return in_junction_path_lengths.get(outlet_branch_id, float('inf'))
         
-        side_outlets.sort(key=get_bifurcation_position)
+        side_outlets.sort(key=get_in_junction_path_length)
         
         for i, outlet_id in enumerate(side_outlets):
             outlet_vessel = vessel_by_id.get(outlet_id)
-            outlet_branch_id = get_branch_id(outlet_vessel['vessel_name']) if outlet_vessel else None
-            bifurc_pos = branch_bifurcation_path.get(outlet_branch_id, float('inf')) if outlet_branch_id else float('inf')
-            print(f"    Side outlet {i+1}: {outlet_vessel['vessel_name'] if outlet_vessel else outlet_id} (bifurcation path: {bifurc_pos:.4f})")
+            outlet_branch_id = outlet_id_to_branch.get(outlet_id) if outlet_vessel else None
+            path_len = in_junction_path_lengths.get(outlet_branch_id, float('inf')) if outlet_branch_id else float('inf')
+            print(f"    Side outlet {i+1}: {outlet_vessel['vessel_name'] if outlet_vessel else outlet_id} (in-junction path length: {path_len:.4f})")
         
         # Create cascading bifurcations
         # Each bifurcation has:
