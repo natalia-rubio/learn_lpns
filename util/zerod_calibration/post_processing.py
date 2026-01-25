@@ -5,7 +5,7 @@ import csv
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from calibration_helpers import HAS_SCIPY_INTERP, get_time_period
-
+HAS_SCIPY_INTERP = False
 def read_zerod_csv(csv_path):
     """
     Read 0D simulation results from CSV.
@@ -55,6 +55,115 @@ def read_zerod_csv(csv_path):
                         continue
     
     return results, sorted(times)
+
+
+def downsample_csv_file_to_times(input_csv_path, output_csv_path, target_times, method='linear', verbose=False):
+    """
+    Read a 0D CSV file and write a new CSV downsampled/interpolated to the provided target_times.
+
+    Args:
+        input_csv_path: existing CSV with columns including 'time' and a vessel id column ('location' or 'name')
+        output_csv_path: path to write the downsampled CSV
+        target_times: iterable of target time values (floats)
+        method: 'linear' or 'nearest'
+
+    Returns:
+        True on success, False on failure
+    """
+    if not os.path.exists(input_csv_path):
+        if verbose:
+            print(f"    ✗ Input CSV for downsampling not found: {input_csv_path}")
+        return False
+
+    try:
+        # Read original CSV into memory
+        with open(input_csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+            if not fieldnames:
+                if verbose:
+                    print(f"    ✗ Input CSV has no header: {input_csv_path}")
+                return False
+
+            vessel_col = 'location' if 'location' in fieldnames else ('name' if 'name' in fieldnames else None)
+            if vessel_col is None:
+                if verbose:
+                    print(f"    ✗ Could not find 'location' or 'name' column in: {input_csv_path}")
+                return False
+
+            # Collect data by vessel
+            data_by_vessel = {}
+            numeric_fields = [fn for fn in fieldnames if fn not in [vessel_col, 'time']]
+
+            for row in reader:
+                vessel = row[vessel_col]
+                try:
+                    t = float(row['time'])
+                except Exception:
+                    continue
+
+                if vessel not in data_by_vessel:
+                    data_by_vessel[vessel] = {'times': [], 'fields': {f: [] for f in numeric_fields}}
+
+                data_by_vessel[vessel]['times'].append(t)
+                for f in numeric_fields:
+                    try:
+                        data_by_vessel[vessel]['fields'][f].append(float(row.get(f, 'nan')))
+                    except Exception:
+                        data_by_vessel[vessel]['fields'][f].append(np.nan)
+
+        # Prepare output directory
+        out_dir = os.path.dirname(output_csv_path)
+        os.makedirs(out_dir, exist_ok=True)
+
+        # Write interpolated CSV: for each vessel and each target time write a row
+        with open(output_csv_path, 'w', newline='') as fout:
+            writer_fieldnames = [vessel_col, 'time'] + numeric_fields
+            writer = csv.DictWriter(fout, fieldnames=writer_fieldnames)
+            writer.writeheader()
+
+            for vessel, dat in data_by_vessel.items():
+                times = np.array(dat['times'], dtype=float)
+                if times.size == 0:
+                    continue
+
+                # Ensure sorting by time
+                sort_idx = np.argsort(times)
+                times = times[sort_idx]
+                field_arrays = {}
+                for f in numeric_fields:
+                    arr = np.array(dat['fields'][f], dtype=float)
+                    if arr.size == 0:
+                        arr = np.full(times.shape, np.nan)
+                    else:
+                        arr = arr[sort_idx]
+                    field_arrays[f] = arr
+
+                # For each target time compute interpolated values
+                for tt in target_times:
+                    row = {vessel_col: vessel, 'time': float(tt)}
+                    for f in numeric_fields:
+                        arr = field_arrays[f]
+                        if method == 'nearest':
+                            # Find nearest index
+                            idx = np.abs(times - tt).argmin()
+                            val = float(arr[idx]) if idx < len(arr) else float(arr[-1])
+                        else:
+                            # Linear interpolation with numpy (handles edge values by clipping)
+                            try:
+                                val = float(np.interp(tt, times, arr))
+                            except Exception:
+                                val = float('nan')
+                        row[f] = val
+                    writer.writerow(row)
+
+        if verbose:
+            print(f"    ✓ Downsampled CSV written: {output_csv_path}")
+        return True
+    except Exception as e:
+        if verbose:
+            print(f"    ✗ Exception while downsampling CSV {input_csv_path} -> {output_csv_path}: {e}")
+        return False
 
 
 def plot_junction_pressure_differences(calibration_input_path, geometric_input_path, output_dir, zoom_start_idx=None, zoom_end_idx=None, set_name=None, geo_name=None, verbose=False):
@@ -370,7 +479,7 @@ def plot_junction_pressure_differences(calibration_input_path, geometric_input_p
         print(f"  Created {plot_count} junction pressure difference plots")
 
 
-def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, output_csv_path=None, verbose=False, set_name=None):
+def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, output_csv_path=None, verbose=False, set_name=None, downsample_0d=True, downsample_method='linear', downsample_save_dir=None):
     """
     Calculate and print Mean Squared Error (MSE) between 3D observations and 0D solutions.
     Optionally saves results to a CSV file.
@@ -395,6 +504,13 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
     print("="*80)
     
     # Read 3D observations from calibration input
+    # Report downsampling mode
+    if downsample_0d:
+        print("  Downsampling of 0D CSVs is ENABLED")
+        if downsample_save_dir:
+            print(f"  Downsampled CSVs will be written to: {downsample_save_dir}")
+    else:
+        print("  Downsampling of 0D CSVs is disabled")
     if not os.path.exists(calibration_input_path):
         print(f"  ✗ Calibration input not found: {calibration_input_path}")
         return {}
@@ -404,16 +520,15 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
     
     # Get 3D observations (use full observations if available, otherwise use y)
     if '_full_observations' in calib_data and 'y' in calib_data['_full_observations']:
-        obs_3d = calib_data['_full_observations']['y']
-    elif 'y' in calib_data:
+        print(f"  Using observed_inflow_bc times for downsampling")
         obs_3d = calib_data['y']
     else:
         print("  ✗ No 3D observations found in calibration input")
         return {}
-    
-    print(f"  Found {len(obs_3d)} 3D observation series")
+    print(f"  Using normalized time grid for downsampling")
     
     # Read geometric input to understand vessel/junction structure
+
     vessels = []
     junctions = []
     if geometric_input_path and os.path.exists(geometric_input_path):
@@ -431,33 +546,80 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         elif hasattr(obs_values_3d, '__len__'):
             max_3d_length = max(max_3d_length, len(obs_values_3d))
     
-    if zoom_start_idx is None or zoom_end_idx is None:
-        if set_name == 'VMR':
-            # For VMR: zoom to 1-2 seconds
-            # Assume period is 2.0s for VMR data (standard cardiac cycle)
-            time_period = 2.0
-            dt = time_period / (max_3d_length - 1) if max_3d_length > 1 else 1.0
-            zoom_start_idx = int(1.0 / dt) if zoom_start_idx is None else zoom_start_idx
-            zoom_end_idx = min(int(2.0 / dt) + 1, max_3d_length) if zoom_end_idx is None else zoom_end_idx
-            print(f"  VMR zoom window: 1.0s to 2.0s (indices {zoom_start_idx} to {zoom_end_idx})")
+    zoom_start_idx = int(max_3d_length/2); zoom_end_idx = int(max_3d_length)
+    # if zoom_start_idx is None or zoom_end_idx is None:
+    #     if set_name == 'VMR':
+    #         # For VMR: zoom to 1-2 seconds
+    #         # Assume period is 2.0s for VMR data (standard cardiac cycle)
+    #         time_period = 2.0
+    #         dt = time_period / (max_3d_length - 1) if max_3d_length > 1 else 1.0
+    #         zoom_start_idx = int(1.0 / dt) if zoom_start_idx is None else zoom_start_idx
+    #         zoom_end_idx = min(int(2.0 / dt) + 1, max_3d_length) if zoom_end_idx is None else zoom_end_idx
+    #         print(f"  VMR zoom window: 1.0s to 2.0s (indices {zoom_start_idx} to {zoom_end_idx})")
+    #     else:
+    #         # Default for other sets: indices 599-699
+    #         if zoom_start_idx is None:
+    #             zoom_start_idx = 599
+    #         if zoom_end_idx is None:
+    #             zoom_end_idx = 699
+
+    # Prepare target times for optional downsampling of 0D CSVs
+    target_times = None
+    if downsample_0d:
+        # Prefer explicit observed inflow BC times from calibration input
+        if isinstance(calib_data, dict) and 'observed_inflow_bc' in calib_data and isinstance(calib_data['observed_inflow_bc'].get('t'), list):
+            target_times = calib_data['observed_inflow_bc']['t']
+            if verbose:
+                print(f"  Using observed_inflow_bc times for downsampling ({len(target_times)} points)")
         else:
-            # Default for other sets: indices 599-699
-            if zoom_start_idx is None:
-                zoom_start_idx = 599
-            if zoom_end_idx is None:
-                zoom_end_idx = 699
+            # Fallback: use normalized time grid matching max 3D observation length
+            if max_3d_length > 0:
+                target_times = np.linspace(0.0, 1.0, max_3d_length).tolist()
+                if verbose:
+                    print(f"  Using normalized time grid for downsampling ({len(target_times)} points)")
+            else:
+                target_times = None
     
     # Calculate MSE for each modality
     mse_results = {}
     
     for modality_name, csv_path in csv_results_dict.items():
-        if not csv_path or not os.path.exists(csv_path):
-            print(f"\n  {modality_name}: ✗ CSV file not found: {csv_path}")
+        original_csv_path = csv_path
+        if not original_csv_path or not os.path.exists(original_csv_path):
+            print(f"\n  {modality_name}: ✗ CSV file not found: {original_csv_path}")
             continue
-        
+
+        # Optionally downsample the 0D CSV to match 3D observation times
+        if downsample_0d and target_times is not None:
+            # Determine output path for downsampled CSV
+            csv_dir = downsample_save_dir if downsample_save_dir else os.path.dirname(original_csv_path)
+            os.makedirs(csv_dir, exist_ok=True)
+            base = os.path.basename(original_csv_path).replace('.csv', '')
+            downsampled_name = f"{base}_downsampled_to_3d_times.csv"
+            downsampled_path = os.path.join(csv_dir, downsampled_name)
+            if not os.path.exists(downsampled_path):
+                if verbose:
+                    print(f"\n  {modality_name}: downsampling 0D CSV to match 3D times -> {downsampled_path}")
+                ok = downsample_csv_file_to_times(original_csv_path, downsampled_path, target_times, method=downsample_method, verbose=verbose)
+                if not ok:
+                    print(f"    ✗ Downsampling failed for: {original_csv_path}")
+                    # Fall back to original CSV
+                    csv_path = original_csv_path
+                else:
+                    csv_path = downsampled_path
+                    if verbose:
+                        print(f"    ✓ Using downsampled CSV: {downsampled_path}")
+            else:
+                # Use existing downsampled file
+                csv_path = downsampled_path
+                if verbose:
+                    print(f"    ✓ Re-using existing downsampled CSV: {downsampled_path}")
+        else:
+            csv_path = original_csv_path
+
         print(f"\n  {modality_name}:")
         print(f"    Reading 0D results from: {csv_path}")
-        
+
         # Read 0D CSV results
         results_0d, times_0d = read_zerod_csv(csv_path)
         
@@ -478,17 +640,11 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             elif hasattr(obs_values_3d, '__len__'):
                 max_3d_length = max(max_3d_length, len(obs_values_3d))
         
-        # Validate and adjust zoom window if needed
-        if zoom_start_idx >= max_3d_length:
-            zoom_start_idx = max(0, max_3d_length - 105)
-            zoom_end_idx = max_3d_length
-        elif zoom_end_idx > max_3d_length:
-            zoom_end_idx = max_3d_length
-        
-        # Ensure valid range
-        if zoom_start_idx >= zoom_end_idx:
-            zoom_start_idx = max(0, max_3d_length - 105)
-            zoom_end_idx = max_3d_length
+        # Validate zoom window
+        assert zoom_start_idx <= max_3d_length
+        assert zoom_end_idx <= max_3d_length
+        assert zoom_start_idx <= zoom_end_idx
+            
         
         num_zoom_timesteps = zoom_end_idx - zoom_start_idx
         print(f"    Using zoom window: timesteps {zoom_start_idx} to {zoom_end_idx-1} ({num_zoom_timesteps} timesteps)")
@@ -548,6 +704,26 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             
             if not vessel_name or not field_name:
                 continue
+
+            # FILTER: only include vessels that exist in the original 0D geometry
+            # If geometric input was provided, use its `vessels` list to decide which
+            # observation locations are valid for MSE. Also exclude any vessel name
+            # that looks like a connector (contains the substring 'connector').
+            try:
+                if vessels:
+                    vessel_name_set = set([v.get('vessel_name') for v in vessels if v.get('vessel_name')])
+                    #if vessel_name not in vessel_name_set:
+                    if 'connector' in vessel_name.lower():
+                        if verbose:
+                            print(f"    Skipping observation {obs_key}: '{vessel_name}' is a connector or not in original 0D vessels")
+                        continue
+                    #else:
+                    #    if verbose:
+                    #        print(f"    Skipping observation {obs_key}: '{vessel_name}' not found in original 0D vessels")
+                    #continue
+            except Exception:
+                # If anything goes wrong while checking geometry, fall back to previous behavior
+                pass
             
             # Extract 0D data for this vessel
             if vessel_name not in results_0d:

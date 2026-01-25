@@ -167,6 +167,188 @@ def fit_outlet_resistances_from_3d(geometric_input_path, observations):
     
     return outlet_params
 
+
+def fit_outlet_rcr_from_observations(geometric_input_path, observations, dt=None, fit_pd=False):
+    """
+    Fit RCR (Windkessel) boundary condition parameters (Rp, C, Rd, Pd) from observations.
+
+    Uses measured outlet pressure/flow time series (from 1D solution) and fits
+    the Windkessel equations via nonlinear least squares:
+
+        C * dPc/dt - Q + (Pc - Pd)/Rd = 0
+        Pc = P_in - Rp * Q
+
+    Args:
+        geometric_input_path: Path to geometric 0D input JSON (will be updated)
+        observations: Dict with 'y' (and optionally 'dy') containing outlet pressure/flow
+                      keys in the form pressure:{vessel}:{bc_name}, flow:{vessel}:{bc_name}
+        dt: Optional timestep (seconds). If None, attempt to infer from the inlet BC time array.
+
+    Returns:
+        Dict mapping bc_name -> (Rp, C, Rd, Pd) for fitted outlets.
+    """
+    import copy
+    from math import isfinite
+
+    try:
+        from scipy.optimize import least_squares
+        HAS_SCIPY = True
+    except Exception:
+        HAS_SCIPY = False
+
+    print("\nFitting RCR outlet boundary conditions from observations...")
+
+    # Load geometric input
+    with open(geometric_input_path, 'r') as f:
+        inp = json.load(f)
+
+    boundary_conditions = inp.get('boundary_conditions', [])
+    vessels = inp.get('vessels', [])
+
+    # Infer dt from inlet BC time array if not provided
+    if dt is None:
+        try:
+            for bc in boundary_conditions:
+                if bc.get('bc_name') == 'INFLOW' and 'bc_values' in bc and 't' in bc['bc_values']:
+                    t_arr = bc['bc_values']['t']
+                    if len(t_arr) > 1:
+                        dt = float(t_arr[1] - t_arr[0])
+                        break
+        except Exception:
+            pass
+    if dt is None:
+        print("  Warning: Could not determine timestep (dt). Skipping RCR fitting.")
+        return {}
+
+    # Map BC name -> bc config
+    bc_by_name = {bc.get('bc_name'): bc for bc in boundary_conditions if bc.get('bc_name')}
+
+    # Collect outlet RCR vessels
+    outlet_params = {}
+    for vessel in vessels:
+        bc_name = vessel.get('boundary_conditions', {}).get('outlet')
+        if not bc_name or bc_name not in bc_by_name:
+            continue
+        bc_cfg = bc_by_name[bc_name]
+        if bc_cfg.get('bc_type') != 'RCR':
+            continue
+
+        vessel_name = vessel.get('vessel_name')
+        key_p = f"pressure:{vessel_name}:{bc_name}"
+        key_q = f"flow:{vessel_name}:{bc_name}"
+
+        if key_p not in observations.get('y', {}) or key_q not in observations.get('y', {}):
+            print(f"  Warning: Missing observations for {vessel_name}:{bc_name}, skipping")
+            continue
+
+        P = np.array(observations['y'][key_p], dtype=float)
+        Q = np.array(observations['y'][key_q], dtype=float)
+
+        if len(P) < 3 or len(Q) < 3:
+            print(f"  Warning: Not enough data points for {vessel_name}:{bc_name} (need >=3)")
+            continue
+
+        # Initial guesses from geometric input
+        Rp0 = float(bc_cfg['bc_values'].get('Rp', 100.0))
+        C0 = float(bc_cfg['bc_values'].get('C', 1e-4))
+        Rd0 = float(bc_cfg['bc_values'].get('Rd', 1000.0))
+        Pd0 = float(bc_cfg['bc_values'].get('Pd', 0.0))
+
+        def residual(params):
+            if fit_pd:
+                Rp, C, Rd, Pd = params
+            else:
+                Rp, C, Rd = params
+                Pd = 0.0
+            if Rp <= 0 or C <= 0 or Rd <= 0:
+                return np.ones_like(P) * 1e6  # penalize invalid
+            Pc = P - Rp * Q
+            dPc_dt = np.gradient(Pc, dt)
+            return C * dPc_dt - Q + (Pc - Pd) / Rd
+
+        if HAS_SCIPY:
+            if fit_pd:
+                bounds = ([1e-6, 1e-9, 1e-6, -1e6], [1e8, 1e3, 1e8, 1e6])
+                res = least_squares(residual, x0=[Rp0, C0, Rd0, Pd0], bounds=bounds, max_nfev=200)
+                Rp_fit, C_fit, Rd_fit, Pd_fit = res.x
+            else:
+                bounds = ([1e-6, 1e-9, 1e-6], [1e8, 1e3, 1e8])
+                res = least_squares(residual, x0=[Rp0, C0, Rd0], bounds=bounds, max_nfev=200)
+                Rp_fit, C_fit, Rd_fit = res.x
+                Pd_fit = 0.0
+        else:
+            # Fallback: keep Rp,C, solve Rd (and Pd if allowed) linearly
+            Rp_fit, C_fit = Rp0, C0
+            Pc = P - Rp_fit * Q
+            dPc_dt = np.gradient(Pc, dt)
+            rhs = Q - C_fit * dPc_dt  # equals (Pc - Pd)/Rd
+            if fit_pd:
+                A = np.vstack([Pc, -np.ones_like(Pc)]).T  # [Pc, -1] * [1/Rd, Pd/Rd]^T = rhs
+                try:
+                    params, _, _, _ = np.linalg.lstsq(A, rhs, rcond=None)
+                    inv_Rd, Pd_over_Rd = params
+                    Rd_fit = 1.0 / inv_Rd if inv_Rd != 0 else Rd0
+                    Pd_fit = Pd_over_Rd / inv_Rd if inv_Rd != 0 else Pd0
+                except np.linalg.LinAlgError:
+                    Rd_fit, Pd_fit = Rd0, Pd0
+            else:
+                # Pd fixed to 0 -> rhs = Pc / Rd -> solve Rd only
+                try:
+                    inv_Rd = np.linalg.lstsq(Pc.reshape(-1,1), rhs, rcond=None)[0][0]
+                    Rd_fit = 1.0 / inv_Rd if inv_Rd != 0 else Rd0
+                except np.linalg.LinAlgError:
+                    Rd_fit = Rd0
+                Pd_fit = 0.0
+
+        # Validate
+        if not all(isfinite(x) for x in [Rp_fit, C_fit, Rd_fit, Pd_fit]):
+            print(f"  Warning: Non-finite fit for {vessel_name}:{bc_name}, skipping")
+            continue
+        if Rp_fit <= 0 or C_fit <= 0 or Rd_fit <= 0:
+            print(f"  Warning: Non-positive fitted parameters for {vessel_name}:{bc_name}, skipping")
+            continue
+
+        outlet_params[bc_name] = (Rp_fit, C_fit, Rd_fit, Pd_fit)
+
+        # Compute R^2-like metric for residuals
+        Pc_fit = P - Rp_fit * Q
+        dPc_dt_fit = np.gradient(Pc_fit, dt)
+        res_vals = C_fit * dPc_dt_fit - Q + (Pc_fit - Pd_fit) / Rd_fit
+        ss_res = np.sum(res_vals ** 2)
+        ss_tot = np.sum((Q - np.mean(Q)) ** 2) + 1e-12
+        r2_like = 1 - ss_res / ss_tot
+
+        print(f"  {bc_name} ({vessel_name}):")
+        print(f"    Rp: {Rp_fit:.4f} (was {Rp0:.4f})")
+        print(f"    C : {C_fit:.6e} (was {C0:.6e})")
+        print(f"    Rd: {Rd_fit:.4f} (was {Rd0:.4f})")
+        print(f"    Pd: {Pd_fit:.4f} (was {Pd0:.4f}) {'(fixed)' if not fit_pd else ''}")
+        print(f"    Residual R^2 (heuristic): {r2_like:.4f}")
+
+    # Update geometric input
+    if outlet_params:
+        print("\n  Updating geometric input with fitted RCR parameters...")
+        for bc_name, (Rp, C, Rd, Pd) in outlet_params.items():
+            if bc_name in bc_by_name:
+                bc_cfg = bc_by_name[bc_name]
+                old = bc_cfg.get('bc_values', {})
+                bc_cfg['bc_values']['Rp'] = float(Rp)
+                bc_cfg['bc_values']['C'] = float(C)
+                bc_cfg['bc_values']['Rd'] = float(Rd)
+                bc_cfg['bc_values']['Pd'] = float(Pd)
+                print(f"    {bc_name}: Rp {old.get('Rp', 0):.4f}->{Rp:.4f}, "
+                      f"C {old.get('C', 0):.6e}->{C:.6e}, "
+                      f"Rd {old.get('Rd', 0):.4f}->{Rd:.4f}, "
+                      f"Pd {old.get('Pd', 0):.4f}->{Pd:.4f}")
+
+        with open(geometric_input_path, 'w') as f:
+            json.dump(inp, f, indent=4)
+        print(f"  ✓ Updated geometric input saved to: {geometric_input_path}")
+    else:
+        print("  No RCR parameters were fitted.")
+
+    return outlet_params
+
 def read_zerod_csv(csv_path):
     """
     Read 0D simulation results from CSV.
@@ -671,6 +853,102 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
             flow_der = [0.0] * len(flow_refined)
         
         return pressure_refined, pressure_der, flow_refined, flow_der
+
+    # Helper to find a centerline point corresponding to a 0D vessel segment
+    # Uses vessel lengths in the geometric input and the centerline 'Path' array
+    def find_point_for_vessel_segment(vessel_name, prefer_end=True):
+        """
+        Map a 0D vessel (e.g. 'branch3_seg1') to a point index in the centerline arrays.
+
+        prefer_end: if True, return a point near the downstream end of the segment;
+                    if False, return a point near the upstream/start of the segment.
+        """
+        # Parse branch and optional segment index from vessel_name
+        try:
+            parts = vessel_name.split('_')
+            branch_part = parts[0]
+            branch_idx = int(branch_part.replace('branch', ''))
+        except Exception:
+            # Fallback to previous simple parsing
+            try:
+                branch_idx = int(vessel_name.split('_')[0].replace('branch', ''))
+            except Exception:
+                return None
+
+        # Indices on the centerline that belong to this branch
+        branch_pts = [i for i, bid in enumerate(branch_id) if bid == branch_idx]
+        if not branch_pts:
+            return None
+
+        path_arr = centerline_data.get('Path', None)
+        # If we don't have a path array, fall back to the old heuristic
+        if path_arr is None:
+            if prefer_end:
+                # try to find the last occurrence that is an outlet or last point
+                for i in range(len(branch_id) - 1, -1, -1):
+                    if branch_id[i] == branch_idx:
+                        if i in outlet_indices or gid is None:
+                            return i
+                for i in range(len(branch_id) - 1, -1, -1):
+                    if branch_id[i] == branch_idx:
+                        return i
+            else:
+                for i in range(len(branch_id)):
+                    if branch_id[i] == branch_idx:
+                        return i
+            return None
+
+        # Collect all 0D vessels from geometric input that belong to this branch
+        branch_vessels = [v for v in vessels if v.get('vessel_name', '').startswith(f'branch{branch_idx}_')]
+        if not branch_vessels:
+            # fallback to first/last point of branch
+            return branch_pts[-1] if prefer_end else branch_pts[0]
+
+        # Sort vessels by segment index (segN in the name) when available
+        def seg_index(v):
+            name = v.get('vessel_name', '')
+            if '_seg' in name:
+                try:
+                    return int(name.split('_seg')[-1])
+                except Exception:
+                    print(f"could not order vessel segment for {name}")
+                    return 0
+            return 0
+
+        branch_vessels.sort(key=seg_index)
+
+        # Build cumulative lengths along the branch from the 0D vessel lengths
+        lengths = [float(v.get('vessel_length', 0.0) or 0.0) for v in branch_vessels]
+        if sum(lengths) <= 0:
+            return branch_pts[-1] if prefer_end else branch_pts[0]
+
+        cum_lengths = np.cumsum(lengths)
+
+        # Determine which index in branch_vessels corresponds to the requested vessel
+        idx_in_list = next((i for i, v in enumerate(branch_vessels) if v.get('vessel_name') == vessel_name), None)
+        if idx_in_list is None:
+            # if exact name not found, try to infer by preferring first/last
+            idx_in_list = len(branch_vessels) - 1 if prefer_end else 0
+
+        # Compute target path position measured from the branch start
+        branch_start_path = float(path_arr[branch_pts[0]])
+        # For the start of the segment (prefer_end=False) use cumulative length up to previous segment
+        if prefer_end:
+            target_rel = float(cum_lengths[idx_in_list])
+        else:
+            seg_len = float(lengths[idx_in_list])
+            if idx_in_list == 0:
+                target_rel = 0.0
+            else:
+                target_rel = float(cum_lengths[idx_in_list] - seg_len)
+        target_abs = branch_start_path + target_rel
+
+        # Ensure branch_pts are sorted by path so 'nearest' selection is stable
+        branch_pts_sorted = sorted(branch_pts, key=lambda i: float(path_arr[i]))
+        branch_paths = [float(path_arr[i]) for i in branch_pts_sorted]
+        distances = [abs(p - target_abs) for p in branch_paths]
+        nearest_idx = branch_pts_sorted[int(np.argmin(distances))]
+        return nearest_idx
     
     # Extract observations at boundaries (inlet and outlets)
     # Inflow BC
@@ -690,22 +968,8 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 # Find outlet point for this vessel's branch
                 vessel_branch = int(vessel['vessel_name'].split('_')[0].replace('branch', ''))
                 
-                # Find the last point (outlet) of this branch
-                outlet_point_idx = None
-                # First try to find by matching branch_id and checking if it's an outlet
-                for i in range(len(branch_id) - 1, -1, -1):  # Search backwards to find last point
-                    if branch_id[i] == vessel_branch:
-                        # Check if this is an outlet (either in outlet_indices or last point of branch)
-                        if i in outlet_indices or gid is None:
-                            outlet_point_idx = i
-                            break
-                
-                # If not found, use the last point of the branch as fallback
-                if outlet_point_idx is None:
-                    for i in range(len(branch_id) - 1, -1, -1):
-                        if branch_id[i] == vessel_branch:
-                            outlet_point_idx = i
-                            break
+                # Find a representative point for this 0D vessel segment using vessel lengths
+                outlet_point_idx = find_point_for_vessel_segment(vessel['vessel_name'], prefer_end=True)
                 
                 if outlet_point_idx is not None:
                     p_ref, p_der, f_ref, f_der = extract_at_point(outlet_point_idx, times, dt, derivative_method, verbose=False)
@@ -749,15 +1013,17 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 
                 # Find a point on this vessel near the junction (use last point of branch)
                 # This is approximate - ideally we'd find the exact junction point
-                for i in range(len(branch_id) - 1, -1, -1):
-                    if branch_id[i] == vessel_branch:
-                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt, derivative_method, verbose=False)
-                        if p_ref is not None:
-                            observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref[start_idx:end_idx]
-                            observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der[start_idx:end_idx]
-                            observations["y"][f"flow:{vessel_name}:{junc_name}"] = f_ref[start_idx:end_idx]
-                            observations["dy"][f"flow:{vessel_name}:{junc_name}"] = f_der[start_idx:end_idx]
-                        break
+                # Find a point representing this 0D vessel segment (near the junction)
+                pt_idx = find_point_for_vessel_segment(vessel_name, prefer_end=True)
+                print(f"{vessel_name}:{junc_name} inlet point index: {pt_idx}")
+                if pt_idx is not None:
+                    p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
+                    if p_ref is not None:
+                        observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref[start_idx:end_idx]
+                        observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der[start_idx:end_idx]
+                        observations["y"][f"flow:{vessel_name}:{junc_name}"] = f_ref[start_idx:end_idx]
+                        observations["dy"][f"flow:{vessel_name}:{junc_name}"] = f_der[start_idx:end_idx]
+                # if helper failed, we silently continue to next vessel
         
         # For outlet vessels: format is "flow:junction_name:vessel_name"
         for vessel_id in outlet_vessel_ids:
@@ -767,16 +1033,17 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 vessel_branch = int(vessel_name.split('_')[0].replace('branch', ''))
                 
                 # Find a point on this vessel near the junction (use first point of branch)
-                for i in range(len(branch_id)):
-                    if branch_id[i] == vessel_branch:
-                        p_ref, p_der, f_ref, f_der = extract_at_point(i, times, dt, derivative_method, verbose=False)
-                        if p_ref is not None:
-                            observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref[start_idx:end_idx]
-                            observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der[start_idx:end_idx]
-                            observations["y"][f"flow:{junc_name}:{vessel_name}"] = f_ref[start_idx:end_idx]
-                            observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
-                            
-                        break
+                # Find a point representing this 0D vessel segment (near the junction)
+                pt_idx = find_point_for_vessel_segment(vessel_name, prefer_end=False)
+                print(f"{vessel_name}:{junc_name} outlet point index: {pt_idx}")
+                if pt_idx is not None:
+                    p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
+                    if p_ref is not None:
+                        observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref[start_idx:end_idx]
+                        observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der[start_idx:end_idx]
+                        observations["y"][f"flow:{junc_name}:{vessel_name}"] = f_ref[start_idx:end_idx]
+                        observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
+                # if helper failed, we silently continue to next vessel
 
     return observations
 
@@ -1924,7 +2191,8 @@ def split_junctions(geometric_input, centerline_data):
                 # Name derived from inlet vessel name
                 connector_name = f"{inlet_vessel_name}_connector{i}"
                 
-                # Use properties from inlet vessel (scaled)
+                # Connector vessels are artificial constructs - set R, L, stenosis to 0
+                # Keep small non-zero capacitance for numerical stability
                 connector_vessel = {
                     "vessel_id": next_vessel_id,
                     "vessel_length": inlet_vessel['vessel_length'] * 0.01,  # Small connector
@@ -1932,9 +2200,9 @@ def split_junctions(geometric_input, centerline_data):
                     "zero_d_element_type": "BloodVessel",
                     "zero_d_element_values": {
                         "C": inlet_vessel['zero_d_element_values'].get('C', 1e-10) * 0.01,
-                        "L": inlet_vessel['zero_d_element_values'].get('L', 1.0) * 0.01,
-                        "R_poiseuille": inlet_vessel['zero_d_element_values'].get('R_poiseuille', 1.0) * 0.01,
-                        "stenosis_coefficient": 0.0
+                        "L": 0.0,  # No inductance for artificial connector
+                        "R_poiseuille": 0.0,  # No resistance for artificial connector
+                        "stenosis_coefficient": 0.0  # No stenosis for artificial connector
                     }
                 }
                 
@@ -2035,6 +2303,104 @@ def generate_connector_observations(original_observations, original_geometric_in
     """
     import copy
     
+def rename_observations_for_bifurcations(original_observations, bifurcated_geometric_input):
+    """
+    Rename existing observation keys to match bifurcations-only junction naming.
+
+    This is used when we want the bifurcations-only calibration input to reference
+    the new junction names (e.g. J0_bif0) even if we are not generating synthetic
+    observations for connector vessels.
+
+    Args:
+        original_observations: Dictionary with 'y' and 'dy' observations
+        bifurcated_geometric_input: Bifurcated geometric input (after splitting)
+
+    Returns:
+        New observations dict with renamed keys (deep-copied).
+    """
+    import copy
+
+    new_observations = copy.deepcopy(original_observations)
+
+    bif_vessels = bifurcated_geometric_input.get('vessels', [])
+    bif_junctions = bifurcated_geometric_input.get('junctions', [])
+    bif_vessel_by_id = {v['vessel_id']: v for v in bif_vessels}
+
+    y_dict = new_observations.get('y', {})
+    dy_dict = new_observations.get('dy', {})
+
+    # Build mapping from vessel names to their junction connections in bifurcated geometry
+    vessel_to_outlet_junction = {}  # vessel_name -> junction_name (where vessel is inlet)
+    for junc in bif_junctions:
+        for inlet_id in junc.get('inlet_vessels', []):
+            inlet_vessel = bif_vessel_by_id.get(inlet_id)
+            if inlet_vessel:
+                vessel_to_outlet_junction[inlet_vessel['vessel_name']] = junc['junction_name']
+
+    # Build mapping from outlet vessel names to their inlet junction in bifurcated geometry
+    vessel_to_inlet_junction = {}  # vessel_name -> junction_name (where vessel is outlet)
+    for junc in bif_junctions:
+        for outlet_id in junc.get('outlet_vessels', []):
+            outlet_vessel = bif_vessel_by_id.get(outlet_id)
+            if outlet_vessel:
+                vessel_to_inlet_junction[outlet_vessel['vessel_name']] = junc['junction_name']
+
+    # Rename keys in y/dy
+    print(f"  Renaming observation keys to match bifurcated junction names...")
+    renamed_y_dict = {}
+    renamed_dy_dict = {}
+
+    for key, value in y_dict.items():
+        parts = key.split(':')
+        if len(parts) == 3:
+            obs_type, first, second = parts
+            new_key = key
+
+            # Case 1: "type:vessel:junction" - vessel as inlet to junction
+            if first in vessel_to_outlet_junction:
+                new_junction = vessel_to_outlet_junction[first]
+                if second.startswith('J') and '_bif' not in second:
+                    new_key = f"{obs_type}:{first}:{new_junction}"
+
+            # Case 2: "type:junction:vessel" - junction to outlet vessel
+            elif first.startswith('J') and '_bif' not in first:
+                if second in vessel_to_inlet_junction:
+                    new_junction = vessel_to_inlet_junction[second]
+                    new_key = f"{obs_type}:{new_junction}:{second}"
+
+            renamed_y_dict[new_key] = value
+            if key in dy_dict:
+                renamed_dy_dict[new_key] = dy_dict[key]
+        else:
+            renamed_y_dict[key] = value
+            if key in dy_dict:
+                renamed_dy_dict[key] = dy_dict[key]
+
+    new_observations['y'] = renamed_y_dict
+    new_observations['dy'] = renamed_dy_dict
+    return new_observations
+
+
+def generate_connector_observations(original_observations, original_geometric_input, 
+                                     bifurcated_geometric_input, centerline_data):
+    """
+    Generate synthetic observations for connector vessels created during junction splitting.
+    
+    For connector vessels:
+    - Flow: inlet_flow - sum(flows of side outlets that have already branched off)
+    - Pressure: linear interpolation between inlet pressure and main outlet pressure
+    
+    Args:
+        original_observations: Dictionary with 'y' and 'dy' observations from original geometry
+        original_geometric_input: Original geometric input (before splitting)
+        bifurcated_geometric_input: Bifurcated geometric input (after splitting)
+        centerline_data: Centerline data with BranchId and Path arrays
+    
+    Returns:
+        Updated observations dictionary with connector vessel observations
+    """
+    import copy
+    
     # Deep copy observations
     new_observations = copy.deepcopy(original_observations)
     
@@ -2050,7 +2416,10 @@ def generate_connector_observations(original_observations, original_geometric_in
     bif_vessel_by_id = {v['vessel_id']: v for v in bif_vessels}
     bif_vessel_by_name = {v['vessel_name']: v for v in bif_vessels}
     
-    # Get y and dy dicts
+    # Rename existing observation keys to use new junction names (always)
+    new_observations = rename_observations_for_bifurcations(new_observations, bifurcated_geometric_input)
+
+    # Get y and dy dicts (post-rename)
     y_dict = new_observations.get('y', {})
     dy_dict = new_observations.get('dy', {})
     
@@ -2062,65 +2431,7 @@ def generate_connector_observations(original_observations, original_geometric_in
         except (ValueError, IndexError):
             return None
     
-    # Build mapping from vessel names to their junction connections in bifurcated geometry
-    # For each vessel, find which junction it connects to as an inlet
-    vessel_to_outlet_junction = {}  # vessel_name -> junction_name (where vessel is inlet)
-    for junc in bif_junctions:
-        for inlet_id in junc.get('inlet_vessels', []):
-            inlet_vessel = bif_vessel_by_id.get(inlet_id)
-            if inlet_vessel:
-                vessel_to_outlet_junction[inlet_vessel['vessel_name']] = junc['junction_name']
-    
-    # Build mapping from outlet vessel names to their inlet junction in bifurcated geometry
-    # For each vessel, find which junction it connects to as an outlet
-    vessel_to_inlet_junction = {}  # vessel_name -> junction_name (where vessel is outlet)
-    for junc in bif_junctions:
-        for outlet_id in junc.get('outlet_vessels', []):
-            outlet_vessel = bif_vessel_by_id.get(outlet_id)
-            if outlet_vessel:
-                vessel_to_inlet_junction[outlet_vessel['vessel_name']] = junc['junction_name']
-    
-    # Rename existing observation keys to use new junction names
-    print(f"  Renaming observation keys to match bifurcated junction names...")
-    renamed_y_dict = {}
-    renamed_dy_dict = {}
-    
-    for key, value in y_dict.items():
-        # Parse observation key: "type:A:B" where A and B can be vessel or junction
-        parts = key.split(':')
-        if len(parts) == 3:
-            obs_type, first, second = parts
-            new_key = key  # default: keep unchanged
-            
-            # Case 1: "type:vessel:junction" - vessel as inlet to junction
-            if first in vessel_to_outlet_junction:
-                new_junction = vessel_to_outlet_junction[first]
-                print(f"    vessel_to_outlet_junction: {vessel_to_outlet_junction}")
-                
-                # Only rename if second is an old junction name (starts with J, no _bif)
-                if second.startswith('J') and '_bif' not in second:
-                    new_key = f"{obs_type}:{first}:{new_junction}"
-                    print(f"    Renamed: {key} -> {new_key}")
-            
-            # Case 2: "type:junction:vessel" - junction to outlet vessel
-            elif first.startswith('J') and '_bif' not in first:
-                # The second part is the outlet vessel - find which junction it's an outlet of
-                if second in vessel_to_inlet_junction:
-                    new_junction = vessel_to_inlet_junction[second]
-                    new_key = f"{obs_type}:{new_junction}:{second}"
-                    print(f"    Renamed: {key} -> {new_key}")
-            
-            renamed_y_dict[new_key] = value
-            if key in dy_dict:
-                renamed_dy_dict[new_key] = dy_dict[key]
-        else:
-            # Keep unchanged
-            renamed_y_dict[key] = value
-            if key in dy_dict:
-                renamed_dy_dict[key] = dy_dict[key]
-    
-    y_dict = renamed_y_dict
-    dy_dict = renamed_dy_dict
+    # NOTE: The mapping logic for renaming is now handled by rename_observations_for_bifurcations()
     
     # Get bifurcation positions from centerline
     branch_id_array = centerline_data.get('BranchId', None)
@@ -2252,22 +2563,6 @@ def generate_connector_observations(original_observations, original_geometric_in
                 side_outlet_flow_key = key
                 break
         
-        # Find inlet pressure observation key
-        inlet_pressure_key = None
-        for key in y_dict.keys():
-            if key.startswith(f'pressure:{inlet_vessel_name}:'):
-                inlet_pressure_key = key
-                break
-        
-        # Find main outlet pressure observation key
-        main_outlet_pressure_key = None
-        if main_outlet:
-            main_outlet_name = main_outlet['vessel_name']
-            for key in y_dict.keys():
-                if key.startswith(f'pressure:{main_outlet_name}:'):
-                    main_outlet_pressure_key = key
-                    break
-        
         # Calculate connector flow: inlet_flow - side_outlet_flow
         connector_flow = None
         if inlet_flow_key and side_outlet_flow_key:
@@ -2282,21 +2577,19 @@ def generate_connector_observations(original_observations, original_geometric_in
         else:
             print(f"    Warning: Could not find inlet flow for {connector_name}")
         
-        # Calculate connector pressure: linear interpolation between inlet and main outlet
+        # Find inlet pressure observation (pressure at bifurcation inlet = inlet vessel's outlet pressure)
+        inlet_pressure_key = None
+        for key in y_dict.keys():
+            if key.startswith(f'pressure:{inlet_vessel_name}:'):
+                inlet_pressure_key = key
+                break
+        
+        # For connectors with R=0, L=0: no pressure drop, so pressure is constant
+        # Pressure at connector inlet = pressure at connector outlet = inlet vessel outlet pressure
         connector_pressure = None
-        if inlet_pressure_key and main_outlet_pressure_key:
-            inlet_pressure = np.array(y_dict[inlet_pressure_key])
-            main_outlet_pressure = np.array(y_dict[main_outlet_pressure_key])
-            # Linear interpolation - connector is between inlet and main outlet
-            # Weight based on connector index (more connectors = closer to inlet for early ones)
-            # For simplicity, use midpoint
-            alpha = 0.5 + 0.1 * connector_idx  # Slightly bias towards outlet for later connectors
-            alpha = min(alpha, 0.9)
-            connector_pressure = (1 - alpha) * inlet_pressure + alpha * main_outlet_pressure
-            print(f"    {connector_name}: pressure = {1-alpha:.2f}*{inlet_vessel_name} + {alpha:.2f}*{main_outlet_name}")
-        elif inlet_pressure_key:
+        if inlet_pressure_key:
             connector_pressure = np.array(y_dict[inlet_pressure_key])
-            print(f"    {connector_name}: pressure = {inlet_vessel_name} (no main outlet pressure found)")
+            print(f"    {connector_name}: pressure = {inlet_vessel_name} (no drop, R=L=0)")
         else:
             print(f"    Warning: Could not find inlet pressure for {connector_name}")
         
@@ -2326,7 +2619,8 @@ def generate_connector_observations(original_observations, original_geometric_in
             print(f"    Added flow observations: {flow_key_inlet}, {flow_key_outlet}")
         
         if connector_pressure is not None:
-            # Observation at connector's outlet (connector -> outlet_junction)
+            # Pressure at connector's outlet (connector -> outlet_junction)
+            # Same as inlet pressure since R=0, L=0 means no pressure drop
             pressure_key_outlet = f"pressure:{connector_name}:{outlet_junction_name}"
             y_dict[pressure_key_outlet] = connector_pressure.tolist()
             if len(connector_pressure) > 2:
@@ -2335,16 +2629,15 @@ def generate_connector_observations(original_observations, original_geometric_in
             else:
                 dy_dict[pressure_key_outlet] = [0.0] * len(connector_pressure)
             
-            # Observation at connector's inlet (inlet_junction -> connector)
-            # Use slightly higher pressure at inlet (upstream) for physical consistency
-            inlet_connector_pressure = connector_pressure * 1.001  # Small pressure drop
+            # Pressure at connector's inlet (inlet_junction -> connector)
+            # Same pressure as outlet (no drop)
             pressure_key_inlet = f"pressure:{inlet_junction_name}:{connector_name}"
-            y_dict[pressure_key_inlet] = inlet_connector_pressure.tolist()
-            if len(inlet_connector_pressure) > 2:
-                dy = np.gradient(inlet_connector_pressure)
+            y_dict[pressure_key_inlet] = connector_pressure.tolist()
+            if len(connector_pressure) > 2:
+                dy = np.gradient(connector_pressure)
                 dy_dict[pressure_key_inlet] = dy.tolist()
             else:
-                dy_dict[pressure_key_inlet] = [0.0] * len(inlet_connector_pressure)
+                dy_dict[pressure_key_inlet] = [0.0] * len(connector_pressure)
             
             print(f"    Added pressure observations: {pressure_key_inlet}, {pressure_key_outlet}")
     

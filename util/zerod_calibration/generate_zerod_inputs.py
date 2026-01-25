@@ -31,6 +31,7 @@ except (ImportError, ValueError, AttributeError):
         from scipy.interpolate import CubicSpline
     except (ImportError, ValueError, AttributeError):
         CubicSpline = None
+from scipy.interpolate import interp1d
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 
 try:
@@ -717,46 +718,6 @@ def refine_inlet_bc_for_forward_simulation(input_path, refinement_factor=2):
     print(f"Refined inlet boundary condition for forward simulation to: {input_path}")
     return
 
-def restore_junction_types_after_calibration(calibrated_output_path, target_junction_type):
-    """
-    Restore junction types after calibration.
-    
-    The svZeroDCalibrator always outputs BloodVesselJunction for multi-outlet junctions.
-    For NORMAL_JUNCTION type, we need to:
-    1. Change junction_type back to NORMAL_JUNCTION
-    2. Remove the junction_values field
-    
-    Args:
-        calibrated_output_path: Path to the calibrated output JSON file
-        target_junction_type: The desired junction type (e.g., 'NORMAL_JUNCTION')
-    """
-    import copy
-    
-    if target_junction_type != 'NORMAL_JUNCTION':
-        # For other junction types, the calibrator's output is appropriate
-        return
-    
-    with open(calibrated_output_path, 'r') as f:
-        config = json.load(f)
-    
-    modified = False
-    if 'junctions' in config:
-        for junc in config['junctions']:
-            num_outlets = len(junc.get('outlet_vessels', []))
-            
-            # For multi-outlet junctions, restore NORMAL_JUNCTION
-            if num_outlets > 1 and junc.get('junction_type') == 'BloodVesselJunction':
-                junc['junction_type'] = 'NORMAL_JUNCTION'
-                if 'junction_values' in junc:
-                    del junc['junction_values']
-                modified = True
-                print(f"      Restored {junc['junction_name']} to NORMAL_JUNCTION")
-    
-    if modified:
-        with open(calibrated_output_path, 'w') as f:
-            json.dump(config, f, indent=4)
-
-
 def modify_junction_types(config, junction_type):
     """
     Modify junction types in a config based on the number of outlets.
@@ -1056,7 +1017,11 @@ def main():
     parser.add_argument('--plot-only', action='store_true',
                         help='Skip all steps except plotting (requires existing files)')
     parser.add_argument('--verbose', action='store_true',
-                        help='Print detailed MSE comparison table')
+                       help='Print detailed MSE comparison table')
+    parser.add_argument('--include-synthetic-observations', action='store_true', default=True,
+                       help='Include synthetic observations for connector vessels in bifurcations-only geometry (default: True)')
+    parser.add_argument('--skip-synthetic-observations', dest='include_synthetic_observations', action='store_false',
+                       help='Skip synthetic observations for connector vessels in bifurcations-only geometry')
     
     args = parser.parse_args()
     verbose = args.verbose
@@ -1241,12 +1206,28 @@ def main():
             
             # Get geo_dir
             geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
+
+            # Determine timestep from 1D solution for BC fitting
+            try:
+                time_step_size = timestep_from_1D(soln_path, geo_dir)
+            except Exception:
+                time_step_size = None
             
             # Fit outlet resistances from 3D solution (skip for VMR cases)
             if args.set_name != "VMR":
                 fitted_resistances = fit_outlet_resistances_from_3d(geometric_input_path, observations)
             else:
                 fitted_resistances = None
+
+            # Fit RCR boundary conditions from observations (1D-derived)
+            fitted_rcr = {}
+            if time_step_size is not None:
+                try:
+                    fitted_rcr = fit_outlet_rcr_from_observations(geometric_input_path, observations, dt=time_step_size)
+                except Exception as e:
+                    print(f"  Warning: RCR fitting failed on original geometry: {e}")
+            else:
+                print("  Warning: time_step_size unavailable; skipping RCR fitting on original geometry")
             
             refinement_factor = 4
             
@@ -1265,39 +1246,69 @@ def main():
                 if not os.path.exists(variant_geometric_input):
                     print(f"  ✗ Skipping {geo_variant_name}: geometric input not found: {variant_geometric_input}")
                     continue
-                
+
+                # Apply fitted RCR parameters to the variant (copy over if we fitted on original)
+                if fitted_rcr:
+                    try:
+                        with open(variant_geometric_input, 'r') as f:
+                            cfg_tmp = json.load(f)
+                        bc_map = {bc.get('bc_name'): bc for bc in cfg_tmp.get('boundary_conditions', []) if bc.get('bc_name')}
+                        for bc_name, params in fitted_rcr.items():
+                            if bc_name in bc_map:
+                                bc_map[bc_name]['bc_values']['Rp'] = float(params[0])
+                                bc_map[bc_name]['bc_values']['C'] = float(params[1])
+                                bc_map[bc_name]['bc_values']['Rd'] = float(params[2])
+                                bc_map[bc_name]['bc_values']['Pd'] = float(params[3])
+                        with open(variant_geometric_input, 'w') as f:
+                            json.dump(cfg_tmp, f, indent=4)
+                        print(f"  Applied fitted RCR parameters to {geo_variant_name} geometric input")
+                    except Exception as e:
+                        print(f"  Warning: could not apply fitted RCR parameters to {geo_variant_name}: {e}")
+
                 # Create base calibration input for this geometry variant
                 print(f"\n  Creating base calibration input for {geo_variant_name}...")
-                
+
                 try:
-                    # For bifurcations geometry, we need to generate observations for connector vessels
+                    # For bifurcations geometry:
+                    # - Always rename existing observations to match bifurcated junction names
+                    # - Optionally add synthetic connector-vessel observations
                     if geo_variant_name == 'bifurcations':
-                        # Load the original geometric input and centerline data
-                        original_geometric_input_path = geometry_variants['original']['geometric_input']
-                        with open(original_geometric_input_path, 'r') as f:
-                            original_geometric_input = json.load(f)
                         with open(variant_geometric_input, 'r') as f:
                             bifurcated_geometric_input = json.load(f)
-                        
-                        # Read centerline data
-                        centerline_data, _ = read_centerline_vtp(centerline_path)
-                        
-                        # Generate observations for connector vessels
-                        print(f"    Generating observations for connector vessels...")
-                        augmented_observations = generate_connector_observations(
-                            observations, 
-                            original_geometric_input, 
-                            bifurcated_geometric_input,
-                            centerline_data
+
+                        if args.include_synthetic_observations:
+                            # Load the original geometric input and centerline data
+                            original_geometric_input_path = geometry_variants['original']['geometric_input']
+                            with open(original_geometric_input_path, 'r') as f:
+                                original_geometric_input = json.load(f)
+
+                            # Read centerline data
+                            centerline_data, _ = read_centerline_vtp(centerline_path)
+
+                            print(f"    Generating synthetic observations for connector vessels...")
+                            augmented_observations = generate_connector_observations(
+                                observations,
+                                original_geometric_input,
+                                bifurcated_geometric_input,
+                                centerline_data
+                            )
+                        else:
+                            print(f"    Skipping synthetic observations for connector vessels")
+                            print(f"    Renaming existing observation keys to match bifurcated junction names...")
+                            augmented_observations = rename_observations_for_bifurcations(
+                                observations, bifurcated_geometric_input
+                            )
+
+                        create_calibration_input(
+                            variant_geometric_input, augmented_observations, variant_calibration_input,
+                            centerline_soln_path=soln_path, geo_dir=geo_dir
                         )
-                        
-                        # Create calibration input with augmented observations
-                        create_calibration_input(variant_geometric_input, augmented_observations, variant_calibration_input,
-                                               centerline_soln_path=soln_path, geo_dir=geo_dir)
                     else:
-                        # Create calibration input with time computation from 1D solution
-                        create_calibration_input(variant_geometric_input, observations, variant_calibration_input,
-                                               centerline_soln_path=soln_path, geo_dir=geo_dir)
+                        # Original geometry: use original observations
+                        create_calibration_input(
+                            variant_geometric_input, observations, variant_calibration_input,
+                            centerline_soln_path=soln_path, geo_dir=geo_dir
+                        )
                     
                     print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
                     
@@ -1342,10 +1353,7 @@ def main():
                         try:
                             calibrated_config = run_calibration(jtype_input_path, jtype_output_path)
                             print(f"      ✓ Calibration completed for {geo_variant_name}/{jtype}")
-                            
-                            # Restore junction types for NORMAL_JUNCTION
-                            # (calibrator always outputs BloodVesselJunction)
-                            restore_junction_types_after_calibration(jtype_output_path, jtype)
+                            # Junction types are now preserved by the calibrator
                         except Exception as e:
                             raise Exception(f"Calibration failed for {geo_variant_name}/{jtype}: {e}")
                     
@@ -1383,53 +1391,53 @@ def main():
                             raise Exception(f"Calibrated {geo_variant_name}/{jtype} simulation failed: {e}")
     
     # Step 5: Calculate and print MSE between 3D and 0D solutions
-    if not args.skip_calibration and not args.plot_only:
-        print("\n" + "="*60)
-        print("Step 5: Calculating MSE between 3D and 0D solutions")
-        print("="*60)
+
+    print("\n" + "="*60)
+    print("Step 5: Calculating MSE between 3D and 0D solutions")
+    print("="*60)
+    
+    # Calculate MSE for both geometry variants
+    for geo_variant_name, geo_variant_paths in geometry_variants.items():
+        print(f"\n  MSE calculation for {geo_variant_name.upper()} geometry:")
         
-        # Calculate MSE for both geometry variants
-        for geo_variant_name, geo_variant_paths in geometry_variants.items():
-            print(f"\n  MSE calculation for {geo_variant_name.upper()} geometry:")
-            
-            variant_calibration_input = geo_variant_paths['calibration_input']
-            variant_geometric_results = geo_variant_paths['geometric_results']
-            variant_geometric_input = geo_variant_paths['geometric_input']
-            variant_junction_paths = geo_variant_paths['junction_types']
-            
-            # Build dictionary of CSV results for all modalities
-            csv_results_dict = {}
-            
-            # Add geometric results
-            if os.path.exists(variant_geometric_results):
-                csv_results_dict['geometric'] = variant_geometric_results
-            
-            # Add calibrated results for each junction type
-            for jtype in args.junction_types:
-                calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
-                if os.path.exists(calibrated_results_csv):
-                    csv_results_dict[jtype] = str(calibrated_results_csv)
-            
-            if csv_results_dict and os.path.exists(variant_calibration_input):
-                try:
-                    # Generate CSV output path
-                    prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
-                    mse_csv_path = os.path.join(base_dir, f'{prefix}mse_comparison.csv')
-                    calculate_mse_between_3d_and_0d(
-                        variant_calibration_input,
-                        csv_results_dict,
-                        geometric_input_path=variant_geometric_input,
-                        zoom_start_idx=args.zoom_start,
-                        zoom_end_idx=args.zoom_end,
-                        output_csv_path=mse_csv_path,
-                        verbose=verbose,
-                        set_name=args.set_name
-                    )
-                except Exception as e:
-                    raise Exception(f"Error calculating MSE for {geo_variant_name}: {e}")
-            else:
-                print(f"    Skipping MSE calculation for {geo_variant_name} (missing files)")
+        variant_calibration_input = geo_variant_paths['calibration_input']
+        variant_geometric_results = geo_variant_paths['geometric_results']
+        variant_geometric_input = geo_variant_paths['geometric_input']
+        variant_junction_paths = geo_variant_paths['junction_types']
         
+        # Build dictionary of CSV results for all modalities
+        csv_results_dict = {}
+        
+        # Add geometric results
+        if os.path.exists(variant_geometric_results):
+            csv_results_dict['geometric'] = variant_geometric_results
+        
+        # Add calibrated results for each junction type
+        for jtype in args.junction_types:
+            calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
+            if os.path.exists(calibrated_results_csv):
+                csv_results_dict[jtype] = str(calibrated_results_csv)
+        
+        if csv_results_dict and os.path.exists(variant_calibration_input):
+            try:
+                # Generate CSV output path
+                prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
+                mse_csv_path = os.path.join(base_dir, f'{prefix}mse_comparison.csv')
+                calculate_mse_between_3d_and_0d(
+                    variant_calibration_input,
+                    csv_results_dict,
+                    geometric_input_path=variant_geometric_input,
+                    zoom_start_idx=args.zoom_start,
+                    zoom_end_idx=args.zoom_end,
+                    output_csv_path=mse_csv_path,
+                    verbose=verbose,
+                    set_name=args.set_name
+                )
+            except Exception as e:
+                raise Exception(f"Error calculating MSE for {geo_variant_name}: {e}")
+        else:
+            print(f"    Skipping MSE calculation for {geo_variant_name} (missing files)")
+    
     # Step 6: Generate comparison plots (always run if not skipped, including in plot-only mode)
     if not args.skip_plots:
         print("\n" + "="*60)
