@@ -4,7 +4,7 @@ import numpy as np
 import csv
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
-from calibration_helpers import HAS_SCIPY_INTERP, get_time_period
+from util.zerod_calibration.calibration_helpers import HAS_SCIPY_INTERP, get_time_period
 HAS_SCIPY_INTERP = False
 def read_zerod_csv(csv_path):
     """
@@ -477,6 +477,284 @@ def plot_junction_pressure_differences(calibration_input_path, geometric_input_p
         print(f"  Created {plot_count} junction pressure difference plots in: {junction_plots_dir}")
     else:
         print(f"  Created {plot_count} junction pressure difference plots")
+
+
+def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name='zero_d_parameter_bars.png', verbose=False):
+    """
+    Create grouped bar charts comparing R_poiseuille, stenosis_coefficient, and L
+    across multiple modalities (e.g., geometric, NORMAL_JUNCTION, BloodVesselJunction).
+
+    Args:
+        modality_json_paths: dict mapping modality name -> path to calibrated JSON
+                            e.g. {'geometric': 'path/to/geometric.json',
+                                   'NORMAL_JUNCTION': 'path/to/normal.json',
+                                   'BloodVesselJunction': 'path/to/bv.json'}
+        output_dir: directory to save the plot; if None uses directory of first JSON
+        output_name: filename for saved PNG
+        verbose: print progress
+    """
+    # Validate inputs
+    if not isinstance(modality_json_paths, dict) or len(modality_json_paths) == 0:
+        if verbose:
+            print("  ✗ modality_json_paths must be a non-empty dict")
+        return None
+
+    # Load JSONs
+    modality_data = {}
+    for mod, path in modality_json_paths.items():
+        if not path or not os.path.exists(path):
+            if verbose:
+                print(f"  ⚠ Skipping modality '{mod}': file not found: {path}")
+            modality_data[mod] = None
+            continue
+        try:
+            with open(path, 'r') as f:
+                modality_data[mod] = json.load(f)
+        except Exception as e:
+            if verbose:
+                print(f"  ⚠ Failed to read {path}: {e}")
+            modality_data[mod] = None
+
+    # Determine vessel order from the bifurcations geometric modality if available,
+    # otherwise fall back to 'geometric' or the first available modality.
+    base_mod = None
+    if 'bifurcations' in modality_data and modality_data['bifurcations']:
+        base_mod = 'bifurcations'
+    elif 'geometric' in modality_data and modality_data['geometric']:
+        base_mod = 'geometric'
+    else:
+        for k, v in modality_data.items():
+            if v:
+                base_mod = k
+                break
+
+    if base_mod is None:
+        if verbose:
+            print("  ✗ No valid modality JSONs found to determine vessel ordering")
+        return None
+
+    vessels = modality_data[base_mod].get('vessels', []) if modality_data[base_mod] else []
+    vessel_names = [v.get('vessel_name') for v in vessels if v.get('vessel_name')]
+    # Exclude connector vessels (they are synthetic and should not be compared)
+    vessel_names = [vn for vn in vessel_names if 'connector' not in vn.lower()]
+    # If there are many vessels, limit to the first 10 to keep plots readable
+    if len(vessel_names) > 10:
+        if verbose:
+            print(f"  ⚠ More than 10 vessels ({len(vessel_names)}). Limiting plot to first 10 vessels.")
+        vessel_names = vessel_names[:10]
+
+    # Determine which junctions have 0D parameters in at least one modality.
+    # We'll include only those junctions' outlets in the plot.
+    junctions_to_include = set()
+    for mod_json in modality_data.values():
+        if not mod_json or 'junctions' not in mod_json:
+            continue
+        for j in mod_json.get('junctions', []):
+            jname = j.get('junction_name')
+            jvals = j.get('junction_values', {})
+            if jname and jvals:
+                # junction_values present (non-empty) -> include this junction
+                junctions_to_include.add(jname)
+
+    # Build junction outlet labels and mapping from the base modality junctions
+    junction_outlet_labels = []
+    junction_outlet_map = {}  # label -> (junction_name, outlet_index, outlet_vessel_name)
+    base_junctions = modality_data[base_mod].get('junctions', []) if modality_data[base_mod] else []
+    for j in base_junctions:
+        jname = j.get('junction_name')
+        if not jname or jname not in junctions_to_include:
+            continue
+        outlets = j.get('outlet_vessels', [])
+        # outlets are indices into vessels array; create label for each outlet
+        for oi, vidx in enumerate(outlets):
+            try:
+                vidx_int = int(vidx)
+            except Exception:
+                continue
+            if 0 <= vidx_int < len(vessels):
+                out_vname = vessels[vidx_int].get('vessel_name')
+            else:
+                out_vname = None
+            # Only include junction outlets whose outlet vessel is within the selected (first 10) vessels
+            if not out_vname or out_vname not in vessel_names:
+                continue
+            label = f"{jname}:out{oi}"
+            junction_outlet_labels.append(label)
+            junction_outlet_map[label] = (jname, oi, out_vname)
+
+    # Combined list: vessels first, then junction outlets
+    vessel_names_extended = vessel_names + junction_outlet_labels
+    if not vessel_names_extended:
+        if verbose:
+            print("  ✗ No vessels or junction outlets found in base modality JSON")
+        return None
+    if not vessel_names:
+        if verbose:
+            print("  ✗ No vessels found in base modality JSON")
+        return None
+
+    # Parameters to plot
+    params = [
+        ('R_poiseuille', 'Poiseuille resistance'),
+        ('stenosis_coefficient', 'Stenosis coefficient'),
+        ('L', 'Inductance')
+    ]
+
+    # Build data arrays: for each param, create list of lists [modality][item_idx]
+    modalities = list(modality_json_paths.keys())
+    data_by_param = {p[0]: {mod: [] for mod in modalities} for p in params}
+
+    for p_key, _ in params:
+        for mod in modalities:
+            mod_json = modality_data.get(mod)
+            values = []
+            # Build vessel map for this modality (if available)
+            vmap = {}
+            if mod_json and 'vessels' in mod_json:
+                for v in mod_json.get('vessels', []):
+                    name = v.get('vessel_name')
+                    if not name:
+                        continue
+                    zd = v.get('zero_d_element_values', {})
+                    vmap[name] = zd
+
+            # Build junction map for this modality (if available)
+            jmap = {}
+            if mod_json and 'junctions' in mod_json:
+                for j in mod_json.get('junctions', []):
+                    jn = j.get('junction_name')
+                    if not jn:
+                        continue
+                    jmap[jn] = j.get('junction_values', {})
+
+            for name in vessel_names_extended:
+                val = np.nan
+                # First, try vessel mapping
+                if name in vmap:
+                    zd = vmap.get(name, {})
+                    v = zd.get(p_key)
+                    if v is not None:
+                        try:
+                            val = float(v)
+                        except Exception:
+                            val = np.nan
+                else:
+                    # If it's a junction outlet label, try to get the junction parameter
+                    if name in junction_outlet_map:
+                        jname, out_idx, out_vessel = junction_outlet_map[name]
+                        # Try junction-specific values first
+                        if jname in jmap and p_key in jmap[jname]:
+                            arr = jmap[jname].get(p_key)
+                            try:
+                                if isinstance(arr, (list, tuple)) and len(arr) > out_idx:
+                                    val = float(arr[out_idx])
+                                else:
+                                    val = np.nan
+                            except Exception:
+                                val = np.nan
+                        else:
+                            # Modality does not have junction_values for this junction — use 0 per request
+                            val = 0.0
+
+                values.append(val)
+
+            data_by_param[p_key][mod] = values
+
+    # Prepare output dir
+    if output_dir is None:
+        # use directory of first valid JSON
+        first_path = None
+        for p in modality_json_paths.values():
+            if p and os.path.exists(p):
+                first_path = p
+                break
+        output_dir = os.path.dirname(first_path) if first_path else os.getcwd()
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, output_name)
+
+    # Plotting
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        n_v = len(vessel_names_extended)
+        x = np.arange(n_v)
+        n_mod = len(modalities)
+        width = 0.7 / n_mod if n_mod > 0 else 0.2
+
+        # Enable LaTeX-like rendering if available
+        try:
+            plt.rcParams['text.usetex'] = True
+        except Exception:
+            plt.rcParams['text.usetex'] = False
+        plt.rcParams['font.family'] = 'serif'
+        plt.rcParams['mathtext.fontset'] = 'cm'
+        plt.rcParams['axes.labelsize'] = 14
+        plt.rcParams['axes.titlesize'] = 16
+        plt.rcParams['legend.fontsize'] = 12
+
+        fig, axes = plt.subplots(3, 1, figsize=(max(10, n_v * 0.3 + 6), 12), sharex=True)
+
+        color_map = {
+            'geometric': 'green',
+            'NORMAL_JUNCTION': 'red',
+            'BloodVesselJunction': 'goldenrod'
+        }
+
+        # Prepare legend patches (one legend above the top plot)
+        try:
+            from matplotlib import patches as mpatches
+            cycle_colors = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['C0', 'C1', 'C2'])
+        except Exception:
+            mpatches = None
+            cycle_colors = ['C0', 'C1', 'C2']
+
+        legend_patches = []
+        for idx, mod in enumerate(modalities):
+            col = color_map.get(mod)
+            if col is None:
+                col = cycle_colors[idx % len(cycle_colors)]
+            if mpatches is not None:
+                legend_patches.append(mpatches.Patch(color=col, label=mod))
+
+        for i, (p_key, p_label) in enumerate(params):
+            ax = axes[i]
+            for j, mod in enumerate(modalities):
+                vals = np.array(data_by_param[p_key][mod], dtype=float)
+                offsets = x - 0.35 + j * width + width / 2.0
+                col = color_map.get(mod, None)
+                if col is None:
+                    col = cycle_colors[j % len(cycle_colors)]
+                ax.bar(offsets, vals, width=width, label=mod, color=col)
+
+            ax.set_ylabel(p_label)
+            ax.grid(True, alpha=0.3)
+            # if i == 0:
+            #     ax.set_title('Zero-D parameter comparison by vessel')
+
+        # Single legend above top plot and a global title placed higher
+        if legend_patches:
+            fig.legend(handles=legend_patches, loc='upper center', ncol=max(1, len(legend_patches)), bbox_to_anchor=(0.5, 0.995))
+
+        # Global title higher up
+        fig.suptitle(r"Zero-D parameter comparison: $R$, $S$, and $L$", y=1.005, fontsize=18)
+
+        # X-axis labels (use extended names)
+        axes[-1].set_xticks(x)
+        axes[-1].set_xticklabels(vessel_names_extended, rotation=90, fontsize=8)
+        plt.subplots_adjust(top=0.88)
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=150, bbox_inches='tight')
+        plt.close()
+
+        if verbose:
+            print(f"  ✓ Saved zero-D parameter bar chart to: {out_path}")
+        return out_path
+    except Exception as e:
+        if verbose:
+            print(f"  ✗ Failed to create parameter bar chart: {e}")
+        return None
 
 
 def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, output_csv_path=None, verbose=False, set_name=None, downsample_0d=True, downsample_method='linear', downsample_save_dir=None):

@@ -948,6 +948,33 @@ def main():
     else:
         locations = get_all_locations_from_calibration_input(calibration_input_path)
         print(f"\nFound {len(locations)} locations")
+        # Build ordered list of unique vessels as they appear in locations
+        vessel_order = []
+        for loc in locations:
+            try:
+                _, _, vname, _, _ = parse_location(loc)
+            except Exception:
+                vname = None
+            if vname and vname not in vessel_order:
+                vessel_order.append(vname)
+
+        # If there are more than 10 unique vessels, limit to first 10 and filter locations
+        if len(vessel_order) > 10:
+            selected_vessels = vessel_order[:10]
+            if args.verbose:
+                print(f"  ⚠ More than 10 unique vessels ({len(vessel_order)}). Limiting to first 10 vessels for plotting: {selected_vessels}")
+            # Keep only locations that involve the selected vessels
+            filtered_locations = []
+            for loc in locations:
+                try:
+                    _, _, vname, _, _ = parse_location(loc)
+                except Exception:
+                    vname = None
+                if vname in selected_vessels:
+                    filtered_locations.append(loc)
+            locations = filtered_locations
+            if args.verbose:
+                print(f"  Using {len(locations)} locations after filtering to first 10 vessels")
     
     # Create output directory
     output_dir = os.path.join(args.output_dir, args.set_name, args.geo_name)

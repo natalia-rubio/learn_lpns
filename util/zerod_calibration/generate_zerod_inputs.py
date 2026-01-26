@@ -997,12 +997,12 @@ def main():
                        help='Skip calibration step')
     parser.add_argument('--simvascular-path', 
                        help='Path to SimVascular executable (default: auto-detect)')
-    parser.add_argument('--dt', type=float, default=0.2,
-                       help='Time step size for ROM workflow (default: 0.2)')
-    parser.add_argument('--num-time-steps', type=int, default=5,
-                       help='Number of time steps for ROM workflow (default: 5)')
-    parser.add_argument('--num-cardiac-cycles', type=int, default=1,
-                       help='Number of cardiac cycles for 0D simulation (default: 1)')
+    # parser.add_argument('--dt', type=float, default=0.2,
+    #                    help='Time step size for ROM workflow (default: 0.2)')
+    # parser.add_argument('--num-time-steps', type=int, default=5,
+    #                    help='Number of time steps for ROM workflow (default: 5)')
+    # parser.add_argument('--num-cardiac-cycles', type=int, default=1,
+    #                    help='Number of cardiac cycles for 0D simulation (default: 1)')
     parser.add_argument('--junction-types', nargs='+', 
                        default=['BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction'],
                        help='Junction types to generate calibration files for (default: all four types)')
@@ -1392,51 +1392,51 @@ def main():
     
     # Step 5: Calculate and print MSE between 3D and 0D solutions
 
-    print("\n" + "="*60)
-    print("Step 5: Calculating MSE between 3D and 0D solutions")
-    print("="*60)
+    # print("\n" + "="*60)
+    # print("Step 5: Calculating MSE between 3D and 0D solutions")
+    # print("="*60)
     
-    # Calculate MSE for both geometry variants
-    for geo_variant_name, geo_variant_paths in geometry_variants.items():
-        print(f"\n  MSE calculation for {geo_variant_name.upper()} geometry:")
+    # # Calculate MSE for both geometry variants
+    # for geo_variant_name, geo_variant_paths in geometry_variants.items():
+    #     print(f"\n  MSE calculation for {geo_variant_name.upper()} geometry:")
         
-        variant_calibration_input = geo_variant_paths['calibration_input']
-        variant_geometric_results = geo_variant_paths['geometric_results']
-        variant_geometric_input = geo_variant_paths['geometric_input']
-        variant_junction_paths = geo_variant_paths['junction_types']
+    #     variant_calibration_input = geo_variant_paths['calibration_input']
+    #     variant_geometric_results = geo_variant_paths['geometric_results']
+    #     variant_geometric_input = geo_variant_paths['geometric_input']
+    #     variant_junction_paths = geo_variant_paths['junction_types']
         
-        # Build dictionary of CSV results for all modalities
-        csv_results_dict = {}
+    #     # Build dictionary of CSV results for all modalities
+    #     csv_results_dict = {}
         
-        # Add geometric results
-        if os.path.exists(variant_geometric_results):
-            csv_results_dict['geometric'] = variant_geometric_results
+    #     # Add geometric results
+    #     if os.path.exists(variant_geometric_results):
+    #         csv_results_dict['geometric'] = variant_geometric_results
         
-        # Add calibrated results for each junction type
-        for jtype in args.junction_types:
-            calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
-            if os.path.exists(calibrated_results_csv):
-                csv_results_dict[jtype] = str(calibrated_results_csv)
+    #     # Add calibrated results for each junction type
+    #     for jtype in args.junction_types:
+    #         calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
+    #         if os.path.exists(calibrated_results_csv):
+    #             csv_results_dict[jtype] = str(calibrated_results_csv)
         
-        if csv_results_dict and os.path.exists(variant_calibration_input):
-            try:
-                # Generate CSV output path
-                prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
-                mse_csv_path = os.path.join(base_dir, f'{prefix}mse_comparison.csv')
-                calculate_mse_between_3d_and_0d(
-                    variant_calibration_input,
-                    csv_results_dict,
-                    geometric_input_path=variant_geometric_input,
-                    zoom_start_idx=args.zoom_start,
-                    zoom_end_idx=args.zoom_end,
-                    output_csv_path=mse_csv_path,
-                    verbose=verbose,
-                    set_name=args.set_name
-                )
-            except Exception as e:
-                raise Exception(f"Error calculating MSE for {geo_variant_name}: {e}")
-        else:
-            print(f"    Skipping MSE calculation for {geo_variant_name} (missing files)")
+    #     if csv_results_dict and os.path.exists(variant_calibration_input):
+    #         try:
+    #             # Generate CSV output path
+    #             prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
+    #             mse_csv_path = os.path.join(base_dir, f'{prefix}mse_comparison.csv')
+    #             calculate_mse_between_3d_and_0d(
+    #                 variant_calibration_input,
+    #                 csv_results_dict,
+    #                 geometric_input_path=variant_geometric_input,
+    #                 zoom_start_idx=args.zoom_start,
+    #                 zoom_end_idx=args.zoom_end,
+    #                 output_csv_path=mse_csv_path,
+    #                 verbose=verbose,
+    #                 set_name=args.set_name
+    #             )
+    #         except Exception as e:
+    #             raise Exception(f"Error calculating MSE for {geo_variant_name}: {e}")
+    #     else:
+    #         print(f"    Skipping MSE calculation for {geo_variant_name} (missing files)")
     
     # Step 6: Generate comparison plots (always run if not skipped, including in plot-only mode)
     if not args.skip_plots:
@@ -1460,71 +1460,7 @@ def main():
             except Exception:
                 pass
             
-            # Generate plots for each geometry variant
-            for geo_variant_name, geo_variant_paths in geometry_variants.items():
-                print(f"\n  Creating plots for {geo_variant_name.upper()} geometry...")
-                
-                variant_calibration_input = geo_variant_paths['calibration_input']
-                variant_geometric_results = geo_variant_paths['geometric_results']
-                variant_geometric_input = geo_variant_paths['geometric_input']
-                variant_junction_paths = geo_variant_paths['junction_types']
-                
-                # Build dictionary of calibrated CSV paths for all junction types
-                calibrated_csv_paths = {}
-                for jtype in args.junction_types:
-                    calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
-                    if os.path.exists(calibrated_results_csv):
-                        calibrated_csv_paths[jtype] = str(calibrated_results_csv)
-                
-                if not calibrated_csv_paths:
-                    print(f"    Warning: No calibrated CSV files found for {geo_variant_name}, skipping plots")
-                    continue
-                if not os.path.exists(variant_geometric_results):
-                    print(f"    Warning: Geometric results CSV not found for {geo_variant_name}, skipping plots")
-                    continue
-                if not os.path.exists(variant_calibration_input):
-                    print(f"    Warning: Calibration input not found for {geo_variant_name}, skipping plots")
-                    continue
-                
-                # Get all locations from calibration input
-                all_locations = get_all_locations_from_calibration_input(str(variant_calibration_input))
-                print(f"    Found {len(all_locations)} locations to plot")
-                
-                # Create output directory for this geometry variant
-                output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, geo_variant_name)
-                os.makedirs(output_dir, exist_ok=True)
-                
-                # Plot each location
-                success_count = 0
-                for location in all_locations:
-                    # Generate safe filename from location (replace : with _)
-                    safe_location = location.replace(':', '_')
-                    plot_path = os.path.join(output_dir, f"{safe_location}_comparison.png")
-                    try:
-                        success = plot_location_comparison(
-                            str(variant_calibration_input),
-                            str(variant_geometric_results),
-                            calibrated_csv_paths,
-                            location,
-                            plot_path,
-                            set_name=args.set_name,
-                            geo_name=args.geo_name,
-                            time_period=time_period,
-                            geometric_input_path=str(variant_geometric_input),
-                            zoom_start_idx=args.zoom_start,
-                            zoom_end_idx=args.zoom_end,
-                            verbose=False
-                        )
-                        if success:
-                            success_count += 1
-                    except Exception as e:
-                        print(f"      ✗ Failed to create plot for {location}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                
-                print(f"    Created {success_count}/{len(all_locations)} location comparison plots")
-                print(f"    Plot output directory: {output_dir}")
-            
+
             # Generate combined comparison plots (original vs bifurcations for each junction type)
             print(f"\n  Creating combined geometry variant comparison plots...")
             combined_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, 'combined')
@@ -1615,6 +1551,43 @@ def main():
                     )
                 except Exception as e:
                     raise Exception(f"Error generating junction pressure difference plots for {geo_variant_name}: {e}")
+
+    # New: Plot zero-D parameter bar charts (R, stenosis, L) comparing modalities
+    if not args.skip_plots:
+        for geo_variant_name, geo_variant_paths in geometry_variants.items():
+            try:
+                print(f"\n  Creating zero-D parameter bar charts for {geo_variant_name}...")
+                prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
+                # Save parameter comparison plots under results/param_comparison/<set>/<geo>/<variant>
+                output_subdir = os.path.join('results', 'param_comparison', args.set_name, args.geo_name, geo_variant_name)
+                os.makedirs(output_subdir, exist_ok=True)
+                os.makedirs(output_subdir, exist_ok=True)
+
+                # Build modality -> calibrated JSON path mapping
+                modality_jsons = {}
+                # geometric input
+                geom_json = geo_variant_paths.get('geometric_input')
+                if geom_json and os.path.exists(geom_json):
+                    modality_jsons['geometric'] = str(geom_json)
+
+                # calibrated outputs for junction types
+                for jtype in args.junction_types:
+                    jpath = geo_variant_paths['junction_types'].get(jtype, {}).get('calibrated_output')
+                    if jpath and os.path.exists(jpath):
+                        modality_jsons[jtype] = str(jpath)
+
+                if not modality_jsons:
+                    print(f"    Warning: No modality JSONs found for {geo_variant_name}, skipping zero-D parameter bar chart")
+                    continue
+
+                out_name = f"{prefix}zero_d_parameter_bars.png"
+                out_path = plot_zero_d_parameter_bars(modality_jsons, output_dir=output_subdir, output_name=out_name, verbose=verbose)
+                if out_path:
+                    print(f"    ✓ Saved zero-D parameter bar chart: {out_path}")
+                else:
+                    print(f"    ✗ Failed to create zero-D parameter bar chart for {geo_variant_name}")
+            except Exception as e:
+                print(f"    ✗ Error creating zero-D parameter bar chart for {geo_variant_name}: {e}")
     
     if verbose:
         print("\n" + "="*60)
