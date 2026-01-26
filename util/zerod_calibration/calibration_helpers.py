@@ -748,7 +748,8 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     # If we are using a VMR type geometry, get the dt from dictionary
     elif 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
-        VMR_time_step_dict = {'0063_1001': 0.00041666875}
+        VMR_time_step_dict = {'0063_1001': 0.00041666875,
+            '0155_0001': 7*10**-4}
         time_step_size = VMR_time_step_dict[geometry_name]
         print(f"  Found time_step_size in VMR dictionary: {time_step_size:.6f} s")
     else:
@@ -1536,7 +1537,8 @@ def timestep_from_1D(centerline_soln_path, geo_dir):
     # if we are using a VMR type geometry, get the dt from dictionary
     if 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
-        VMR_time_step_dict = {'0063_1001': 0.00041666875}
+        VMR_time_step_dict = {'0063_1001': 0.00041666875,
+            '0155_0001': 7*10**-4}
         threeD_time_step_size = VMR_time_step_dict[geometry_name]
         print(f"  Found time_step_size in VMR dictionary: {threeD_time_step_size:.6f} s")
 
