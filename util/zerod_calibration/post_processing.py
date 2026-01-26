@@ -4,7 +4,8 @@ import numpy as np
 import csv
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
-from util.zerod_calibration.calibration_helpers import HAS_SCIPY_INTERP, get_time_period
+from util.zerod_calibration.file_io import get_time_period
+
 HAS_SCIPY_INTERP = False
 def read_zerod_csv(csv_path):
     """
