@@ -29,6 +29,10 @@ from util.zerod_calibration.bifurcation_splitting import *
 from util.zerod_calibration.file_io import *
 from util.zerod_calibration.bc_fitting import *
 from util.zerod_calibration.inflow_handling import *
+from util.zerod_calibration.zerod_handling import *
+from util.zerod_calibration.calibration import *
+from util.zerod_calibration.forward_simulation import *
+from util.zerod_calibration.geometric_params import *
 
 try:
     from scipy.interpolate import CubicSpline, interp1d
@@ -51,8 +55,7 @@ def main():
     )
     parser.add_argument('--set-name', required=True, help='Set name (e.g., set_1)')
     parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., tree_000)')
-    parser.add_argument('--skip-calibration', action='store_true',
-                       help='Skip calibration step')
+
     parser.add_argument('--junction-types', nargs='+', 
                        default=['BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction'],
                        help='Junction types to generate calibration files for (default: all four types)')
@@ -60,108 +63,33 @@ def main():
                        help='Start index for zoom window (shaded region in plots). Default: 599')
     parser.add_argument('--zoom-end', type=int, default=699,
                        help='End index for zoom window (shaded region in plots). Default: 699')
-    parser.add_argument('--skip-plots', action='store_true',
-                        help='Skip generating comparison plots')
-    parser.add_argument('--plot-only', action='store_true',
-                        help='Skip all steps except plotting (requires existing files)')
+
+
     parser.add_argument('--verbose', action='store_true',
                        help='Print detailed MSE comparison table')
-    # parser.add_argument('--include-synthetic-observations', action='store_true', default=True,
-    #                    help='Include synthetic observations for connector vessels in bifurcations-only geometry (default: True)')
-    # parser.add_argument('--skip-synthetic-observations', dest='include_synthetic_observations', action='store_false',
-    #                    help='Skip synthetic observations for connector vessels in bifurcations-only geometry')
-    
-    args = parser.parse_args()
-    verbose = args.verbose
+    parser.add_argument('--skip-base-generation', action='store_true',
+                        help='Skip generating base geometric input')
+    parser.add_argument('--skip-observation', action='store_true',
+                        help='Skip observation extraction step')
+    parser.add_argument('--skip-calibration', action='store_true',
+                        help='Skip calibration step')
+    parser.add_argument('--skip-forward', action='store_true',
+                        help='Skip forward simulation step')
+    parser.add_argument('--skip-mse-calculation', action='store_true',
+                        help='Skip MSE calculation step')
+    parser.add_argument('--skip-plots', action='store_true',
+                        help='Skip generating comparison plots')
+
+    args = parser.parse_args(); verbose = args.verbose
     # Construct paths
     output_dir = 'data/zeroD'
     base_dir = os.path.join(output_dir, args.set_name, args.geo_name)
     
-    # Define geometry variants: original and bifurcations-only
-    geometry_variants = {
-        'original': {
-            'geometric_input': os.path.join(base_dir, 'geometric_input.json'),
-            'geometric_results': os.path.join(base_dir, 'geometric_results.csv'),
-            'calibration_input': os.path.join(base_dir, 'calibration_input.json'),
-            'junction_types': {}
-        },
-        'bifurcations': {
-            'geometric_input': os.path.join(base_dir, 'bifurcations_geometric_input.json'),
-            'geometric_results': os.path.join(base_dir, 'bifurcations_geometric_results.csv'),
-            'calibration_input': os.path.join(base_dir, 'bifurcations_calibration_input.json'),
-            'junction_types': {}
-        }
-    }
+    geometry_variants, geometric_input_path, geometric_results_csv, calibration_input_path, calibrated_output_path, junction_type_paths, centerline_path, geo_dir = get_paths(base_dir, args)
     
-    # Add paths for each junction type variant within each geometry variant
-    for geo_variant in geometry_variants:
-        prefix = '' if geo_variant == 'original' else f'{geo_variant}_'
-        for jtype in args.junction_types:
-            geometry_variants[geo_variant]['junction_types'][jtype] = {
-                'calibration_input': os.path.join(base_dir, f'{prefix}calibration_input_{jtype}.json'),
-                'calibrated_output': os.path.join(base_dir, f'{prefix}calibrated_output_{jtype}.json'),
-                'calibrated_results': os.path.join(base_dir, f'{prefix}calibrated_results_{jtype}.csv')
-            }
-    
-    # Legacy paths for backward compatibility
-    geometric_input_path = geometry_variants['original']['geometric_input']
-    geometric_results_csv = geometry_variants['original']['geometric_results']
-    calibration_input_path = geometry_variants['original']['calibration_input']
-    calibrated_output_path = os.path.join(base_dir, 'calibrated_output.json')
-    
-    # Paths for each junction type variant (original geometry - for backward compatibility)
-    junction_type_paths = geometry_variants['original']['junction_types']
-    
-    # Find centerline file
-
-    # Auto-detect (following generate_multiple_trees.py convention)
-    geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
-    centerline_paths = [
-        os.path.join(geo_dir, 'centerlines_simVascular.vtp'),  # svVascularize format
-        os.path.join(geo_dir, 'centerlines', 'centerlines.vtp'),
-        os.path.join(geo_dir, 'centerlines.vtp'),
-    ]
-    centerline_path = None
-    for path in centerline_paths:
-        if os.path.exists(path):
-            centerline_path = path
-            break
+    # Step 1: Create geometric 0D input using SimVascular ROM workflow
+    if not args.skip_base_generation:
         
-        # If not found in 3D directory, try 1D solution (for VMR files)
-        oneD_soln_paths = []
-        if centerline_path is None:
-            oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
-            oneD_soln_paths = [
-                os.path.join(oneD_dir, 'unsteady_soln.vtp'),
-            ]
-            for path in oneD_soln_paths:
-                if os.path.exists(path):
-                    centerline_path = path
-                    print(f"  Using 1D solution as centerline source: {centerline_path}")
-                    break
-        
-        if centerline_path is None:
-            all_paths = centerline_paths + oneD_soln_paths
-            raise FileNotFoundError(f"Centerline file not found. Tried: {all_paths}")
-    
-    # Skip all steps if --plot-only is set
-    if args.plot_only:
-        print("\n" + "="*60)
-        print("Plot-only mode: Skipping all steps except plotting")
-        print("="*60)
-        print("  Using existing files:")
-        for geo_variant_name, geo_variant_paths in geometry_variants.items():
-            print(f"\n  {geo_variant_name.upper()} geometry:")
-            print(f"    Geometric input: {geo_variant_paths['geometric_input']}")
-            print(f"    Calibration input: {geo_variant_paths['calibration_input']}")
-        
-        # Check that at least original geometry exists
-        if not os.path.exists(geometric_input_path):
-            raise FileNotFoundError(f"Geometric input not found: {geometric_input_path}")
-        if not os.path.exists(calibration_input_path):
-            raise FileNotFoundError(f"Calibration input not found: {calibration_input_path}")
-    else:
-        # Step 1: Create geometric 0D input using SimVascular ROM workflow
         if args.set_name == "VMR":
             richter_0d_path = os.path.join('data', 'zeroD', args.set_name, 'richter-0d', args.geo_name+'.json')
             zerod_input = load_from_json(richter_0d_path)
@@ -177,7 +105,6 @@ def main():
             print("="*60)
             
             # Get geometry directory (may not exist for VMR files)
-            geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
             if not os.path.exists(geo_dir):
                 print(f"  Warning: Geometry directory not found: {geo_dir}")
                 print(f"  Will use centerline-based workflow (for VMR files)")
@@ -196,15 +123,15 @@ def main():
         split_junctions_from_files(geometric_input_path, centerline_path, bifurcations_geometric_input_path)
         print(f"  Bifurcations-only geometric input saved to: {bifurcations_geometric_input_path}")
         
-        # Step 2: Extract observations and create calibration inputs for each junction type
-        if not args.skip_calibration:
-            print("\n" + "="*60)
-            print("Step 2: Creating calibration input files for each junction type")
-            print("="*60)
+    # Step 2: Extract observations and create calibration inputs for each junction type
+    if not args.skip_observation:
+        print("\n" + "="*60)
+        print("Step 2: Creating calibration input files for each junction type")
+        print("="*60)
         
 
-            # Try to find 1D solution automatically
-            # First check data/oneD/set_name/geo_name
+        # Try to find 1D solution automatically
+        # First check data/oneD/set_name/geo_name
         oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
         soln_path = os.path.join(oneD_dir, 'unsteady_soln.vtp')
         
@@ -219,266 +146,266 @@ def main():
                                             args.set_name, args.geo_name, 'unsteady_soln.vtp')
             if os.path.exists(alt_soln_path):
                 soln_path = alt_soln_path
-        
+        geometric_input_path = geometry_variants['original']['geometric_input']
+        geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
         if os.path.exists(soln_path):
             observations = extract_observations_from_1d(soln_path, geometric_input_path, geo_dir=geo_dir, start_idx=0)
         else:
-            print("Warning: No 1D or 3D solution found. Skipping calibration.")
-            print(f"  Looked for:")
-            print(f"    - {os.path.join('data', 'oneD', args.set_name, args.geo_name, 'unsteady_soln.vtp')}")
-            print(f"    - {os.path.join('data', 'reduced_results', args.set_name, args.geo_name, 'unsteady_soln.vtp')}")
-            print(f"    - {os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', args.set_name, args.geo_name, 'unsteady_soln.vtp')}")
-            args.skip_calibration = True
+            raise FileNotFoundError(f"1D solution not found: {soln_path}")
+
+        # Use the path that was found earlier
+        oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
+        soln_path = os.path.join(oneD_dir, 'unsteady_soln.vtp')
+        if not os.path.exists(soln_path):
+            reduced_results_dir = os.path.join('data', 'reduced_results', args.set_name, args.geo_name)
+            soln_path = os.path.join(reduced_results_dir, 'unsteady_soln.vtp')
+        if not os.path.exists(soln_path):
+            alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
+                                        args.set_name, args.geo_name, 'unsteady_soln.vtp')
+            if os.path.exists(alt_soln_path):
+                soln_path = alt_soln_path
         
-        if not args.skip_calibration:
+        # Get geo_dir
+        geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
 
-            # Use the path that was found earlier
-            oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
-            soln_path = os.path.join(oneD_dir, 'unsteady_soln.vtp')
-            if not os.path.exists(soln_path):
-                reduced_results_dir = os.path.join('data', 'reduced_results', args.set_name, args.geo_name)
-                soln_path = os.path.join(reduced_results_dir, 'unsteady_soln.vtp')
-            if not os.path.exists(soln_path):
-                alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
-                                            args.set_name, args.geo_name, 'unsteady_soln.vtp')
-                if os.path.exists(alt_soln_path):
-                    soln_path = alt_soln_path
-            
-            # Get geo_dir
-            geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
+        # Determine timestep from 1D solution for BC fitting
+        try:
+            time_step_size = timestep_from_1D(soln_path, geo_dir)
+        except Exception:
+            time_step_size = None
+        
+        # Fit outlet resistances from 3D solution (skip for VMR cases)
+        if args.set_name != "VMR":
+            fitted_resistances = fit_outlet_resistances_from_3d(geometric_input_path, observations)
+        else:
+            fitted_resistances = None
 
-            # Determine timestep from 1D solution for BC fitting
+        # Fit RCR boundary conditions from observations (1D-derived)
+        fitted_rcr = {}
+        if time_step_size is not None:
             try:
-                time_step_size = timestep_from_1D(soln_path, geo_dir)
-            except Exception:
-                time_step_size = None
+                fitted_rcr = fit_outlet_rcr_from_observations(geometric_input_path, observations, dt=time_step_size)
+            except Exception as e:
+                print(f"  Warning: RCR fitting failed on original geometry: {e}")
+        else:
+            print("  Warning: time_step_size unavailable; skipping RCR fitting on original geometry")
+        
+        
+        
+        # Process BOTH geometry variants: original and bifurcations-only
+        for geo_variant_name, geo_variant_paths in geometry_variants.items():
+            print(f"\n" + "-"*50)
+            print(f"Processing {geo_variant_name.upper()} geometry variant")
+            print("-"*50)
             
-            # Fit outlet resistances from 3D solution (skip for VMR cases)
-            if args.set_name != "VMR":
-                fitted_resistances = fit_outlet_resistances_from_3d(geometric_input_path, observations)
-            else:
-                fitted_resistances = None
+            variant_geometric_input = geo_variant_paths['geometric_input']
+            variant_calibration_input = geo_variant_paths['calibration_input']
+            variant_geometric_results = geo_variant_paths['geometric_results']
+            variant_junction_paths = geo_variant_paths['junction_types']
+            
+            # Check if geometric input exists
+            if not os.path.exists(variant_geometric_input):
+                print(f"  ✗ Skipping {geo_variant_name}: geometric input not found: {variant_geometric_input}")
+                continue
 
-            # Fit RCR boundary conditions from observations (1D-derived)
-            fitted_rcr = {}
-            if time_step_size is not None:
+            # Apply fitted RCR parameters to the variant (copy over if we fitted on original)
+            if fitted_rcr:
                 try:
-                    fitted_rcr = fit_outlet_rcr_from_observations(geometric_input_path, observations, dt=time_step_size)
+                    with open(variant_geometric_input, 'r') as f:
+                        cfg_tmp = json.load(f)
+                    bc_map = {bc.get('bc_name'): bc for bc in cfg_tmp.get('boundary_conditions', []) if bc.get('bc_name')}
+                    for bc_name, params in fitted_rcr.items():
+                        if bc_name in bc_map:
+                            bc_map[bc_name]['bc_values']['Rp'] = float(params[0])
+                            bc_map[bc_name]['bc_values']['C'] = float(params[1])
+                            bc_map[bc_name]['bc_values']['Rd'] = float(params[2])
+                            bc_map[bc_name]['bc_values']['Pd'] = float(params[3])
+                    with open(variant_geometric_input, 'w') as f:
+                        json.dump(cfg_tmp, f, indent=4)
+                    print(f"  Applied fitted RCR parameters to {geo_variant_name} geometric input")
                 except Exception as e:
-                    print(f"  Warning: RCR fitting failed on original geometry: {e}")
-            else:
-                print("  Warning: time_step_size unavailable; skipping RCR fitting on original geometry")
-            
-            refinement_factor = 4
-            
-            # Process BOTH geometry variants: original and bifurcations-only
-            for geo_variant_name, geo_variant_paths in geometry_variants.items():
-                print(f"\n" + "-"*50)
-                print(f"Processing {geo_variant_name.upper()} geometry variant")
-                print("-"*50)
-                
-                variant_geometric_input = geo_variant_paths['geometric_input']
-                variant_calibration_input = geo_variant_paths['calibration_input']
-                variant_geometric_results = geo_variant_paths['geometric_results']
-                variant_junction_paths = geo_variant_paths['junction_types']
-                
-                # Check if geometric input exists
-                if not os.path.exists(variant_geometric_input):
-                    print(f"  ✗ Skipping {geo_variant_name}: geometric input not found: {variant_geometric_input}")
-                    continue
+                    print(f"  Warning: could not apply fitted RCR parameters to {geo_variant_name}: {e}")
 
-                # Apply fitted RCR parameters to the variant (copy over if we fitted on original)
-                if fitted_rcr:
-                    try:
-                        with open(variant_geometric_input, 'r') as f:
-                            cfg_tmp = json.load(f)
-                        bc_map = {bc.get('bc_name'): bc for bc in cfg_tmp.get('boundary_conditions', []) if bc.get('bc_name')}
-                        for bc_name, params in fitted_rcr.items():
-                            if bc_name in bc_map:
-                                bc_map[bc_name]['bc_values']['Rp'] = float(params[0])
-                                bc_map[bc_name]['bc_values']['C'] = float(params[1])
-                                bc_map[bc_name]['bc_values']['Rd'] = float(params[2])
-                                bc_map[bc_name]['bc_values']['Pd'] = float(params[3])
-                        with open(variant_geometric_input, 'w') as f:
-                            json.dump(cfg_tmp, f, indent=4)
-                        print(f"  Applied fitted RCR parameters to {geo_variant_name} geometric input")
-                    except Exception as e:
-                        print(f"  Warning: could not apply fitted RCR parameters to {geo_variant_name}: {e}")
+            # Create base calibration input for this geometry variant
+            print(f"\n  Creating base calibration input for {geo_variant_name}...")
 
-                # Create base calibration input for this geometry variant
-                print(f"\n  Creating base calibration input for {geo_variant_name}...")
+            try:
+                # For bifurcations geometry:
+                # - Always rename existing observations to match bifurcated junction names
+                # - Optionally add synthetic connector-vessel observations
+                if geo_variant_name == 'bifurcations':
+                    with open(variant_geometric_input, 'r') as f:
+                        bifurcated_geometric_input = json.load(f)
+                    include_synthetic_observations = True
+                    if include_synthetic_observations:
+                        # Load the original geometric input and centerline data
+                        original_geometric_input_path = geometry_variants['original']['geometric_input']
+                        with open(original_geometric_input_path, 'r') as f:
+                            original_geometric_input = json.load(f)
 
-                try:
-                    # For bifurcations geometry:
-                    # - Always rename existing observations to match bifurcated junction names
-                    # - Optionally add synthetic connector-vessel observations
-                    if geo_variant_name == 'bifurcations':
-                        with open(variant_geometric_input, 'r') as f:
-                            bifurcated_geometric_input = json.load(f)
+                        # Read centerline data
+                        centerline_data, _ = read_centerline_vtp(centerline_path)
 
-                        if args.include_synthetic_observations:
-                            # Load the original geometric input and centerline data
-                            original_geometric_input_path = geometry_variants['original']['geometric_input']
-                            with open(original_geometric_input_path, 'r') as f:
-                                original_geometric_input = json.load(f)
-
-                            # Read centerline data
-                            centerline_data, _ = read_centerline_vtp(centerline_path)
-
-                            print(f"    Generating synthetic observations for connector vessels...")
-                            augmented_observations = generate_connector_observations(
-                                observations,
-                                original_geometric_input,
-                                bifurcated_geometric_input,
-                                centerline_data
-                            )
-                        else:
-                            print(f"    Skipping synthetic observations for connector vessels")
-                            print(f"    Renaming existing observation keys to match bifurcated junction names...")
-                            augmented_observations = rename_observations_for_bifurcations(
-                                observations, bifurcated_geometric_input
-                            )
-
-                        create_calibration_input(
-                            variant_geometric_input, augmented_observations, variant_calibration_input,
-                            centerline_soln_path=soln_path, geo_dir=geo_dir
+                        print(f"    Generating synthetic observations for connector vessels...")
+                        augmented_observations = generate_connector_observations(
+                            observations,
+                            original_geometric_input,
+                            bifurcated_geometric_input,
+                            centerline_data
                         )
                     else:
-                        # Original geometry: use original observations
-                        create_calibration_input(
-                            variant_geometric_input, observations, variant_calibration_input,
-                            centerline_soln_path=soln_path, geo_dir=geo_dir
+                        print(f"    Skipping synthetic observations for connector vessels")
+                        print(f"    Renaming existing observation keys to match bifurcated junction names...")
+                        augmented_observations = rename_observations_for_bifurcations(
+                            observations, bifurcated_geometric_input
                         )
-                    
-                    print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
-                    
-                    # Update base calibration input with fitted outlet BCs (skip for VMR)
-                    if fitted_resistances:
-                        print(f"\n  Updating base calibration input with fitted outlet BCs...")
-                        update_outlet_bcs_in_file(variant_calibration_input, fitted_resistances, f"{geo_variant_name} calibration input")
-                    
-                    # Update geometric input with BC from calibration input
-                    update_geometric_input_with_calibration_bc(variant_geometric_input, variant_calibration_input)
-                except Exception as e:
-                    raise Exception(f"Failed to create calibration input for {geo_variant_name}: {e}")
+
+                    create_calibration_input(
+                        variant_geometric_input, augmented_observations, variant_calibration_input,
+                        centerline_soln_path=soln_path, geo_dir=geo_dir
+                    )
+                else:
+                    # Original geometry: use original observations
+                    create_calibration_input(
+                        variant_geometric_input, observations, variant_calibration_input,
+                        centerline_soln_path=soln_path, geo_dir=geo_dir
+                    )
                 
-                # Create calibration input variants for each junction type
-                print(f"\n  Creating calibration input variants for each junction type...")
-                try:
-                    with open(variant_calibration_input, 'r') as f:
-                        base_calibration_config = json.load(f)
-                    
-                    for jtype in args.junction_types:
-                        print(f"    Creating {geo_variant_name}/{jtype} calibration input...")
-                        jtype_input_path = variant_junction_paths[jtype]['calibration_input']
-                        
-                        # Apply junction type modification to calibration input
-                        jtype_config = modify_junction_types(base_calibration_config, jtype)
-                        
-                        with open(jtype_input_path, 'w') as f:
-                            json.dump(jtype_config, f, indent=4)
-                except Exception as e:
-                    raise Exception(f"Failed to create junction type calibration inputs for {geo_variant_name}: {e}")
+                print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
                 
-                # Step 3: Run calibration for each junction type
-                if not args.plot_only:
-                    print(f"\n  Running calibration for {geo_variant_name} geometry...")
+                # Update base calibration input with fitted outlet BCs (skip for VMR)
+                if fitted_resistances:
+                    print(f"\n  Updating base calibration input with fitted outlet BCs...")
+                    update_outlet_bcs_in_file(variant_calibration_input, fitted_resistances, f"{geo_variant_name} calibration input")
+                
+                # Update geometric input with BC from calibration input
+                update_geometric_input_with_calibration_bc(variant_geometric_input, variant_calibration_input)
+            except Exception as e:
+                raise Exception(f"Failed to create calibration input for {geo_variant_name}: {e}")
+            
+            # Create calibration input variants for each junction type
+            print(f"\n  Creating calibration input variants for each junction type...")
+            try:
+                with open(variant_calibration_input, 'r') as f:
+                    base_calibration_config = json.load(f)
+                
+                for jtype in args.junction_types:
+                    print(f"    Creating {geo_variant_name}/{jtype} calibration input...")
+                    jtype_input_path = variant_junction_paths[jtype]['calibration_input']
                     
-                    # Run calibration for each junction type variant
-                    for jtype in args.junction_types:
-                        print(f"\n    Calibrating {geo_variant_name}/{jtype}...")
-                        jtype_input_path = variant_junction_paths[jtype]['calibration_input']
-                        jtype_output_path = variant_junction_paths[jtype]['calibrated_output']
-                        
-                        try:
-                            calibrated_config = run_calibration(jtype_input_path, jtype_output_path)
-                            print(f"      ✓ Calibration completed for {geo_variant_name}/{jtype}")
-                            # Junction types are now preserved by the calibrator
-                        except Exception as e:
-                            raise Exception(f"Calibration failed for {geo_variant_name}/{jtype}: {e}")
+                    # Apply junction type modification to calibration input
+                    jtype_config = modify_junction_types(base_calibration_config, jtype)
                     
-                    # Step 4: Run forward simulations for this geometry variant
-                    print(f"\n  Running forward simulations for {geo_variant_name} geometry...")
-                    
-                    # Run simulation with geometric input (uncalibrated)
-                    print(f"\n    Running simulation with {geo_variant_name} geometric input...")
-                    if not os.path.exists(variant_geometric_input):
-                        print(f"      ✗ Skipping: geometric input not found: {variant_geometric_input}")
-                    else:
-                        try:
-                            refine_inlet_bc_for_forward_simulation(variant_geometric_input, refinement_factor)
-                            run_forward_simulation(variant_geometric_input, variant_geometric_results)
-                            print(f"      ✓ Geometric simulation completed successfully")
-                        except Exception as e:
-                            raise Exception(f"Geometric simulation failed: {e}")
-                    
-                    # Run simulation with each calibrated input
-                    for jtype in args.junction_types:
-                        print(f"\n    Running simulation with calibrated {geo_variant_name}/{jtype} input...")
-                        jtype_output_path = variant_junction_paths[jtype]['calibrated_output']
-                        calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
-                        
-                        # Check if calibrated output exists (calibration might have failed)
-                        if not os.path.exists(jtype_output_path):
-                            print(f"      ✗ Skipping: calibrated output not found: {jtype_output_path}")
-                            continue
-                        
-                        try:
-                            refine_inlet_bc_for_forward_simulation(jtype_output_path, refinement_factor)
-                            run_forward_simulation(jtype_output_path, calibrated_results_csv)
-                            print(f"      ✓ Calibrated {geo_variant_name}/{jtype} simulation completed successfully")
-                        except Exception as e:
-                            raise Exception(f"Calibrated {geo_variant_name}/{jtype} simulation failed: {e}")
+                    with open(jtype_input_path, 'w') as f:
+                        json.dump(jtype_config, f, indent=4)
+            except Exception as e:
+                raise Exception(f"Failed to create junction type calibration inputs for {geo_variant_name}: {e}")
+            
+    extract_and_add_geometric_params(soln_path, geometric_input_path, geometric_input_path)
+    print(f"  Geometric parameters extracted and added to {variant_geometric_input}")
+    
+    # Step 3: Run calibration for each junction type
+    if not args.skip_calibration:
+        print(f"\n  Running calibration for {geo_variant_name} geometry...")
+        
+        # Run calibration for each junction type variant
+        for jtype in args.junction_types:
+            print(f"\n    Calibrating {geo_variant_name}/{jtype}...")
+            jtype_input_path = variant_junction_paths[jtype]['calibration_input']
+            jtype_output_path = variant_junction_paths[jtype]['calibrated_output']
+            
+            try:
+                calibrated_config = run_calibration(jtype_input_path, jtype_output_path)
+                print(f"      ✓ Calibration completed for {geo_variant_name}/{jtype}")
+                # Junction types are now preserved by the calibrator
+            except Exception as e:
+                raise Exception(f"Calibration failed for {geo_variant_name}/{jtype}: {e}")
+
+    # Step 4: Run forward simulations for this geometry variant
+    if not args.skip_forward:
+        
+        print(f"\n  Running forward simulations for {geo_variant_name} geometry...")
+        
+        # Run simulation with geometric input (uncalibrated)
+        print(f"\n    Running simulation with {geo_variant_name} geometric input...")
+        if not os.path.exists(variant_geometric_input):
+            print(f"      ✗ Skipping: geometric input not found: {variant_geometric_input}")
+        else:
+            try:
+                refinement_factor = 4
+                refine_inlet_bc_for_forward_simulation(variant_geometric_input, refinement_factor)
+                run_forward_simulation(variant_geometric_input, variant_geometric_results)
+                print(f"      ✓ Geometric simulation completed successfully")
+            except Exception as e:
+                raise Exception(f"Geometric simulation failed: {e}")
+        
+        # Run simulation with each calibrated input
+        for jtype in args.junction_types:
+            print(f"\n    Running simulation with calibrated {geo_variant_name}/{jtype} input...")
+            jtype_output_path = variant_junction_paths[jtype]['calibrated_output']
+            calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
+            
+            # Check if calibrated output exists (calibration might have failed)
+            if not os.path.exists(jtype_output_path):
+                print(f"      ✗ Skipping: calibrated output not found: {jtype_output_path}")
+                continue
+            
+            try:
+                refine_inlet_bc_for_forward_simulation(jtype_output_path, refinement_factor)
+                run_forward_simulation(jtype_output_path, calibrated_results_csv)
+                print(f"      ✓ Calibrated {geo_variant_name}/{jtype} simulation completed successfully")
+            except Exception as e:
+                raise Exception(f"Calibrated {geo_variant_name}/{jtype} simulation failed: {e}")
     
     # Step 5: Calculate and print MSE between 3D and 0D solutions
-
-    # print("\n" + "="*60)
-    # print("Step 5: Calculating MSE between 3D and 0D solutions")
-    # print("="*60)
+    if not args.skip_mse_calculation:
+        print("\n" + "="*60)
+        print("Step 5: Calculating MSE between 3D and 0D solutions")
+        print("="*60)
+        
+        # Calculate MSE for both geometry variants
+        for geo_variant_name, geo_variant_paths in geometry_variants.items():
+            print(f"\n  MSE calculation for {geo_variant_name.upper()} geometry:")
+            
+            variant_calibration_input = geo_variant_paths['calibration_input']
+            variant_geometric_results = geo_variant_paths['geometric_results']
+            variant_geometric_input = geo_variant_paths['geometric_input']
+            variant_junction_paths = geo_variant_paths['junction_types']
+            
+            # Build dictionary of CSV results for all modalities
+            csv_results_dict = {}
+            
+            # Add geometric results
+            if os.path.exists(variant_geometric_results):
+                csv_results_dict['geometric'] = variant_geometric_results
+            
+            # Add calibrated results for each junction type
+            for jtype in args.junction_types:
+                calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
+                if os.path.exists(calibrated_results_csv):
+                    csv_results_dict[jtype] = str(calibrated_results_csv)
+            
+            if csv_results_dict and os.path.exists(variant_calibration_input):
+                try:
+                    # Generate CSV output path
+                    prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
+                    mse_csv_path = os.path.join(base_dir, f'{prefix}mse_comparison.csv')
+                    calculate_mse_between_3d_and_0d(
+                        variant_calibration_input,
+                        csv_results_dict,
+                        geometric_input_path=variant_geometric_input,
+                        zoom_start_idx=args.zoom_start,
+                        zoom_end_idx=args.zoom_end,
+                        output_csv_path=mse_csv_path,
+                        verbose=verbose,
+                        set_name=args.set_name
+                    )
+                except Exception as e:
+                    raise Exception(f"Error calculating MSE for {geo_variant_name}: {e}")
+            else:
+                print(f"    Skipping MSE calculation for {geo_variant_name} (missing files)")
     
-    # # Calculate MSE for both geometry variants
-    # for geo_variant_name, geo_variant_paths in geometry_variants.items():
-    #     print(f"\n  MSE calculation for {geo_variant_name.upper()} geometry:")
-        
-    #     variant_calibration_input = geo_variant_paths['calibration_input']
-    #     variant_geometric_results = geo_variant_paths['geometric_results']
-    #     variant_geometric_input = geo_variant_paths['geometric_input']
-    #     variant_junction_paths = geo_variant_paths['junction_types']
-        
-    #     # Build dictionary of CSV results for all modalities
-    #     csv_results_dict = {}
-        
-    #     # Add geometric results
-    #     if os.path.exists(variant_geometric_results):
-    #         csv_results_dict['geometric'] = variant_geometric_results
-        
-    #     # Add calibrated results for each junction type
-    #     for jtype in args.junction_types:
-    #         calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
-    #         if os.path.exists(calibrated_results_csv):
-    #             csv_results_dict[jtype] = str(calibrated_results_csv)
-        
-    #     if csv_results_dict and os.path.exists(variant_calibration_input):
-    #         try:
-    #             # Generate CSV output path
-    #             prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
-    #             mse_csv_path = os.path.join(base_dir, f'{prefix}mse_comparison.csv')
-    #             calculate_mse_between_3d_and_0d(
-    #                 variant_calibration_input,
-    #                 csv_results_dict,
-    #                 geometric_input_path=variant_geometric_input,
-    #                 zoom_start_idx=args.zoom_start,
-    #                 zoom_end_idx=args.zoom_end,
-    #                 output_csv_path=mse_csv_path,
-    #                 verbose=verbose,
-    #                 set_name=args.set_name
-    #             )
-    #         except Exception as e:
-    #             raise Exception(f"Error calculating MSE for {geo_variant_name}: {e}")
-    #     else:
-    #         print(f"    Skipping MSE calculation for {geo_variant_name} (missing files)")
-    
-    # Step 6: Generate comparison plots (always run if not skipped, including in plot-only mode)
+    #Step 6: Generate comparison plots (always run if not skipped, including in plot-only mode)
     if not args.skip_plots:
         print("\n" + "="*60)
         print("Step 6: Generating comparison plots")
@@ -592,7 +519,7 @@ def main():
                 except Exception as e:
                     raise Exception(f"Error generating junction pressure difference plots for {geo_variant_name}: {e}")
 
-    # New: Plot zero-D parameter bar charts (R, stenosis, L) comparing modalities
+    # Plot zero-D parameter bar charts (R, stenosis, L) comparing modalities
     if not args.skip_plots:
         for geo_variant_name, geo_variant_paths in geometry_variants.items():
             try:

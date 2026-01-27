@@ -1,8 +1,7 @@
 import os
 import json
 import numpy as np
-from util.zerod_calibration.file_io import timestep_from_1D
-from util.zerod_calibration.oned_to_zerod import convert_numpy_to_list
+from util.zerod_calibration.file_io import timestep_from_1D, convert_numpy_to_list
 
 
 def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None):

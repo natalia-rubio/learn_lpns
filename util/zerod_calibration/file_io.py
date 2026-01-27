@@ -330,4 +330,70 @@ def timestep_from_1D(centerline_soln_path, geo_dir):
     
     return time_step_size
 
+def get_paths(base_dir, args):
+# Define geometry variants: original and bifurcations-only
+    geometry_variants = {
+        'original': {
+            'geometric_input': os.path.join(base_dir, 'geometric_input.json'),
+            'geometric_results': os.path.join(base_dir, 'geometric_results.csv'),
+            'calibration_input': os.path.join(base_dir, 'calibration_input.json'),
+            'junction_types': {}
+        },
+        'bifurcations': {
+            'geometric_input': os.path.join(base_dir, 'bifurcations_geometric_input.json'),
+            'geometric_results': os.path.join(base_dir, 'bifurcations_geometric_results.csv'),
+            'calibration_input': os.path.join(base_dir, 'bifurcations_calibration_input.json'),
+            'junction_types': {}
+        }
+    }
+    
+    # Add paths for each junction type variant within each geometry variant
+    for geo_variant in geometry_variants:
+        prefix = '' if geo_variant == 'original' else f'{geo_variant}_'
+        for jtype in args.junction_types:
+            geometry_variants[geo_variant]['junction_types'][jtype] = {
+                'calibration_input': os.path.join(base_dir, f'{prefix}calibration_input_{jtype}.json'),
+                'calibrated_output': os.path.join(base_dir, f'{prefix}calibrated_output_{jtype}.json'),
+                'calibrated_results': os.path.join(base_dir, f'{prefix}calibrated_results_{jtype}.csv')
+            }
+    
+    # Legacy paths for backward compatibility
+    geometric_input_path = geometry_variants['original']['geometric_input']
+    geometric_results_csv = geometry_variants['original']['geometric_results']
+    calibration_input_path = geometry_variants['original']['calibration_input']
+    calibrated_output_path = os.path.join(base_dir, 'calibrated_output.json')
+    
+    # Paths for each junction type variant (original geometry - for backward compatibility)
+    junction_type_paths = geometry_variants['original']['junction_types']
+    
 
+    # Auto-detect (following generate_multiple_trees.py convention)
+    geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
+    centerline_paths = [
+        os.path.join(geo_dir, 'centerlines_simVascular.vtp'),  # svVascularize format
+        os.path.join(geo_dir, 'centerlines', 'centerlines.vtp'),
+        os.path.join(geo_dir, 'centerlines.vtp'),
+    ]
+    centerline_path = None
+    for path in centerline_paths:
+        if os.path.exists(path):
+            centerline_path = path
+            break
+        
+        # If not found in 3D directory, try 1D solution (for VMR files)
+        oneD_soln_paths = []
+        if centerline_path is None:
+            oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
+            oneD_soln_paths = [
+                os.path.join(oneD_dir, 'unsteady_soln.vtp'),
+            ]
+            for path in oneD_soln_paths:
+                if os.path.exists(path):
+                    centerline_path = path
+                    print(f"  Using 1D solution as centerline source: {centerline_path}")
+                    break
+        
+        if centerline_path is None:
+            all_paths = centerline_paths + oneD_soln_paths
+            raise FileNotFoundError(f"Centerline file not found. Tried: {all_paths}")
+    return geometry_variants, geometric_input_path, geometric_results_csv, calibration_input_path, calibrated_output_path, junction_type_paths, centerline_path, geo_dir

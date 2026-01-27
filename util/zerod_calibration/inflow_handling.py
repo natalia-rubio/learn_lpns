@@ -1,7 +1,7 @@
 import os
 import json
 import numpy as np
-
+from scipy.interpolate import interp1d
 from util.zerod_calibration.file_io import read_centerline_vtp
 from util.zerod_calibration.file_io import parse_simulation_xml
 
