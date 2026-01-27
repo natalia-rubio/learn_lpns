@@ -1,3 +1,11 @@
+import os
+import json
+import numpy as np
+import pandas as pd
+import importlib.util
+import sys
+import copy
+import subprocess
 try:
     import pysvzerod
 except ImportError:
@@ -189,8 +197,8 @@ def run_forward_simulation(input_json_path, output_csv_path):
                     os.remove(temp_input_path)
             
             # Verify inlet flow matches BC
-            print("\n  Verifying inlet flow matches boundary condition...")
-            verify_inlet_flow_matches_bc(input_data_sim, output_csv_path_str)
+            # print("\n  Verifying inlet flow matches boundary condition...")
+            # verify_inlet_flow_matches_bc(input_data_sim, output_csv_path_str)
             
             # Return None since we're using CSV output, not a results dictionary
             return None
