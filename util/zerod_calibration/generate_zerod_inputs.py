@@ -122,6 +122,10 @@ def main():
         print(f"\n  Creating bifurcations-only geometric input...")
         split_junctions_from_files(geometric_input_path, centerline_path, bifurcations_geometric_input_path)
         print(f"  Bifurcations-only geometric input saved to: {bifurcations_geometric_input_path}")
+
+    extract_and_add_geometric_params(centerline_path, bifurcations_geometric_input_path, bifurcations_geometric_input_path)
+    print(f"  Geometric parameters extracted and added to {bifurcations_geometric_input_path}")
+
         
     # Step 2: Extract observations and create calibration inputs for each junction type
     if not args.skip_observation:
@@ -301,9 +305,7 @@ def main():
             except Exception as e:
                 raise Exception(f"Failed to create junction type calibration inputs for {geo_variant_name}: {e}")
             
-    extract_and_add_geometric_params(soln_path, geometric_input_path, geometric_input_path)
-    print(f"  Geometric parameters extracted and added to {variant_geometric_input}")
-    
+
     # Step 3: Run calibration for each junction type
     if not args.skip_calibration:
         print(f"\n  Running calibration for {geo_variant_name} geometry...")
