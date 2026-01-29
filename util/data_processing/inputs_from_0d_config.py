@@ -112,9 +112,12 @@ def load_junction_geometric_features(
 
         outlet_names_sorted = sorted(outlet_names, key=_pl, reverse=True)[:2]
 
-        # Build row: [inlet_max_r, inlet_tangent(3),
-        #             per-outlet0 features..., per-outlet1 features...]
-        feat_row: List[float] = []
+        # Skip junctions where the primary outlet (outlet0) is a connector vessel
+        primary_outlet = outlet_names_sorted[0]
+        if 'connector' in primary_outlet:
+            if verbose:
+                print(f"Skipping junction {j_name}: primary outlet {primary_outlet} is a connector vessel")
+            continue
 
         def _to_float(x):
             try:
@@ -123,16 +126,9 @@ def load_junction_geometric_features(
                 raise ValueError(f"Could not convert {x} to float")
                 return None
 
-        # Inlet-level features
-        if verbose:
-            print(f"Adding inlet max inscribed radius: {inlet_max_r}")
-        feat_row.append(_to_float(inlet_max_r))
-        if verbose:
-            print(f"Adding inlet tangent features: {inlet_tangent}")
-        feat_row.extend(_to_float(c) for c in inlet_tangent)
-
         # Per-outlet features helper
-        def append_outlet_features(outlet_name: str):
+        def get_outlet_features(outlet_name: str) -> List[float]:
+            """Extract all features for a single outlet."""
             pl = outlet_path_lengths.get(outlet_name)
             tor = outlet_tortuosities.get(outlet_name)
             tan = outlet_tangents.get(outlet_name, [None, None, None]) or [None, None, None]
@@ -152,19 +148,49 @@ def load_junction_geometric_features(
                 print(f"Adding outlet max inscribed radius min on path: {r_min_p}")
                 print(f"Adding outlet max inscribed radius max on path: {r_max_p}")
                 print(f"Adding outlet angle diff (inlet vs outlet tangent): {ang}")
-            feat_row.append(_to_float(pl))
-            feat_row.append(_to_float(tor))
-            feat_row.extend(_to_float(c) for c in tan)
-            feat_row.append(_to_float(r_loc))
-            feat_row.append(_to_float(r_min_p))
-            feat_row.append(_to_float(r_max_p))
-            feat_row.append(_to_float(ang))
+            
+            return [
+                _to_float(pl),
+                _to_float(tor),
+                _to_float(tan[0]),
+                _to_float(tan[1]),
+                _to_float(tan[2]),
+                _to_float(r_loc),
+                _to_float(r_min_p),
+                _to_float(r_max_p),
+                _to_float(ang),
+            ]
 
-        append_outlet_features(outlet_names_sorted[0])
-        append_outlet_features(outlet_names_sorted[1])
-
-        rows.append(feat_row)
+        # Build TWO rows per junction: one with outlet0 first, one with outlet1 first
+        # Row 1: inlet + outlet0 + outlet1
+        feat_row_0_first: List[float] = []
+        if verbose:
+            print(f"Adding inlet max inscribed radius: {inlet_max_r}")
+        feat_row_0_first.append(_to_float(inlet_max_r))
+        if verbose:
+            print(f"Adding inlet tangent features: {inlet_tangent}")
+        feat_row_0_first.extend(_to_float(c) for c in inlet_tangent)
+        feat_row_0_first.extend(get_outlet_features(outlet_names_sorted[0]))
+        feat_row_0_first.extend(get_outlet_features(outlet_names_sorted[1]))
+        rows.append(feat_row_0_first)
         junction_names.append(j_name)
+
+        # Row 2: inlet + outlet1 + outlet0 (swapped)
+        # Skip swapped sample if outlet1 would be a connector (connector-as-primary exclusion)
+        if 'connector' not in outlet_names_sorted[1]:
+            feat_row_1_first: List[float] = []
+            feat_row_1_first.append(_to_float(inlet_max_r))
+            feat_row_1_first.extend(_to_float(c) for c in inlet_tangent)
+            feat_row_1_first.extend(get_outlet_features(outlet_names_sorted[1]))
+            feat_row_1_first.extend(get_outlet_features(outlet_names_sorted[0]))
+            rows.append(feat_row_1_first)
+            junction_names.append(j_name)  # Same junction name for both rows
+        else:
+            if verbose:
+                print(
+                    f"Skipping swapped sample for junction {j_name}: "
+                    f"primary outlet would be connector {outlet_names_sorted[1]}"
+                )
 
     if not rows:
         raise ValueError("No junctions with usable geometric_params were found.")

@@ -77,6 +77,7 @@ JUNCTION_COLORS = {
     'BloodVesselJunction': 'orange',
     'DirIndepJunction': 'dodgerblue',
     'HybridJunction': 'violet',
+    'BloodVesselJunction_NN': 'dodgerblue',
 }
 
 # Line styles for geometry variants
@@ -197,6 +198,28 @@ LINE_STYLES = {
         'label': 'Hybrid Junction',
         'alpha': 0.5,
     },
+    # NN-modified BloodVesselJunction (always dodger blue, dashed)
+    'bifurcations_BloodVesselJunction_NN': {
+        'color': 'dodgerblue',
+        'linestyle': '--',
+        'linewidth': 4,
+        'label': 'Blood Vessel Junction (NN)',
+        'alpha': 0.5,
+    },
+    'original_BloodVesselJunction_NN': {
+        'color': 'dodgerblue',
+        'linestyle': '--',
+        'linewidth': 4,
+        'label': 'Blood Vessel Junction (NN)',
+        'alpha': 0.5,
+    },
+    'BloodVesselJunction_NN': {
+        'color': 'dodgerblue',
+        'linestyle': '--',
+        'linewidth': 4,
+        'label': 'Blood Vessel Junction (NN)',
+        'alpha': 0.5,
+    },
 }
 
 
@@ -214,6 +237,16 @@ def get_line_style(key):
     # If key is directly defined, return it
     if key in LINE_STYLES:
         return LINE_STYLES[key]
+    
+    # Special handling for NN lines: always dodger blue, dashed
+    if 'BloodVesselJunction_NN' in key or key.endswith('_NN'):
+        return {
+            'color': 'dodgerblue',
+            'linestyle': '--',
+            'linewidth': 4,
+            'label': 'Blood Vessel Junction (NN)',
+            'alpha': 0.5,
+        }
     
     # Try to parse as {geometry}_{junction_type}
     for geometry in ['original', 'bifurcations']:
