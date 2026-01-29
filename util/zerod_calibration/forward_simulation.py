@@ -173,10 +173,32 @@ def run_forward_simulation(input_json_path, output_csv_path):
                 # It will output to ./output.csv in the current directory
                 # Use absolute path for input file (computed before changing directories)
                 cmd = [svzerodsolver_path, abs_input_path]
-                result = subprocess.run(cmd)#, capture_output=True, text=True)
+                
+                # Check simulation parameters to estimate timeout
+                num_cycles = input_data_sim.get('simulation_parameters', {}).get('number_of_cardiac_cycles', 2)
+                num_time_pts = input_data_sim.get('simulation_parameters', {}).get('number_of_time_pts_per_cardiac_cycle', 100)
+                # Estimate timeout: ~1 second per 1000 time points, with minimum 60 seconds
+                estimated_timeout = max(60, int((num_cycles * num_time_pts) / 1000) + 30)
+                
+                print(f"    Running simulation ({num_cycles} cycles, {num_time_pts} pts/cycle, timeout: {estimated_timeout}s)...")
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=estimated_timeout)
+                except subprocess.TimeoutExpired:
+                    raise RuntimeError(
+                        f"svzerodsolver timed out after {estimated_timeout} seconds. "
+                        f"This may indicate:\n"
+                        f"  - Simulation parameters are too large (cycles: {num_cycles}, pts/cycle: {num_time_pts})\n"
+                        f"  - Numerical instability in the simulation\n"
+                        f"  - Consider reducing number_of_cardiac_cycles or number_of_time_pts_per_cardiac_cycle"
+                    )
                 
                 if result.returncode != 0:
-                    raise RuntimeError(f"svzerodsolver failed with return code {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+                    error_msg = f"svzerodsolver failed with return code {result.returncode}"
+                    if result.stderr:
+                        error_msg += f"\nSTDERR: {result.stderr[-1000:]}"  # Last 1000 chars
+                    if result.stdout:
+                        error_msg += f"\nSTDOUT: {result.stdout[-1000:]}"  # Last 1000 chars
+                    raise RuntimeError(error_msg)
                 
                 print("  ✓ Simulation completed successfully with svzerodsolver")
                 

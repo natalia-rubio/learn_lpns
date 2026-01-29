@@ -78,7 +78,7 @@ def main():
     parser.add_argument('--skip-mse-calculation', action='store_true',
                         help='Skip MSE calculation step')
     parser.add_argument('--skip-plots', action='store_true',
-                        help='Skip generating comparison plots')
+                       help='Skip generating comparison plots')
 
     args = parser.parse_args(); verbose = args.verbose
     # Construct paths
@@ -125,6 +125,37 @@ def main():
 
     extract_and_add_geometric_params(centerline_path, bifurcations_geometric_input_path, bifurcations_geometric_input_path)
     print(f"  Geometric parameters extracted and added to {bifurcations_geometric_input_path}")
+
+    # Run data processing pipeline for neural network training data
+    if not args.skip_calibration:
+        print(f"\n  Running data processing pipeline for neural network...")
+        try:
+            import subprocess
+            geo_name_for_ml = args.geo_name.replace('tree_', '')
+            run_data_processing_cmd = [
+                sys.executable,
+                os.path.join(os.path.dirname(__file__), '..', 'data_processing', 'run_data_processing.py'),
+                '--set-name', args.set_name,
+                '--set-type', 'test',
+                '--geometries', geo_name_for_ml,
+                '--output-type', 'rri',
+                '--percent-train', '0.75',
+                '--seed', '0',
+                '--data-root', 'data',
+            ]
+            if verbose:
+                run_data_processing_cmd.append('--verbose')
+            result = subprocess.run(
+                run_data_processing_cmd,
+                cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                capture_output=True,
+                text=True
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Data processing failed: {result.stderr}")
+            print(f"  ✓ Data processing pipeline completed")
+        except Exception as e:
+            raise Exception(f"Failed to run data processing pipeline: {e}")
 
         
     # Step 2: Extract observations and create calibration inputs for each junction type
@@ -322,6 +353,227 @@ def main():
                 # Junction types are now preserved by the calibrator
             except Exception as e:
                 raise Exception(f"Calibration failed for {geo_variant_name}/{jtype}: {e}")
+        
+    # Step 3.5 After calibration, run NN inference for BloodVesselJunction on bifurcations geometry
+    if 'BloodVesselJunction' in args.junction_types:
+        geo_variant_name = 'bifurcations'
+        geo_variant_paths = geometry_variants[geo_variant_name]
+        variant_junction_paths = geo_variant_paths['junction_types']
+        
+        print(f"\n    Running neural network inference for {geo_variant_name}/BloodVesselJunction...")
+        try:
+            # Import NN-related modules
+            from util.data_processing.inputs_from_0d_config import load_junction_geometric_features
+            from util.neural_network.nn_model import predict
+            from util.neural_network.nn_util import dill_load
+            import jax.numpy as jnp
+            
+            # Load the calibrated BloodVesselJunction config
+            bvj_output_path = variant_junction_paths['BloodVesselJunction']['calibrated_output']
+            if not os.path.exists(bvj_output_path):
+                raise FileNotFoundError(f"Calibrated output not found: {bvj_output_path}")
+            
+            with open(bvj_output_path, 'r') as f:
+                nn_config = json.load(f)
+            
+            # Extract geometric features for this geometry
+            X, feature_names, junction_names = load_junction_geometric_features(
+                bifurcations_geometric_input_path,
+                require_two_outlets=True,
+                verbose=True
+            )
+            
+            if len(X) == 0:
+                raise ValueError("No junctions found in geometric features")
+            
+            # Count unique junction names (some may have been skipped for swapped row)
+            unique_junction_names = list(set(junction_names))
+            print(f"  Loaded {len(X)} feature rows for {len(unique_junction_names)} unique junctions")
+            print(f"  Junction names in feature extraction: {unique_junction_names}")
+            
+            # Convert to JAX array
+            X_jax = jnp.array(X, dtype=jnp.float32)
+        
+            # Load the three trained models
+            model_dir = os.path.join('results', 'models', args.set_name)
+            model_base_name = f"rri_{args.set_name}_pred"
+            model_paths = [
+                os.path.join(model_dir, f"{model_base_name}_0_model"),
+                os.path.join(model_dir, f"{model_base_name}_1_model"),
+                os.path.join(model_dir, f"{model_base_name}_2_model"),
+            ]
+            
+            for i, model_path in enumerate(model_paths):
+                if not os.path.exists(model_path):
+                    raise FileNotFoundError(f"Model not found: {model_path}")
+            
+            # Load models and get predictions
+            predictions = []
+            for i, model_path in enumerate(model_paths):
+                model = dill_load(model_path)
+                pred = predict(X_jax, model.weights)
+                predictions.append(np.array(pred).flatten())
+            
+            # Based on outputs_from_config.py and launch_training.py:
+            # Output columns: 0=R_outlet0, 1=R_outlet1, 2=S_outlet0, 3=S_outlet1, 4=L_outlet0, 5=L_outlet1
+            # Model 0 (target_coef_ind=0): predicts R_poiseuille_outlet0
+            # Model 1 (target_coef_ind=1): predicts R_poiseuille_outlet1  
+            # Model 2 (target_coef_ind=2): predicts stenosis_coefficient_outlet0
+            # But user said: pred_0=R, pred_1=stenosis, pred_2=L
+            # Looking at launch_training.py comments:
+            #   "training model 1: Linear Resistor" (target_coef_ind=0) -> R
+            #   "training model 2: Stenosis Resistor" (target_coef_ind=1) -> S  
+            #   "training model 3: Inductor" (target_coef_ind=2) -> L
+            # So models predict: R (outlet0), S (outlet1?), L (outlet0?)
+            # Actually, each model predicts one value per row. With two rows per junction:
+            # - Row 0 (outlet0-first): model predicts for outlet0
+            # - Row 1 (outlet1-first): model predicts for outlet1
+            # So we can get both outlets from the two rows.
+            
+            # predictions[0] = R_poiseuille (one value per row)
+            # predictions[1] = stenosis_coefficient (one value per row)
+            # predictions[2] = L (one value per row)
+            pred_R = predictions[0]
+            pred_S = predictions[1]
+            pred_L = predictions[2]
+            
+             # Verify prediction array sizes match input
+             # Note: junction_names may have duplicates (same junction appears twice for swapped rows)
+             # So we compare against the actual number of input rows
+            if len(pred_R) != len(X):
+                raise ValueError(
+                    f"Prediction array size mismatch: input has {len(X)} rows, "
+                    f"but predictions have {len(pred_R)} values. "
+                    f"Expected one prediction per input row."
+                )
+            
+            # Build a mapping from junction name to all row indices where it appears
+            # (a junction can appear 1 or 2 times depending on whether swapped row was skipped)
+            junction_name_to_row_indices = {}
+            for row_idx, junc_name in enumerate(junction_names):
+                if junc_name not in junction_name_to_row_indices:
+                    junction_name_to_row_indices[junc_name] = []
+                junction_name_to_row_indices[junc_name].append(row_idx)
+        
+            # Map predictions back to junction_values
+            vessels = nn_config.get('vessels', [])
+            vessel_id_to_name = {v.get('vessel_id'): v.get('vessel_name', '') for v in vessels}
+            
+            # Process each junction in the config
+            for junc in nn_config.get('junctions', []):
+                junc_name = junc.get('junction_name', '')
+                
+                # Skip if this junction wasn't in the feature extraction (e.g., connector primary outlet)
+                if junc_name not in junction_name_to_row_indices:
+                    # For skipped junctions, we still need to initialize junction_values if they're BloodVesselJunction
+                    # But we'll leave them as-is from the calibrated output (or set to zeros if missing)
+                    if junc.get('junction_type') == 'BloodVesselJunction':
+                        if 'junction_values' not in junc:
+                            outlet_vessel_ids = junc.get('outlet_vessels', [])
+                            num_outlets = len(outlet_vessel_ids)
+                            junc['junction_values'] = {
+                                'R_poiseuille': [0.0] * num_outlets,
+                                'stenosis_coefficient': [0.0] * num_outlets,
+                                'L': [0.0] * num_outlets,
+                            }
+                    continue
+                
+                # Get the row indices for this junction (can be 1 or 2 rows)
+                row_indices = junction_name_to_row_indices[junc_name]
+                if len(row_indices) == 0:
+                    raise ValueError(f"No row indices found for junction {junc_name}")
+                
+                # The first row is always outlet0-first (if it exists)
+                # The second row (if it exists) is outlet1-first
+                row_outlet0_first = row_indices[0]
+                row_outlet1_first = row_indices[1] if len(row_indices) > 1 else None
+                
+                # Verify row indices are within bounds
+                if row_outlet0_first >= len(pred_R):
+                    raise ValueError(
+                        f"Row index {row_outlet0_first} out of bounds for junction {junc_name} "
+                        f"(array_size={len(pred_R)})"
+                    )
+                if row_outlet1_first is not None and row_outlet1_first >= len(pred_R):
+                    raise ValueError(
+                        f"Row index {row_outlet1_first} out of bounds for junction {junc_name} "
+                        f"(array_size={len(pred_R)})"
+                    )
+                
+                # Get outlet vessels
+                outlet_vessel_ids = junc.get('outlet_vessels', [])
+                if len(outlet_vessel_ids) != 2:
+                    continue
+                
+                outlet_vessel_names = [vessel_id_to_name.get(vid, '') for vid in outlet_vessel_ids]
+                
+                # Get geometric_params to determine outlet ordering
+                gp = junc.get('geometric_params', {})
+                outlet_path_lengths = gp.get('outlet_path_lengths', {})
+                
+                # Sort outlets by descending path length (matching inputs_from_0d_config.py)
+                outlet_names_sorted = sorted(
+                    outlet_vessel_names,
+                    key=lambda vn: float(outlet_path_lengths.get(vn, 0.0)),
+                    reverse=True
+                )
+                
+                # Map sorted outlets to file order
+                outlet_index_in_file = {vn: i for i, vn in enumerate(outlet_vessel_names)}
+                outlet0_sorted = outlet_names_sorted[0]
+                outlet1_sorted = outlet_names_sorted[1]
+                
+                # Initialize junction_values if needed
+                if 'junction_values' not in junc:
+                    junc['junction_values'] = {}
+                
+                # Set predictions for each outlet (in file order)
+                R_values = [0.0, 0.0]
+                S_values = [0.0, 0.0]
+                L_values = [0.0, 0.0]
+                
+                file_idx_outlet0 = outlet_index_in_file[outlet0_sorted]
+                file_idx_outlet1 = outlet_index_in_file[outlet1_sorted]
+                
+                 # Row outlet0-first: predictions are for outlet0_sorted
+                 # Row outlet1-first (if exists): predictions are for outlet1_sorted
+                if 'connector' in outlet0_sorted:
+                    R_values[file_idx_outlet0] = 0.0
+                    S_values[file_idx_outlet0] = 0.0
+                    L_values[file_idx_outlet0] = 0.0
+                else:
+                    R_values[file_idx_outlet0] = float(pred_R[row_outlet0_first])
+                    S_values[file_idx_outlet0] = float(pred_S[row_outlet0_first])
+                    L_values[file_idx_outlet0] = float(pred_L[row_outlet0_first])
+                
+                if 'connector' in outlet1_sorted:
+                    R_values[file_idx_outlet1] = 0.0
+                    S_values[file_idx_outlet1] = 0.0
+                    L_values[file_idx_outlet1] = 0.0
+                elif row_outlet1_first is not None:
+                    # Use prediction from outlet1-first row
+                    R_values[file_idx_outlet1] = float(pred_R[row_outlet1_first])
+                    S_values[file_idx_outlet1] = float(pred_S[row_outlet1_first])
+                    L_values[file_idx_outlet1] = float(pred_L[row_outlet1_first])
+                else:
+                    # No swapped row available (outlet1 is connector), use outlet0 prediction
+                    # This shouldn't happen if outlet1 is not a connector, but handle it anyway
+                    R_values[file_idx_outlet1] = float(pred_R[row_outlet0_first])
+                    S_values[file_idx_outlet1] = float(pred_S[row_outlet0_first])
+                    L_values[file_idx_outlet1] = float(pred_L[row_outlet0_first])
+            
+                junc['junction_values']['R_poiseuille'] = R_values
+                junc['junction_values']['stenosis_coefficient'] = S_values
+                junc['junction_values']['L'] = L_values
+            
+            # Save the NN-modified config
+            nn_output_path = os.path.join(base_dir, 'bifurcations_NN_BloodVesselJunction.json')
+            with open(nn_output_path, 'w') as f:
+                json.dump(nn_config, f, indent=4)
+                print(f"      ✓ Neural network predictions applied and saved to {nn_output_path}")
+                
+        except Exception as e:
+            raise Exception(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
 
     # Step 4: Run forward simulations for this geometry variant
     if not args.skip_forward:
@@ -335,7 +587,9 @@ def main():
         else:
             try:
                 refinement_factor = 4
-                refine_inlet_bc_for_forward_simulation(variant_geometric_input, refinement_factor)
+                # For geometric input, use the variant's calibration input as source
+                variant_calibration_input = geo_variant_paths['calibration_input']
+                refine_inlet_bc_for_forward_simulation(variant_geometric_input, refinement_factor, calibration_input_path=variant_calibration_input)
                 run_forward_simulation(variant_geometric_input, variant_geometric_results)
                 print(f"      ✓ Geometric simulation completed successfully")
             except Exception as e:
@@ -345,6 +599,7 @@ def main():
         for jtype in args.junction_types:
             print(f"\n    Running simulation with calibrated {geo_variant_name}/{jtype} input...")
             jtype_output_path = variant_junction_paths[jtype]['calibrated_output']
+            jtype_input_path = variant_junction_paths[jtype]['calibration_input']
             calibrated_results_csv = variant_junction_paths[jtype]['calibrated_results']
             
             # Check if calibrated output exists (calibration might have failed)
@@ -353,11 +608,28 @@ def main():
                 continue
             
             try:
-                refine_inlet_bc_for_forward_simulation(jtype_output_path, refinement_factor)
+                # Read BC from calibration input, write refined BC to calibrated output
+                refine_inlet_bc_for_forward_simulation(jtype_output_path, refinement_factor, calibration_input_path=jtype_input_path)
                 run_forward_simulation(jtype_output_path, calibrated_results_csv)
                 print(f"      ✓ Calibrated {geo_variant_name}/{jtype} simulation completed successfully")
             except Exception as e:
                 raise Exception(f"Calibrated {geo_variant_name}/{jtype} simulation failed: {e}")
+        
+        # Run forward simulation for NN-modified BloodVesselJunction on bifurcations
+        if geo_variant_name == 'bifurcations' and 'BloodVesselJunction' in args.junction_types:
+            nn_output_path = os.path.join(base_dir, 'bifurcations_NN_BloodVesselJunction.json')
+            nn_results_csv = os.path.join(base_dir, 'bifurcations_NN_BloodVesselJunction_results.csv')
+            
+            if os.path.exists(nn_output_path):
+                print(f"\n    Running simulation with NN-modified {geo_variant_name}/BloodVesselJunction input...")
+                try:
+                    # Use BloodVesselJunction calibration input as source
+                    bvj_input_path = variant_junction_paths['BloodVesselJunction']['calibration_input']
+                    refine_inlet_bc_for_forward_simulation(nn_output_path, refinement_factor, calibration_input_path=bvj_input_path)
+                    run_forward_simulation(nn_output_path, nn_results_csv)
+                    print(f"      ✓ NN-modified {geo_variant_name}/BloodVesselJunction simulation completed successfully")
+                except Exception as e:
+                    raise Exception(f"NN-modified {geo_variant_name}/BloodVesselJunction simulation failed: {e}")
     
     # Step 5: Calculate and print MSE between 3D and 0D solutions
     if not args.skip_mse_calculation:
@@ -387,6 +659,12 @@ def main():
                 if os.path.exists(calibrated_results_csv):
                     csv_results_dict[jtype] = str(calibrated_results_csv)
             
+            # Add NN-modified BloodVesselJunction results for bifurcations
+            if geo_variant_name == 'bifurcations' and 'BloodVesselJunction' in args.junction_types:
+                nn_results_csv = os.path.join(base_dir, 'bifurcations_NN_BloodVesselJunction_results.csv')
+                if os.path.exists(nn_results_csv):
+                    csv_results_dict['BloodVesselJunction_NN'] = str(nn_results_csv)
+            
             if csv_results_dict and os.path.exists(variant_calibration_input):
                 try:
                     # Generate CSV output path
@@ -413,6 +691,9 @@ def main():
         print("Step 6: Generating comparison plots")
         print("="*60)
         
+        # Specify which plot types to generate: 'original', 'bifurcations', 'combined'
+        plot_types = ["bifurcations",]
+        
         try:
             # Import plotting functions from unified location comparison script
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visualizations'))
@@ -429,65 +710,142 @@ def main():
             except Exception:
                 pass
             
-
-            # Generate combined comparison plots (original vs bifurcations for each junction type)
-            print(f"\n  Creating combined geometry variant comparison plots...")
-            combined_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, 'combined')
-            os.makedirs(combined_output_dir, exist_ok=True)
-            
             # Use original geometry calibration input for location list
             original_calibration_input = geometry_variants['original']['calibration_input']
             orig_geometric_results = geometry_variants['original']['geometric_results']
             
-            if os.path.exists(original_calibration_input) and os.path.exists(orig_geometric_results):
+            if not os.path.exists(original_calibration_input) or not os.path.exists(orig_geometric_results):
+                print(f"    Skipping plots (missing original geometry files)")
+            else:
                 all_locations = get_all_locations_from_calibration_input(str(original_calibration_input))
                 
-                # Build combined CSV paths dict: keys are "original_jtype" and "bifurcations_jtype"
-                combined_csv_paths = {}
-                # Build separate dictionaries for geometric and calibrated results
-                geometric_csv_paths = {}
-                for geo_variant_name, geo_variant_paths in geometry_variants.items():
-                    variant_geometric_results = geo_variant_paths['geometric_results']
-                    if os.path.exists(variant_geometric_results):
-                        geometric_csv_paths[geo_variant_name] = str(variant_geometric_results)
+                # Generate plots for each requested plot type
+                for plot_type in plot_types:
+                    if plot_type == 'combined':
+                        # Generate combined comparison plots (original vs bifurcations for each junction type)
+                        print(f"\n  Creating combined geometry variant comparison plots...")
+                        combined_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, 'combined')
+                        os.makedirs(combined_output_dir, exist_ok=True)
+                        
+                        # Build combined CSV paths dict: keys are "original_jtype" and "bifurcations_jtype"
+                        combined_csv_paths = {}
+                        # Build separate dictionaries for geometric and calibrated results
+                        geometric_csv_paths = {}
+                        for geo_variant_name, geo_variant_paths in geometry_variants.items():
+                            variant_geometric_results = geo_variant_paths['geometric_results']
+                            if os.path.exists(variant_geometric_results):
+                                geometric_csv_paths[geo_variant_name] = str(variant_geometric_results)
+                            
+                            for jtype in args.junction_types:
+                                calibrated_results_csv = geo_variant_paths['junction_types'][jtype]['calibrated_results']
+                                if os.path.exists(calibrated_results_csv):
+                                    combined_csv_paths[f'{geo_variant_name}_{jtype}'] = str(calibrated_results_csv)
+                            
+                            # Add NN-modified BloodVesselJunction for bifurcations
+                            if geo_variant_name == 'bifurcations' and 'BloodVesselJunction' in args.junction_types:
+                                nn_results_csv = os.path.join(base_dir, 'bifurcations_NN_BloodVesselJunction_results.csv')
+                                if os.path.exists(nn_results_csv):
+                                    combined_csv_paths[f'{geo_variant_name}_BloodVesselJunction_NN'] = str(nn_results_csv)
+                        
+                        if combined_csv_paths or geometric_csv_paths:
+                            success_count = 0
+                            for location in all_locations:
+                                safe_location = location.replace(':', '_')
+                                plot_path = os.path.join(combined_output_dir, f"{safe_location}_combined.png")
+                                try:
+                                    success = plot_location_comparison(
+                                        str(original_calibration_input),
+                                        str(orig_geometric_results),
+                                        combined_csv_paths,
+                                        location,
+                                        plot_path,
+                                        set_name=args.set_name,
+                                        geo_name=args.geo_name,
+                                        time_period=time_period,
+                                        geometric_input_path=str(geometry_variants['original']['geometric_input']),
+                                        zoom_start_idx=args.zoom_start,
+                                        zoom_end_idx=args.zoom_end,
+                                        verbose=False,
+                                        geometric_csv_paths=geometric_csv_paths
+                                    )
+                                    if success:
+                                        success_count += 1
+                                except Exception as e:
+                                    print(f"      ✗ Failed to create combined plot for {location}: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                            
+                            print(f"    Created {success_count}/{len(all_locations)} combined comparison plots")
+                            print(f"    Combined plot output directory: {combined_output_dir}")
+                        else:
+                            print(f"    Skipping combined plots (no CSV results found)")
                     
-                    for jtype in args.junction_types:
-                        calibrated_results_csv = geo_variant_paths['junction_types'][jtype]['calibrated_results']
-                        if os.path.exists(calibrated_results_csv):
-                            combined_csv_paths[f'{geo_variant_name}_{jtype}'] = str(calibrated_results_csv)
-                
-                if combined_csv_paths or geometric_csv_paths:
-                    success_count = 0
-                    for location in all_locations:
-                        safe_location = location.replace(':', '_')
-                        plot_path = os.path.join(combined_output_dir, f"{safe_location}_combined.png")
-                        try:
-                            success = plot_location_comparison(
-                                str(original_calibration_input),
-                                str(orig_geometric_results),
-                                combined_csv_paths,
-                                location,
-                                plot_path,
-                                set_name=args.set_name,
-                                geo_name=args.geo_name,
-                                time_period=time_period,
-                                geometric_input_path=str(geometry_variants['original']['geometric_input']),
-                                zoom_start_idx=args.zoom_start,
-                                zoom_end_idx=args.zoom_end,
-                                verbose=False,
-                                geometric_csv_paths=geometric_csv_paths
-                            )
-                            if success:
-                                success_count += 1
-                        except Exception as e:
-                            print(f"      ✗ Failed to create combined plot for {location}: {e}")
-                            import traceback
-                            traceback.print_exc()
-                    
-                    print(f"    Created {success_count}/{len(all_locations)} combined comparison plots")
-                    print(f"    Combined plot output directory: {combined_output_dir}")
-            else:
-                print(f"    Skipping combined plots (missing original geometry files)")
+                    elif plot_type in ['original', 'bifurcations']:
+                        # Generate plots for individual geometry variant
+                        geo_variant_name = plot_type
+                        print(f"\n  Creating {geo_variant_name} geometry variant comparison plots...")
+                        variant_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, geo_variant_name)
+                        os.makedirs(variant_output_dir, exist_ok=True)
+                        
+                        geo_variant_paths = geometry_variants[geo_variant_name]
+                        variant_calibration_input = geo_variant_paths['calibration_input']
+                        variant_geometric_results = geo_variant_paths['geometric_results']
+                        variant_geometric_input = geo_variant_paths['geometric_input']
+                        
+                        if not os.path.exists(variant_calibration_input) or not os.path.exists(variant_geometric_results):
+                            print(f"    Skipping {geo_variant_name} plots (missing files)")
+                            continue
+                        
+                        # Build CSV paths for this variant
+                        variant_csv_paths = {}
+                        variant_geometric_csv_paths = {}
+                        
+                        if os.path.exists(variant_geometric_results):
+                            variant_geometric_csv_paths[geo_variant_name] = str(variant_geometric_results)
+                        
+                        for jtype in args.junction_types:
+                            calibrated_results_csv = geo_variant_paths['junction_types'][jtype]['calibrated_results']
+                            if os.path.exists(calibrated_results_csv):
+                                variant_csv_paths[jtype] = str(calibrated_results_csv)
+                        
+                        # Add NN-modified BloodVesselJunction for bifurcations
+                        if geo_variant_name == 'bifurcations' and 'BloodVesselJunction' in args.junction_types:
+                            nn_results_csv = os.path.join(base_dir, 'bifurcations_NN_BloodVesselJunction_results.csv')
+                            if os.path.exists(nn_results_csv):
+                                variant_csv_paths['BloodVesselJunction_NN'] = str(nn_results_csv)
+                        
+                        if variant_csv_paths or variant_geometric_csv_paths:
+                            success_count = 0
+                            for location in all_locations:
+                                safe_location = location.replace(':', '_')
+                                plot_path = os.path.join(variant_output_dir, f"{safe_location}_comparison.png")
+                                try:
+                                    success = plot_location_comparison(
+                                        str(variant_calibration_input),
+                                        str(variant_geometric_results),
+                                        variant_csv_paths,
+                                        location,
+                                        plot_path,
+                                        set_name=args.set_name,
+                                        geo_name=args.geo_name,
+                                        time_period=time_period,
+                                        geometric_input_path=str(variant_geometric_input),
+                                        zoom_start_idx=args.zoom_start,
+                                        zoom_end_idx=args.zoom_end,
+                                        verbose=False,
+                                        geometric_csv_paths=variant_geometric_csv_paths
+                                    )
+                                    if success:
+                                        success_count += 1
+                                except Exception as e:
+                                    print(f"      ✗ Failed to create {geo_variant_name} plot for {location}: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                            
+                            print(f"    Created {success_count}/{len(all_locations)} {geo_variant_name} comparison plots")
+                            print(f"    {geo_variant_name.capitalize()} plot output directory: {variant_output_dir}")
+                        else:
+                            print(f"    Skipping {geo_variant_name} plots (no CSV results found)")
                 
         except ImportError as e:
             print(f"  ✗ Could not import plotting functions: {e}")
@@ -544,6 +902,12 @@ def main():
                     jpath = geo_variant_paths['junction_types'].get(jtype, {}).get('calibrated_output')
                     if jpath and os.path.exists(jpath):
                         modality_jsons[jtype] = str(jpath)
+                
+                # Add NN-modified BloodVesselJunction for bifurcations
+                if geo_variant_name == 'bifurcations' and 'BloodVesselJunction' in args.junction_types:
+                    nn_json = os.path.join(base_dir, 'bifurcations_NN_BloodVesselJunction.json')
+                    if os.path.exists(nn_json):
+                        modality_jsons['BloodVesselJunction_NN'] = str(nn_json)
 
                 if not modality_jsons:
                     print(f"    Warning: No modality JSONs found for {geo_variant_name}, skipping zero-D parameter bar chart")

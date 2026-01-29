@@ -209,31 +209,77 @@ def update_outlet_bcs_in_file(file_path, outlet_params, file_type="calibration i
         print(f"  Warning: Could not update {file_type} file {file_path}: {e}")
         return False
 
-def refine_inlet_bc_for_forward_simulation(input_path, refinement_factor=2):
+def refine_inlet_bc_for_forward_simulation(output_path, refinement_factor=2, max_reasonable_points=10000, calibration_input_path=None):
     """
     Refine the inlet boundary condition for forward simulation.
+    
+    Reads the BC from the calibration input (to avoid multiple refinements) and writes
+    the refined BC to the output file.
+    
+    Args:
+        output_path: Path to output JSON file (calibrated output or geometric input)
+        refinement_factor: Factor to multiply number of time points (default: 2)
+        max_reasonable_points: Maximum reasonable number of time points (default: 10000)
+                               If original points exceed this, raises ValueError
+        calibration_input_path: Path to calibration input file (if None, derives from output_path)
     """
-    with open(input_path, 'r') as f:
-        cali = json.load(f)
-
-    bc_time = cali['boundary_conditions'][0]['bc_values']['t']
-    bc_flow = cali['boundary_conditions'][0]['bc_values']['Q']
-    bc_time_refined = np.linspace(0, bc_time[-1], len(bc_time) * refinement_factor, endpoint=True).tolist()
+    import os
+    
+    # If calibration_input_path not provided, try to derive it from output_path
+    if calibration_input_path is None:
+        # Try to find corresponding calibration input
+        # Pattern: *_calibrated_output_*.json -> *_calibration_input_*.json
+        if 'calibrated_output' in output_path:
+            calibration_input_path = output_path.replace('calibrated_output', 'calibration_input')
+        # For geometric input or NN files, use the file itself as source (first time only)
+        elif 'geometric_input' in output_path or 'NN_BloodVesselJunction' in output_path:
+            calibration_input_path = output_path
+        else:
+            # Default: assume output_path is the source
+            calibration_input_path = output_path
+    
+    # Read BC from calibration input (original, unrefined)
+    if not os.path.exists(calibration_input_path):
+        raise FileNotFoundError(
+            f"Calibration input file not found: {calibration_input_path}. "
+            f"Cannot refine BC without original source."
+        )
+    
+    with open(calibration_input_path, 'r') as f:
+        calib_input = json.load(f)
+    
+    # Get BC from calibration input
+    bc_time = calib_input['boundary_conditions'][0]['bc_values']['t']
+    bc_flow = calib_input['boundary_conditions'][0]['bc_values']['Q']
+    
+    original_n_pts = len(bc_time)
+    
+    # Check if the original number of points is unreasonably high
+    if original_n_pts > max_reasonable_points:
+        raise ValueError(
+            f"Unreasonably high number of time points in boundary condition: {original_n_pts}. "
+            f"Expected at most {max_reasonable_points} points per cardiac cycle. "
+            f"This suggests an error in the 1D solution data or how it was processed. "
+            f"Please check the 1D solution file and the observation extraction process."
+        )
+    
+    refined_n_pts = original_n_pts * refinement_factor
+    
+    bc_time_refined = np.linspace(0, bc_time[-1], refined_n_pts, endpoint=True).tolist()
     bc_flow_refined = interp1d(bc_time, bc_flow, kind='cubic')(bc_time_refined)
-    # plot the original and refined boundary condition
-    if False:
-        plt.scatter(bc_time, bc_flow, label='Original')
-        plt.scatter(bc_time_refined, bc_flow_refined, label='Refined')
-        plt.legend()
-        plt.show()
-    cali['boundary_conditions'][0]['bc_values']['t'] = list(bc_time_refined)
-    cali['boundary_conditions'][0]['bc_values']['Q'] = list(bc_flow_refined)
-    cali['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = len(bc_time_refined)
+    
+    # Read output file to update it
+    with open(output_path, 'r') as f:
+        output_data = json.load(f)
+    
+    # Update BC in output file
+    output_data['boundary_conditions'][0]['bc_values']['t'] = list(bc_time_refined)
+    output_data['boundary_conditions'][0]['bc_values']['Q'] = list(bc_flow_refined)
+    output_data['simulation_parameters']['number_of_time_pts_per_cardiac_cycle'] = len(bc_time_refined)
+    output_data['simulation_parameters']['number_of_cardiac_cycles'] = 10
+    output_data['simulation_parameters']['output_all_cycles'] = False
 
-    cali['simulation_parameters']['number_of_cardiac_cycles'] = 10
-    cali['simulation_parameters']['output_all_cycles'] = False
-
-    with open(input_path, 'w') as f:
-        json.dump(cali, f, indent=4)
-    print(f"Refined inlet boundary condition for forward simulation to: {input_path}")
+    with open(output_path, 'w') as f:
+        json.dump(output_data, f, indent=4)
+    print(f"Refined inlet boundary condition for forward simulation to: {output_path} (read from: {calibration_input_path})")
     return
