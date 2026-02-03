@@ -695,31 +695,33 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     style_3d = LINE_STYLES['3d_model']
     style_geo = LINE_STYLES['geometric_0d']
     
-    # Determine zoom window
+    # Determine zoom window - automatically set to last 20% of time period
     num_time_steps = len(times_geo)
     
     if zoom_start_idx is None or zoom_end_idx is None:
-        if set_name == 'VMR':
-            vmr_period = time_period if time_period else 2.0
-            dt = vmr_period / (num_time_steps - 1) if num_time_steps > 1 else 1.0
-            if zoom_start_idx is None:
-                zoom_start_idx = int(1.0 / dt)
-            if zoom_end_idx is None:
-                zoom_end_idx = min(int(2.0 / dt) + 1, num_time_steps)
-        else:
-            if zoom_start_idx is None:
-                zoom_start_idx = 599
-            if zoom_end_idx is None:
-                zoom_end_idx = 699
-    
+        # Calculate total time span
+        time_start = times_geo[0]
+        time_end = times_geo[-1]
+        total_time_span = time_end - time_start
+        
+        # Last 20% of time period
+        zoom_time_start = time_start + 0.6 * total_time_span
+        zoom_time_end = time_start + 0.8 * total_time_span
+        
+        # Find indices corresponding to these times
+        if zoom_start_idx is None:
+            # Find index where time >= zoom_time_start
+            zoom_start_idx = np.searchsorted(times_geo, zoom_time_start)
+        if zoom_end_idx is None:
+            # Find index where time >= zoom_time_end (or use last index)
+            zoom_end_idx = min(np.searchsorted(times_geo, zoom_time_end, side='right'), num_time_steps)
+    import pdb; pdb.set_trace()
     # Validate zoom window
     zoom_start_idx = max(0, min(zoom_start_idx, num_time_steps - 1))
     zoom_end_idx = min(zoom_end_idx, num_time_steps)
     
     if zoom_start_idx >= zoom_end_idx:
-        zoom_start_idx = max(0, num_time_steps - 105)
-        zoom_end_idx = num_time_steps
-    
+        raise ValueError(f"Zoom window calculation failed. Using fallback: {zoom_start_idx} to {zoom_end_idx}")
     zoom_times = times_geo[zoom_start_idx:zoom_end_idx]
     time_zoom_start = zoom_times[0] if len(zoom_times) > 0 else times_geo[0]
     time_zoom_end = zoom_times[-1] if len(zoom_times) > 0 else times_geo[-1]
@@ -980,7 +982,9 @@ def main():
         locations = [args.location]
     else:
         locations = get_all_locations_from_calibration_input(calibration_input_path)
-        print(f"\nFound {len(locations)} locations")
+        # Filter to only INFLOW locations by default
+        locations = [loc for loc in locations if loc.startswith('INFLOW:')]
+        print(f"\nFound {len(locations)} locations (filtered to INFLOW only)")
         # Build ordered list of unique vessels as they appear in locations
         vessel_order = []
         for loc in locations:

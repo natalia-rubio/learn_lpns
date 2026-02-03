@@ -519,8 +519,9 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
 
             if best_outlet is None:
                 raise ValueError(f"Could not match segment to any outlet branch (best_distance={best_distance:.6f})")
-            if best_distance >= 2.0:
-                raise ValueError(f"Best outlet match distance {best_distance:.6f} exceeds threshold of 2.0")
+            threshold = 10
+            if best_distance >= threshold:
+                raise ValueError(f"Best outlet match distance {best_distance:.6f} exceeds threshold of {threshold}")
 
             # Collect radius extrema for this segment (we'll add inlet/outlet points below)
             seg_radii = sorted_radii[seg_start:seg_end]

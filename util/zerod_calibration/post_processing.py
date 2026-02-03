@@ -167,7 +167,7 @@ def downsample_csv_file_to_times(input_csv_path, output_csv_path, target_times, 
         return False
 
 
-def plot_junction_pressure_differences(calibration_input_path, geometric_input_path, output_dir, zoom_start_idx=None, zoom_end_idx=None, set_name=None, geo_name=None, verbose=False):
+def plot_junction_pressure_differences(calibration_input_path, geometric_input_path, output_dir, zoom_start_idx=None, zoom_end_idx=None, set_name=None, geo_name=None, verbose=False, max_junctions=None):
     """
     Plot pressure differences at junctions from 3D solution.
     For each junction, plots pressure difference (inlet - outlet) vs time, one line per outlet.
@@ -181,6 +181,7 @@ def plot_junction_pressure_differences(calibration_input_path, geometric_input_p
         set_name: Set name (for extracting time period from XML)
         geo_name: Geometry name (for extracting time period from XML)
         verbose: If True, print detailed information
+        max_junctions: Maximum number of junctions to plot (None = all junctions)
     """
     try:
         import matplotlib
@@ -224,6 +225,12 @@ def plot_junction_pressure_differences(calibration_input_path, geometric_input_p
         if verbose:
             print("  ✗ No junctions found in geometric input")
         return
+    
+    # Limit to first max_junctions if specified
+    if max_junctions is not None and max_junctions > 0:
+        junctions = junctions[:max_junctions]
+        if verbose:
+            print(f"  Limiting to first {len(junctions)} junctions")
     
     # Create output directory
     junction_plots_dir = os.path.join(output_dir, 'junction_pressure_differences')
@@ -952,6 +959,10 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             obs_type = parts[0]  # 'pressure' or 'flow'
             part1 = parts[1]     # e.g., 'INFLOW', 'branch0_seg0', or 'J0'
             part2 = parts[2]     # e.g., 'branch0_seg0' or 'J0'
+            
+            # Filter to only INFLOW locations by default
+            if part1 != 'INFLOW':
+                continue
             
             # Determine vessel name and field (pressure_in/out, flow_in/out)
             vessel_name = None

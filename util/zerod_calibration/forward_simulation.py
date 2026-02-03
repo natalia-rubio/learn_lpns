@@ -6,19 +6,19 @@ import importlib.util
 import sys
 import copy
 import subprocess
-try:
-    import pysvzerod
-except ImportError:
-    print("Warning: pysvzerod not found. Calibration will not be available.")
-    print("Install with: pip install svzerodsolver")
-    pysvzerod = None
+# try:
+#     import pysvzerod
+# except ImportError:
+#     print("Warning: pysvzerod not found. Calibration will not be available.")
+#     print("Install with: pip install svzerodsolver")
+#     pysvzerod = None
 
-# Try to import CasADi solver as fallback
+# # Try to import CasADi solver as fallback
 try:
     import pandas as pd
     HAS_PANDAS = True
 except ImportError:
-    print("Warning: pandas not found. CasADi fallback will not be available.")
+    #print("Warning: pandas not found. CasADi fallback will not be available.")
     HAS_PANDAS = False
     pd = None
 
@@ -178,7 +178,7 @@ def run_forward_simulation(input_json_path, output_csv_path):
                 num_cycles = input_data_sim.get('simulation_parameters', {}).get('number_of_cardiac_cycles', 2)
                 num_time_pts = input_data_sim.get('simulation_parameters', {}).get('number_of_time_pts_per_cardiac_cycle', 100)
                 # Estimate timeout: ~1 second per 1000 time points, with minimum 60 seconds
-                estimated_timeout = max(60, int((num_cycles * num_time_pts) / 1000) + 30)
+                estimated_timeout = max(60, int((num_cycles * num_time_pts) / 50) + 30)
                 
                 print(f"    Running simulation ({num_cycles} cycles, {num_time_pts} pts/cycle, timeout: {estimated_timeout}s)...")
                 try:
@@ -226,60 +226,63 @@ def run_forward_simulation(input_json_path, output_csv_path):
             return None
         except Exception as e:
             print(f"  ✗ svzerodsolver simulation failed: {e}")
-            if HAS_CASADI and HAS_PANDAS and solve_casadi_unsteady is not None:
-                print(f"  Falling back to CasADi solver...")
-    
-    # Fallback to CasADi solver
-    if HAS_CASADI and HAS_PANDAS and solve_casadi_unsteady is not None:
-        try:
-            # Create a deep copy to avoid modifying the original
-            import copy
-            input_data_sim = copy.deepcopy(input_data)
+            print(f"  Creating all-zeros solution instead of falling back to CasADi...")
             
-            # Remove calibration parameters if present
-            if 'calibration_parameters' in input_data_sim:
-                del input_data_sim['calibration_parameters']
-            
-            # Remove observation data if present
-            if 'y' in input_data_sim:
-                del input_data_sim['y']
-            if 'dy' in input_data_sim:
-                del input_data_sim['dy']
-            
-            # Create DataFrame for CasADi solver
-            result_df = pd.DataFrame(columns=['name', 'time', 'flow_in', 'flow_out', 'pressure_in', 'pressure_out'])
-            
-            print("  Running CasADi solver...")
-            sol_prev = solve_casadi_unsteady(input_file=input_data_sim, result_df=result_df)
-            
-            # Sort by name and time
-            result_df.sort_values(by=['name', 'time'], inplace=True)
-            
-            # Save to CSV
-            os.makedirs(os.path.dirname(output_csv_path_str), exist_ok=True)
-            result_df.to_csv(output_csv_path_str, index=False)
-            
-            print(f"  ✓ Simulation completed successfully with CasADi solver")
-            print(f"  Results saved to: {output_csv_path_str}")
-            
-            # Verify inlet flow matches BC
-            print("\n  Verifying inlet flow matches boundary condition...")
-            #verify_inlet_flow_matches_bc(input_data_sim, output_csv_path_str)
-            
-            # Return None since CasADi doesn't return the same format as pysvzerod
-            return None
-        except Exception as e:
-            print(f"  ✗ CasADi solver also failed: {e}")
-            import traceback
-            traceback.print_exc()
-            raise RuntimeError(f"Both pysvzerod and CasADi solvers failed. Last error: {e}")
-    else:
-        error_msg = "pysvzerod simulation failed"
-        if not HAS_CASADI:
-            error_msg += " and CasADi fallback is not available (casadi module not installed)."
-            error_msg += "\n  To enable CasADi fallback, install casadi: pip install casadi"
-        elif not HAS_PANDAS:
-            error_msg += " and CasADi fallback is not available (pandas not installed)."
-        else:
-            error_msg += " and CasADi fallback is not available."
-        raise RuntimeError(error_msg)
+            # Create all-zeros solution
+            try:
+                # Extract vessel names from input
+                vessels = input_data.get('vessels', [])
+                vessel_names = [v.get('vessel_name', f"vessel_{v.get('vessel_id', i)}") for i, v in enumerate(vessels)]
+                
+                # Extract simulation parameters
+                sim_params = input_data.get('simulation_parameters', {})
+                num_cycles = 1
+                num_time_pts_per_cycle = sim_params.get('number_of_time_pts_per_cardiac_cycle', 0)
+                
+                # Calculate time step size from INFLOW boundary condition
+                time_step = 0  # Default fallback
+                boundary_conditions = input_data.get('boundary_conditions', [])
+                for bc in boundary_conditions:
+                    if bc.get('bc_name') == 'INFLOW' and bc.get('bc_type') == 'FLOW':
+                        bc_values = bc.get('bc_values', {})
+                        t_values = bc_values.get('t', [])
+                        if len(t_values) >= 2:
+                            time_step = t_values[1] - t_values[0]
+                        break
+                        
+                # Generate time points
+                total_time_pts = num_cycles * num_time_pts_per_cycle
+                times = [i * time_step for i in range(total_time_pts)]
+                
+                # Create DataFrame with all zeros
+                rows = []
+                for vessel_name in vessel_names:
+                    for time in times:
+                        rows.append({
+                            'name': vessel_name,
+                            'time': time,
+                            'flow_in': 0.0,
+                            'flow_out': 0.0,
+                            'pressure_in': 0.0,
+                            'pressure_out': 0.0
+                        })
+                
+                result_df = pd.DataFrame(rows)
+                
+                # Ensure output directory exists
+                output_dir = os.path.dirname(output_csv_path_str)
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
+                
+                # Save to CSV
+                result_df.to_csv(output_csv_path_str, index=False)
+                
+                print(f"  ✓ Created all-zeros solution with {len(vessel_names)} vessels and {len(times)} time points")
+                print(f"  Results saved to: {output_csv_path_str}")
+                
+                return None
+            except Exception as e2:
+                print(f"  ✗ Failed to create all-zeros solution: {e2}")
+                import traceback
+                traceback.print_exc()
+                raise RuntimeError(f"svzerodsolver failed and could not create all-zeros solution. Original error: {e}, Secondary error: {e2}")

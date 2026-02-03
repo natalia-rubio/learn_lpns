@@ -209,7 +209,7 @@ def update_outlet_bcs_in_file(file_path, outlet_params, file_type="calibration i
         print(f"  Warning: Could not update {file_type} file {file_path}: {e}")
         return False
 
-def refine_inlet_bc_for_forward_simulation(output_path, refinement_factor=2, max_reasonable_points=10000, calibration_input_path=None):
+def refine_inlet_bc_for_forward_simulation(output_path, max_reasonable_points=10000, calibration_input_path=None):
     """
     Refine the inlet boundary condition for forward simulation.
     
@@ -262,6 +262,14 @@ def refine_inlet_bc_for_forward_simulation(output_path, refinement_factor=2, max
             f"This suggests an error in the 1D solution data or how it was processed. "
             f"Please check the 1D solution file and the observation extraction process."
         )
+
+
+    # add a key to the output data with the refinement factor
+
+    if len(bc_flow) > 1000:
+        refinement_factor = 1
+    else:
+        refinement_factor = int(np.ceil(1000/len(bc_flow)))
     
     refined_n_pts = original_n_pts * refinement_factor
     
@@ -279,6 +287,10 @@ def refine_inlet_bc_for_forward_simulation(output_path, refinement_factor=2, max
     output_data['simulation_parameters']['number_of_cardiac_cycles'] = 10
     output_data['simulation_parameters']['output_all_cycles'] = False
 
+
+    print(f"Refinement factor: {refinement_factor}")
+    # add a key to the output data with the refinement factor
+    output_data['refinement_factor'] = refinement_factor
     with open(output_path, 'w') as f:
         json.dump(output_data, f, indent=4)
     print(f"Refined inlet boundary condition for forward simulation to: {output_path} (read from: {calibration_input_path})")
