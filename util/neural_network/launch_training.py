@@ -42,7 +42,7 @@ def launch_training(network_params, optimizer_params, training_params):
 if __name__ == "__main__":
     set_name = sys.argv[1]
     num_geos = int(sys.argv[2])
-    output_type = sys.argv[3]  # "rri", "ri", or "rr"
+    output_type = "rri"#, "ri", or "rr"
     set_type = "test"
     #pdb.set_trace()
 
