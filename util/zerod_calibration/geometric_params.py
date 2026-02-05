@@ -180,7 +180,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
         
         # Build cumulative lengths along the branch from the 0D vessel lengths
         lengths = [float(v.get('vessel_length', 0.0) or 0.0) for v in branch_vessels]
-        if sum(lengths) <= 0:
+        if sum(lengths) <= 0 and 'connector' not in vessel_name:
             raise ValueError(f"Total vessel length is zero or negative for branch {branch_idx} (vessel {vessel_name})")
         
         cum_lengths = np.cumsum(lengths)
@@ -233,29 +233,33 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             if connector_outlet_junction is None:
                 raise ValueError(f"Could not find outlet junction for connector vessel {vessel_name}")
             
-            # Extract base junction name (e.g., "J0" from "J0_bif1")
+            # Extract base junction name and find the appropriate junction to get inlet vessel
             outlet_junc_name = connector_outlet_junction.get('junction_name', '')
+            
+            # Determine which junction to use for getting the inlet vessel
+            # If the junction is split (has _bif suffix), find the first bifurcation (_bif0)
+            # Otherwise, use the junction directly
             if '_bif' in outlet_junc_name:
+                # Junction is split - find the first bifurcation (JX_bif0)
                 junction_base = outlet_junc_name.split('_bif')[0]
+                first_bif_name = f"{junction_base}_bif0"
+                target_junction = None
+                for junc in junctions:
+                    if junc.get('junction_name') == first_bif_name:
+                        target_junction = junc
+                        break
+                
+                if target_junction is None:
+                    raise ValueError(f"Could not find first bifurcation {first_bif_name} for connector vessel {vessel_name}")
             else:
-                # Not a bifurcated junction, use as-is
-                junction_base = outlet_junc_name
+                # Junction is not split - use it directly
+                target_junction = connector_outlet_junction
             
-            # Find the first bifurcation (JX_bif0)
-            first_bif_name = f"{junction_base}_bif0"
-            first_bif_junction = None
-            for junc in junctions:
-                if junc.get('junction_name') == first_bif_name:
-                    first_bif_junction = junc
-                    break
-            
-            if first_bif_junction is None:
-                raise ValueError(f"Could not find first bifurcation {first_bif_name} for connector vessel {vessel_name}")
-            
-            # Get the inlet vessel of the first bifurcation (the physical inlet to the original junction)
-            inlet_vessel_ids = first_bif_junction.get('inlet_vessels', [])
+            # Get the inlet vessel of the target junction (the physical inlet to the junction)
+            inlet_vessel_ids = target_junction.get('inlet_vessels', [])
             if not inlet_vessel_ids:
-                raise ValueError(f"First bifurcation {first_bif_name} has no inlet vessels")
+                junction_name = target_junction.get('junction_name', 'unknown')
+                raise ValueError(f"Junction {junction_name} has no inlet vessels (for connector {vessel_name})")
             
             inlet_vessel_id = inlet_vessel_ids[0]
             if inlet_vessel_id >= len(vessels):
@@ -652,43 +656,50 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     outlet_vessel_areas[vessel_name] = inlet_vessel_outlet_area
                     outlet_tangents[vessel_name] = inlet_tangent.copy() if inlet_tangent else None
                 else:
-                    # Not the first bifurcation, find JX_bif0
-                    junction_base = junc_name.split('_bif')[0] if '_bif' in junc_name else junc_name
-                    first_bif_name = f"{junction_base}_bif0"
-                    first_bif_junc = None
-                    for j in junctions:
-                        if j.get('junction_name') == first_bif_name:
-                            first_bif_junc = j
-                            break
+                    # Not the first bifurcation, find the appropriate junction to get inlet vessel
+                    # If junction is split, find JX_bif0; otherwise use the junction directly
+                    if '_bif' in junc_name:
+                        # Junction is split - find the first bifurcation (JX_bif0)
+                        junction_base = junc_name.split('_bif')[0]
+                        target_junc_name = f"{junction_base}_bif0"
+                        target_junc = None
+                        for j in junctions:
+                            if j.get('junction_name') == target_junc_name:
+                                target_junc = j
+                                break
+                        
+                        if target_junc is None:
+                            raise ValueError(f"Could not find first bifurcation {target_junc_name} for connector outlet {vessel_name}")
+                    else:
+                        # Junction is not split - use it directly
+                        target_junc = junc
                     
-                    if first_bif_junc is None:
-                        raise ValueError(f"Could not find first bifurcation {first_bif_name} for connector outlet {vessel_name}")
+                    target_inlet_ids = target_junc.get('inlet_vessels', [])
+                    if not target_inlet_ids:
+                        target_junc_name = target_junc.get('junction_name', 'unknown')
+                        raise ValueError(f"Junction {target_junc_name} has no inlet vessels (for connector outlet {vessel_name})")
                     
-                    first_bif_inlet_ids = first_bif_junc.get('inlet_vessels', [])
-                    if not first_bif_inlet_ids:
-                        raise ValueError(f"First bifurcation {first_bif_name} has no inlet vessels")
+                    target_inlet_id = target_inlet_ids[0]
+                    if target_inlet_id >= len(vessels):
+                        raise ValueError(f"Junction inlet vessel ID {target_inlet_id} out of bounds")
                     
-                    first_bif_inlet_id = first_bif_inlet_ids[0]
-                    if first_bif_inlet_id >= len(vessels):
-                        raise ValueError(f"First bifurcation inlet vessel ID {first_bif_inlet_id} out of bounds")
+                    target_inlet_vessel = vessels[target_inlet_id]
+                    target_inlet_name = target_inlet_vessel.get('vessel_name', '')
+                    if not target_inlet_name:
+                        raise ValueError(f"Junction inlet vessel {target_inlet_id} has empty vessel_name")
                     
-                    first_bif_inlet_vessel = vessels[first_bif_inlet_id]
-                    first_bif_inlet_name = first_bif_inlet_vessel.get('vessel_name', '')
-                    if not first_bif_inlet_name:
-                        raise ValueError(f"First bifurcation inlet vessel {first_bif_inlet_id} has empty vessel_name")
+                    # Use target junction inlet vessel outlet point
+                    target_pt_idx = find_point_for_vessel_segment(target_inlet_name, prefer_end=True)
+                    if target_pt_idx is None:
+                        raise ValueError(f"Could not find outlet point for junction inlet vessel {target_inlet_name}")
+                    if target_pt_idx >= len(area):
+                        raise ValueError(f"Point index {target_pt_idx} out of bounds for area array")
                     
-                    # Use first bifurcation inlet vessel outlet point
-                    first_bif_pt_idx = find_point_for_vessel_segment(first_bif_inlet_name, prefer_end=True)
-                    if first_bif_pt_idx is None:
-                        raise ValueError(f"Could not find outlet point for first bifurcation inlet vessel {first_bif_inlet_name}")
-                    if first_bif_pt_idx >= len(area):
-                        raise ValueError(f"Point index {first_bif_pt_idx} out of bounds for area array")
+                    outlet_vessel_areas[vessel_name] = float(area[target_pt_idx])
                     
-                    outlet_vessel_areas[vessel_name] = float(area[first_bif_pt_idx])
-                    
-                    # Use tangent from first bifurcation inlet
-                    first_bif_branch_id = get_branch_id_from_name(first_bif_inlet_name)
-                    mask = branch_id == first_bif_branch_id
+                    # Use tangent from target junction inlet
+                    target_branch_id = get_branch_id_from_name(target_inlet_name)
+                    mask = branch_id == target_branch_id
                     idx = np.where(mask)[0]
                     if idx.size >= 2:
                         branch_paths = path_arr_np[idx]
@@ -781,42 +792,45 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     outlet_path_lengths[vessel_name] = 0.0
                     outlet_tortuosities[vessel_name] = 0.0
                     
-                    # Use first bifurcation inlet radius for radius min/max on path (connectors inherit from original inlet)
+                    # Use junction inlet radius for radius min/max on path (connectors inherit from original inlet)
                     if junc_name.endswith('_bif0'):
                         # This is the first bifurcation, use its inlet vessel outlet radius
                         connector_inlet_radius = inlet_radius_val
-                    else:
+                    elif '_bif' in junc_name:
                         # Not the first bifurcation, find JX_bif0
-                        junction_base = junc_name.split('_bif')[0] if '_bif' in junc_name else junc_name
-                        first_bif_name = f"{junction_base}_bif0"
-                        first_bif_junc = None
+                        junction_base = junc_name.split('_bif')[0]
+                        target_junc_name = f"{junction_base}_bif0"
+                        target_junc = None
                         for j in junctions:
-                            if j.get('junction_name') == first_bif_name:
-                                first_bif_junc = j
+                            if j.get('junction_name') == target_junc_name:
+                                target_junc = j
                                 break
                         
-                        if first_bif_junc is None:
-                            raise ValueError(f"Could not find first bifurcation {first_bif_name} for connector outlet {vessel_name}")
+                        if target_junc is None:
+                            raise ValueError(f"Could not find first bifurcation {target_junc_name} for connector outlet {vessel_name}")
                         
-                        first_bif_inlet_ids = first_bif_junc.get('inlet_vessels', [])
-                        if not first_bif_inlet_ids:
-                            raise ValueError(f"First bifurcation {first_bif_name} has no inlet vessels")
+                        target_inlet_ids = target_junc.get('inlet_vessels', [])
+                        if not target_inlet_ids:
+                            raise ValueError(f"Junction {target_junc_name} has no inlet vessels (for connector outlet {vessel_name})")
                         
-                        first_bif_inlet_id = first_bif_inlet_ids[0]
-                        if first_bif_inlet_id >= len(vessels):
-                            raise ValueError(f"First bifurcation inlet vessel ID {first_bif_inlet_id} out of bounds")
+                        target_inlet_id = target_inlet_ids[0]
+                        if target_inlet_id >= len(vessels):
+                            raise ValueError(f"Junction inlet vessel ID {target_inlet_id} out of bounds")
                         
-                        first_bif_inlet_vessel = vessels[first_bif_inlet_id]
-                        first_bif_inlet_name = first_bif_inlet_vessel.get('vessel_name', '')
-                        if not first_bif_inlet_name:
-                            raise ValueError(f"First bifurcation inlet vessel {first_bif_inlet_id} has empty vessel_name")
+                        target_inlet_vessel = vessels[target_inlet_id]
+                        target_inlet_name = target_inlet_vessel.get('vessel_name', '')
+                        if not target_inlet_name:
+                            raise ValueError(f"Junction inlet vessel {target_inlet_id} has empty vessel_name")
                         
-                        # Use first bifurcation inlet vessel outlet radius
-                        first_bif_branch_id = get_branch_id_from_name(first_bif_inlet_name)
-                        if first_bif_branch_id not in branch_outlet_idx:
-                            raise ValueError(f"First bifurcation inlet branch {first_bif_branch_id} not found in branch_outlet_idx")
-                        first_bif_idx_out = branch_outlet_idx[first_bif_branch_id]
-                        connector_inlet_radius = float(max_inscribed_radius[first_bif_idx_out])
+                        # Use target junction inlet vessel outlet radius
+                        target_branch_id = get_branch_id_from_name(target_inlet_name)
+                        if target_branch_id not in branch_outlet_idx:
+                            raise ValueError(f"Junction inlet branch {target_branch_id} not found in branch_outlet_idx")
+                        target_idx_out = branch_outlet_idx[target_branch_id]
+                        connector_inlet_radius = float(max_inscribed_radius[target_idx_out])
+                    else:
+                        # Junction is not split - use it directly
+                        connector_inlet_radius = inlet_radius_val
                     
                     outlet_max_inscribed_radius_min_on_path[vessel_name] = connector_inlet_radius
                     outlet_max_inscribed_radius_max_on_path[vessel_name] = connector_inlet_radius
@@ -896,38 +910,41 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                 if junc_name.endswith('_bif0'):
                     # This is the first bifurcation, use its inlet vessel outlet radius
                     outlet_radius_val[vessel_name] = inlet_radius_val
-                else:
+                elif '_bif' in junc_name:
                     # Not the first bifurcation, find JX_bif0
-                    junction_base = junc_name.split('_bif')[0] if '_bif' in junc_name else junc_name
-                    first_bif_name = f"{junction_base}_bif0"
-                    first_bif_junc = None
+                    junction_base = junc_name.split('_bif')[0]
+                    target_junc_name = f"{junction_base}_bif0"
+                    target_junc = None
                     for j in junctions:
-                        if j.get('junction_name') == first_bif_name:
-                            first_bif_junc = j
+                        if j.get('junction_name') == target_junc_name:
+                            target_junc = j
                             break
                     
-                    if first_bif_junc is None:
-                        raise ValueError(f"Could not find first bifurcation {first_bif_name} for connector outlet {vessel_name}")
+                    if target_junc is None:
+                        raise ValueError(f"Could not find first bifurcation {target_junc_name} for connector outlet {vessel_name}")
                     
-                    first_bif_inlet_ids = first_bif_junc.get('inlet_vessels', [])
-                    if not first_bif_inlet_ids:
-                        raise ValueError(f"First bifurcation {first_bif_name} has no inlet vessels")
+                    target_inlet_ids = target_junc.get('inlet_vessels', [])
+                    if not target_inlet_ids:
+                        raise ValueError(f"Junction {target_junc_name} has no inlet vessels (for connector outlet {vessel_name})")
                     
-                    first_bif_inlet_id = first_bif_inlet_ids[0]
-                    if first_bif_inlet_id >= len(vessels):
-                        raise ValueError(f"First bifurcation inlet vessel ID {first_bif_inlet_id} out of bounds")
+                    target_inlet_id = target_inlet_ids[0]
+                    if target_inlet_id >= len(vessels):
+                        raise ValueError(f"Junction inlet vessel ID {target_inlet_id} out of bounds")
                     
-                    first_bif_inlet_vessel = vessels[first_bif_inlet_id]
-                    first_bif_inlet_name = first_bif_inlet_vessel.get('vessel_name', '')
-                    if not first_bif_inlet_name:
-                        raise ValueError(f"First bifurcation inlet vessel {first_bif_inlet_id} has empty vessel_name")
+                    target_inlet_vessel = vessels[target_inlet_id]
+                    target_inlet_name = target_inlet_vessel.get('vessel_name', '')
+                    if not target_inlet_name:
+                        raise ValueError(f"Junction inlet vessel {target_inlet_id} has empty vessel_name")
                     
-                    # Use first bifurcation inlet vessel outlet radius
-                    first_bif_branch_id = get_branch_id_from_name(first_bif_inlet_name)
-                    if first_bif_branch_id not in branch_outlet_idx:
-                        raise ValueError(f"First bifurcation inlet branch {first_bif_branch_id} not found in branch_outlet_idx")
-                    first_bif_idx_out = branch_outlet_idx[first_bif_branch_id]
-                    outlet_radius_val[vessel_name] = float(max_inscribed_radius[first_bif_idx_out])
+                    # Use target junction inlet vessel outlet radius
+                    target_branch_id = get_branch_id_from_name(target_inlet_name)
+                    if target_branch_id not in branch_outlet_idx:
+                        raise ValueError(f"Junction inlet branch {target_branch_id} not found in branch_outlet_idx")
+                    target_idx_out = branch_outlet_idx[target_branch_id]
+                    outlet_radius_val[vessel_name] = float(max_inscribed_radius[target_idx_out])
+                else:
+                    # Junction is not split - use it directly
+                    outlet_radius_val[vessel_name] = inlet_radius_val
             else:
                 # Regular outlet vessel processing
                 b_id = get_branch_id_from_name(vessel_name)
@@ -1038,25 +1055,37 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
     return config
 
 
-def extract_and_add_geometric_params(centerline_soln_path, geometric_input_path, zerod_config_path, output_path=None):
+def extract_and_add_geometric_params(centerline_soln_path, geometric_input_path, zerod_config_path, output_path=None, el_adjusted_geometric_input_path=None):
     """
     Convenience function that combines extract_vessel_junction_areas and add_geometric_params_to_config.
     
     Args:
         centerline_soln_path: Path to centerline solution VTP file
-        geometric_input_path: Path to geometric 0D input JSON
+        geometric_input_path: Path to geometric 0D input JSON (used if el_adjusted_geometric_input_path is None)
         zerod_config_path: Path to 0D configuration JSON file to update
         output_path: Optional output path for updated config. If None, overwrites zerod_config_path.
+        el_adjusted_geometric_input_path: Optional path to EL-adjusted geometric input JSON.
+                                        If provided, uses this instead of geometric_input_path to understand
+                                        the vessel/junction structure (for extracting parameters from EL-adjusted geometry).
         
     Returns:
         Modified config dictionary
     """
-    print("=" * 60)
-    print("Extracting geometric parameters (inlet/outlet areas)")
-    print("=" * 60)
+    # Use EL-adjusted geometric input if provided, otherwise use regular geometric input
+    structure_input_path = el_adjusted_geometric_input_path if el_adjusted_geometric_input_path else geometric_input_path
     
-    # Extract areas
-    geometric_areas_dict = extract_vessel_junction_areas(centerline_soln_path, geometric_input_path)
+    if el_adjusted_geometric_input_path:
+        print("=" * 60)
+        print("Extracting geometric parameters for EL-adjusted geometry")
+        print("=" * 60)
+        print(f"  Using EL-adjusted geometric input: {el_adjusted_geometric_input_path}")
+    else:
+        print("=" * 60)
+        print("Extracting geometric parameters (inlet/outlet areas)")
+        print("=" * 60)
+    
+    # Extract areas using the appropriate geometric input structure
+    geometric_areas_dict = extract_vessel_junction_areas(centerline_soln_path, structure_input_path)
     
     print("\n" + "=" * 60)
     print("Adding geometric parameters to 0D config")

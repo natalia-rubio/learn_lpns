@@ -163,11 +163,41 @@ def main():
             generated_files.append(bifurcations_geometric_input_path)
             print(f"  Bifurcations-only geometric input saved to: {bifurcations_geometric_input_path}")
     
+    # Generate entrance length-adjusted bifurcations version (if bifurcations file exists)
+    bifurcations_geometric_input_path = geometry_variants['bifurcations']['geometric_input']
+    if os.path.exists(bifurcations_geometric_input_path):
+        print(f"\n  Creating entrance length-adjusted bifurcations geometric input...")
+        bifurcations_EL_geometric_input_path = os.path.join(base_dir, 'bifurcations_EL_geometric_input.json')
+        if check_and_track_file(bifurcations_EL_geometric_input_path, "EL-adjusted bifurcations generation"):
+            pass
+        else:
+            adjust_junction_boundaries_by_entrance_length_from_files(
+                bifurcations_geometric_input_path, 
+                centerline_path, 
+                bifurcations_EL_geometric_input_path,
+                verbose=verbose
+            )
+            generated_files.append(bifurcations_EL_geometric_input_path)
+            print(f"  Entrance length-adjusted bifurcations geometric input saved to: {bifurcations_EL_geometric_input_path}")
+    import pdb; pdb.set_trace()
     # Always extract geometric params (updates existing file)
     bifurcations_geometric_input_path = geometry_variants['bifurcations']['geometric_input']
     if not check_and_track_file(bifurcations_geometric_input_path, "geometric params extraction"):
         extract_and_add_geometric_params(centerline_path, bifurcations_geometric_input_path, bifurcations_geometric_input_path)
         print(f"  Geometric parameters extracted and added to {bifurcations_geometric_input_path}")
+    
+    # Extract geometric params for EL-adjusted geometry (if it exists)
+    bifurcations_EL_geometric_input_path = os.path.join(base_dir, 'bifurcations_EL_geometric_input.json')
+    if os.path.exists(bifurcations_EL_geometric_input_path):
+        if not check_and_track_file(bifurcations_EL_geometric_input_path, "EL-adjusted geometric params extraction"):
+            extract_and_add_geometric_params(
+                centerline_path, 
+                bifurcations_geometric_input_path,  # Base geometric input (for reference)
+                bifurcations_EL_geometric_input_path,  # EL-adjusted config to update
+                el_adjusted_geometric_input_path=bifurcations_EL_geometric_input_path  # Use EL-adjusted structure
+            )
+            print(f"  Geometric parameters extracted and added to {bifurcations_EL_geometric_input_path}")
+    import pdb; pdb.set_trace()
 
         
     # Step 2: Extract observations and create calibration inputs for each junction type
@@ -464,7 +494,6 @@ def main():
                 from util.neural_network.nn_model import predict
                 from util.neural_network.nn_util import dill_load
                 import jax.numpy as jnp
-                import json
                 
                 # Load the calibrated BloodVesselJunction config
                 bvj_output_path = variant_junction_paths['BloodVesselJunction']['calibrated_output']
@@ -1121,7 +1150,6 @@ def main():
     
     # Output generated files as JSON if --no-redo was used (for batch script to parse)
     if args.no_redo:
-        import json
         print(json.dumps({"generated_files": generated_files}))
 
 
