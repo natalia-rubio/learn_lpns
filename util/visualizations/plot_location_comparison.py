@@ -715,7 +715,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         if zoom_end_idx is None:
             # Find index where time >= zoom_time_end (or use last index)
             zoom_end_idx = min(np.searchsorted(times_geo, zoom_time_end, side='right'), num_time_steps)
-    import pdb; pdb.set_trace()
+    
     # Validate zoom window
     zoom_start_idx = max(0, min(zoom_start_idx, num_time_steps - 1))
     zoom_end_idx = min(zoom_end_idx, num_time_steps)

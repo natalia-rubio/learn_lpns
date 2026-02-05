@@ -125,6 +125,10 @@ def find_geometric_input(set_name, geo_name, geometry_type='original'):
         possible_paths = [
             os.path.join('data', 'zeroD', set_name, geo_name, 'bifurcations_geometric_input.json'),
         ]
+    elif geometry_type == 'bifurcations_EL':
+        possible_paths = [
+            os.path.join('data', 'zeroD', set_name, geo_name, 'bifurcations_EL_geometric_input.json'),
+        ]
     else:
         possible_paths = [
             os.path.join('data', 'zeroD', set_name, geo_name, 'geometric_input.json'),
@@ -153,21 +157,25 @@ def build_tree_structure(geometric_input_path):
     vessels = geometric_input.get('vessels', [])
     junctions = geometric_input.get('junctions', [])
     
-    # Create mapping from vessel index to vessel name
+    # Create mapping from vessel_id to vessel name (use actual vessel_id from JSON)
     vessel_id_to_name = {}
-    for i, vessel in enumerate(vessels):
-        vessel_id_to_name[i] = vessel.get('vessel_name', f'vessel_{i}')
+    for vessel in vessels:
+        vessel_id = vessel.get('vessel_id', None)
+        if vessel_id is not None:
+            vessel_id_to_name[vessel_id] = vessel.get('vessel_name', f'vessel_{vessel_id}')
     
     # Find root vessel (has inlet BC)
     root_vessel_id = None
-    for i, vessel in enumerate(vessels):
-        if 'boundary_conditions' in vessel and 'inlet' in vessel['boundary_conditions']:
-            root_vessel_id = i
-            break
+    for vessel in vessels:
+        vessel_id = vessel.get('vessel_id', None)
+        if vessel_id is not None:
+            if 'boundary_conditions' in vessel and 'inlet' in vessel['boundary_conditions']:
+                root_vessel_id = vessel_id
+                break
     
-    # If no explicit inlet BC, assume first vessel is root
-    if root_vessel_id is None and vessels:
-        root_vessel_id = 0
+    # If no explicit inlet BC, use first vessel_id (if any)
+    if root_vessel_id is None and vessel_id_to_name:
+        root_vessel_id = min(vessel_id_to_name.keys())
     
     # Build tree structure from junctions
     # tree[vessel_id] = list of child vessel_ids
@@ -186,12 +194,14 @@ def build_tree_structure(geometric_input_path):
     
     # Find terminal vessels (have outlet BCs or no children)
     terminal_vessels = set()
-    for i, vessel in enumerate(vessels):
-        if 'boundary_conditions' in vessel and 'outlet' in vessel['boundary_conditions']:
-            terminal_vessels.add(i)
-        elif i not in tree or len(tree[i]) == 0:
-            # No children means it's terminal
-            terminal_vessels.add(i)
+    for vessel in vessels:
+        vessel_id = vessel.get('vessel_id', None)
+        if vessel_id is not None:
+            if 'boundary_conditions' in vessel and 'outlet' in vessel['boundary_conditions']:
+                terminal_vessels.add(vessel_id)
+            elif vessel_id not in tree or len(tree[vessel_id]) == 0:
+                # No children means it's terminal
+                terminal_vessels.add(vessel_id)
     
     return vessel_id_to_name, tree, root_vessel_id, terminal_vessels
 
@@ -215,8 +225,11 @@ def build_junction_graph(geometric_input_path):
     nodes = {}
     edges = []
     
-    # Create mapping from vessel_id to vessel info
-    vessel_by_id = {i: v for i, v in enumerate(vessels)}
+    # Create mapping from vessel_id to vessel info (use actual vessel_id from JSON, not index)
+    vessel_by_id = {}
+    for vessel in vessels:
+        vessel_id = vessel.get('vessel_id', len(vessel_by_id))
+        vessel_by_id[vessel_id] = vessel
     
     # Create junction nodes
     junction_name_to_node_id = {}
@@ -235,8 +248,11 @@ def build_junction_graph(geometric_input_path):
     inlet_bc_node = None
     outlet_bc_nodes = {}
     
-    for i, vessel in enumerate(vessels):
-        vessel_name = vessel.get('vessel_name', f'vessel_{i}')
+    for vessel in vessels:
+        vessel_id = vessel.get('vessel_id', None)
+        if vessel_id is None:
+            continue  # Skip vessels without vessel_id
+        vessel_name = vessel.get('vessel_name', f'vessel_{vessel_id}')
         
         if 'boundary_conditions' in vessel:
             if 'inlet' in vessel['boundary_conditions']:
@@ -245,7 +261,7 @@ def build_junction_graph(geometric_input_path):
                 nodes[node_id] = {
                     'name': bc_name,
                     'type': 'inlet_bc',
-                    'vessel_id': i
+                    'vessel_id': vessel_id
                 }
                 inlet_bc_node = node_id
             
@@ -255,9 +271,9 @@ def build_junction_graph(geometric_input_path):
                 nodes[node_id] = {
                     'name': bc_name,
                     'type': 'outlet_bc',
-                    'vessel_id': i
+                    'vessel_id': vessel_id
                 }
-                outlet_bc_nodes[i] = node_id
+                outlet_bc_nodes[vessel_id] = node_id
     
     # Build mapping: vessel_id -> (upstream_junction, downstream_junction/bc)
     vessel_upstream = {}  # vessel_id -> node_id where vessel is outlet
@@ -274,32 +290,35 @@ def build_junction_graph(geometric_input_path):
             vessel_upstream[outlet_vessel_id] = node_id
     
     # Create edges (vessels connect nodes)
-    for i, vessel in enumerate(vessels):
-        vessel_name = vessel.get('vessel_name', f'vessel_{i}')
+    for vessel in vessels:
+        vessel_id = vessel.get('vessel_id', None)
+        if vessel_id is None:
+            continue  # Skip vessels without vessel_id
+        vessel_name = vessel.get('vessel_name', f'vessel_{vessel_id}')
         
         # Determine from_node (upstream end of vessel)
-        if i in vessel_upstream:
-            from_node = vessel_upstream[i]
+        if vessel_id in vessel_upstream:
+            from_node = vessel_upstream[vessel_id]
         elif 'boundary_conditions' in vessel and 'inlet' in vessel['boundary_conditions']:
             from_node = inlet_bc_node
         else:
             # Vessel has no upstream - create implicit inlet node
-            from_node = f"implicit_inlet_{i}"
-            nodes[from_node] = {'name': 'INLET', 'type': 'inlet_bc', 'vessel_id': i}
+            from_node = f"implicit_inlet_{vessel_id}"
+            nodes[from_node] = {'name': 'INLET', 'type': 'inlet_bc', 'vessel_id': vessel_id}
             if inlet_bc_node is None:
                 inlet_bc_node = from_node
         
         # Determine to_node (downstream end of vessel)
-        if i in vessel_downstream:
-            to_node = vessel_downstream[i]
-        elif i in outlet_bc_nodes:
-            to_node = outlet_bc_nodes[i]
+        if vessel_id in vessel_downstream:
+            to_node = vessel_downstream[vessel_id]
+        elif vessel_id in outlet_bc_nodes:
+            to_node = outlet_bc_nodes[vessel_id]
         else:
             # Vessel has no downstream - create implicit outlet node
-            to_node = f"implicit_outlet_{i}"
-            nodes[to_node] = {'name': f'OUT_{i}', 'type': 'outlet_bc', 'vessel_id': i}
+            to_node = f"implicit_outlet_{vessel_id}"
+            nodes[to_node] = {'name': f'OUT_{vessel_id}', 'type': 'outlet_bc', 'vessel_id': vessel_id}
         
-        edges.append((from_node, to_node, vessel_name, i))
+        edges.append((from_node, to_node, vessel_name, vessel_id))
     
     return nodes, edges, inlet_bc_node
 
@@ -621,7 +640,7 @@ def main():
     parser.add_argument('--geo-name', type=str, required=True,
                        help='Geometry name (e.g., tree_002)')
     parser.add_argument('--geometry-type', type=str, default='original',
-                       choices=['original', 'bifurcations'],
+                       choices=['original', 'bifurcations', 'bifurcations_EL'],
                        help='Geometry type: original or bifurcations (default: original)')
     parser.add_argument('--output', type=str, default=None,
                        help='Output path for image (default: results/centerline_labels/{set_name}/{geo_name}/centerline_labels_{geometry_type}.png)')
@@ -633,6 +652,8 @@ def main():
     if geometric_input_path is None:
         if args.geometry_type == 'bifurcations':
             expected_file = 'bifurcations_geometric_input.json'
+        elif args.geometry_type == 'bifurcations_EL':
+            expected_file = 'bifurcations_EL_geometric_input.json'
         else:
             expected_file = 'geometric_input.json'
         print(f"Error: Could not find geometric input file for {args.set_name}/{args.geo_name}")
