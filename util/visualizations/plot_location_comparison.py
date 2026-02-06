@@ -368,7 +368,80 @@ def read_zerod_csv(csv_path):
     return results, sorted(times)
 
 
-def extract_data_from_csv(csv_path, vessel_name, is_inlet):
+def build_vessel_name_mapping(bifurcations_geometric_input_path, el_geometric_input_path):
+    """
+    Build a mapping from bifurcations vessel names to EL-adjusted vessel names.
+    
+    This handles cases where vessels were merged (e.g., branch1_seg0 -> branch1_seg0_1_2)
+    or converted to connectors (e.g., branch3_seg0 -> branch3_seg0_connector).
+    
+    Args:
+        bifurcations_geometric_input_path: Path to bifurcations geometric input
+        el_geometric_input_path: Path to EL-adjusted geometric input
+    
+    Returns:
+        Dictionary mapping bifurcations vessel names to EL vessel names
+    """
+    import json
+    
+    if not os.path.exists(bifurcations_geometric_input_path) or not os.path.exists(el_geometric_input_path):
+        return {}
+    
+    with open(bifurcations_geometric_input_path, 'r') as f:
+        bif_data = json.load(f)
+    with open(el_geometric_input_path, 'r') as f:
+        el_data = json.load(f)
+    
+    bif_vessels = {v['vessel_name']: v for v in bif_data.get('vessels', [])}
+    el_vessels = {v['vessel_name']: v for v in el_data.get('vessels', [])}
+    
+    # Build mapping: for each bifurcations vessel, find corresponding EL vessel
+    # Strategy: match by centerline_node_ids if available, otherwise by name patterns
+    mapping = {}
+    
+    # First, try to match by centerline_node_ids (most reliable)
+    el_vessels_by_inlet = {}
+    el_vessels_by_outlet = {}
+    for el_name, el_vessel in el_vessels.items():
+        if 'centerline_node_ids' in el_vessel:
+            inlet_gid = el_vessel['centerline_node_ids'].get('inlet')
+            outlet_gid = el_vessel['centerline_node_ids'].get('outlet')
+            if inlet_gid is not None:
+                el_vessels_by_inlet[inlet_gid] = el_name
+            if outlet_gid is not None:
+                el_vessels_by_outlet[outlet_gid] = el_name
+    
+    for bif_name, bif_vessel in bif_vessels.items():
+        if 'centerline_node_ids' in bif_vessel:
+            bif_inlet_gid = bif_vessel['centerline_node_ids'].get('inlet')
+            bif_outlet_gid = bif_vessel['centerline_node_ids'].get('outlet')
+            
+            # Try to match by inlet GID
+            if bif_inlet_gid is not None and bif_inlet_gid in el_vessels_by_inlet:
+                el_name = el_vessels_by_inlet[bif_inlet_gid]
+                mapping[bif_name] = el_name
+                continue
+            
+            # Try to match by outlet GID
+            if bif_outlet_gid is not None and bif_outlet_gid in el_vessels_by_outlet:
+                el_name = el_vessels_by_outlet[bif_outlet_gid]
+                mapping[bif_name] = el_name
+                continue
+        
+        # Fallback: try to match by name (exact match or merged pattern)
+        if bif_name in el_vessels:
+            mapping[bif_name] = bif_name
+        else:
+            # Check if it's part of a merged vessel name (e.g., branch1_seg0 is part of branch1_seg0_1_2)
+            for el_name in el_vessels.keys():
+                if el_name.startswith(bif_name + '_') or el_name == bif_name:
+                    mapping[bif_name] = el_name
+                    break
+    
+    return mapping
+
+
+def extract_data_from_csv(csv_path, vessel_name, is_inlet, vessel_name_mapping=None):
     """
     Extract pressure and flow data from 0D CSV results for a specific vessel.
     
@@ -376,6 +449,7 @@ def extract_data_from_csv(csv_path, vessel_name, is_inlet):
         csv_path: Path to CSV file
         vessel_name: Name of the vessel
         is_inlet: If True, extract inlet data; if False, extract outlet data
+        vessel_name_mapping: Optional dictionary mapping vessel names (for EL-adjusted geometry)
     
     Returns:
         times: Time array
@@ -384,7 +458,24 @@ def extract_data_from_csv(csv_path, vessel_name, is_inlet):
     """
     results, times = read_zerod_csv(csv_path)
     
-    if vessel_name not in results:
+    # Try original vessel name first
+    mapped_vessel_name = vessel_name
+    if vessel_name_mapping and vessel_name in vessel_name_mapping:
+        mapped_vessel_name = vessel_name_mapping[vessel_name]
+    
+    # Try mapped name, then original name, then try to find partial matches
+    vessel_names_to_try = [mapped_vessel_name, vessel_name]
+    if vessel_name_mapping:
+        # Also try reverse lookup: if mapped name contains original name
+        for mapped_name in vessel_name_mapping.values():
+            if vessel_name in mapped_name and mapped_name not in vessel_names_to_try:
+                vessel_names_to_try.append(mapped_name)
+    
+    for try_name in vessel_names_to_try:
+        if try_name in results:
+            vessel_name = try_name
+            break
+    else:
         return None, None, None
     
     # Determine which fields to extract
@@ -540,7 +631,7 @@ def get_time_period(set_name, geo_name):
 def plot_location_comparison(calibration_input_path, geometric_csv_path, calibrated_csv_paths,
                              location, output_path, set_name=None, geo_name=None, time_period=None,
                              geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, 
-                             verbose=False, geometric_csv_paths=None):
+                             verbose=False, geometric_csv_paths=None, vessel_name_mapping=None):
     """
     Plot pressure and flow comparison between 3D, geometric 0D, and calibrated 0D models
     at a specific location.
@@ -612,7 +703,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     for geo_variant, csv_path in geo_csv_dict.items():
         if csv_path and os.path.exists(csv_path):
             times_var, pressures_var, flows_var = extract_data_from_csv(
-                csv_path, vessel_name, is_inlet)
+                csv_path, vessel_name, is_inlet, vessel_name_mapping=vessel_name_mapping)
             if times_var is not None:
                 pressures_var_mmhg = pressures_var / 1333.0 if pressures_var is not None else None
                 # Use style key format: geometric_0d or bifurcations_geometric_0d
@@ -673,7 +764,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         for jtype, csv_path in calibrated_csv_paths.items():
             if csv_path and os.path.exists(csv_path):
                 times_cal, pressures_cal, flows_cal = extract_data_from_csv(
-                    csv_path, vessel_name, is_inlet)
+                    csv_path, vessel_name, is_inlet, vessel_name_mapping=vessel_name_mapping)
                 if times_cal is not None:
                     pressures_cal_mmhg = pressures_cal / 1333.0 if pressures_cal is not None else None
                     calibrated_results[jtype] = {

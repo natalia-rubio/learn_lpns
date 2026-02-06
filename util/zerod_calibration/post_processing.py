@@ -71,6 +71,10 @@ def downsample_csv_file_to_times(input_csv_path, output_csv_path, target_times, 
     Returns:
         True on success, False on failure
     """
+    # Always print source and destination for debugging
+    print(f"    [DOWNSAMPLING] Source: {input_csv_path}")
+    print(f"    [DOWNSAMPLING] Destination: {output_csv_path}")
+    
     if not os.path.exists(input_csv_path):
         if verbose:
             print(f"    ✗ Input CSV for downsampling not found: {input_csv_path}")
@@ -823,31 +827,13 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         vessels = geo_input.get('vessels', [])
         junctions = geo_input.get('junctions', [])
     
-    # Set default zoom window if not provided (before entering the loop)
-    # Find max_3d_length first for VMR time-based calculation
-    max_3d_length = 0
-    for obs_values_3d in obs_3d.values():
-        if isinstance(obs_values_3d, list):
-            max_3d_length = max(max_3d_length, len(obs_values_3d))
-        elif hasattr(obs_values_3d, '__len__'):
-            max_3d_length = max(max_3d_length, len(obs_values_3d))
-    
-    zoom_start_idx = int(max_3d_length/2); zoom_end_idx = int(max_3d_length)
-    # if zoom_start_idx is None or zoom_end_idx is None:
-    #     if set_name == 'VMR':
-    #         # For VMR: zoom to 1-2 seconds
-    #         # Assume period is 2.0s for VMR data (standard cardiac cycle)
-    #         time_period = 2.0
-    #         dt = time_period / (max_3d_length - 1) if max_3d_length > 1 else 1.0
-    #         zoom_start_idx = int(1.0 / dt) if zoom_start_idx is None else zoom_start_idx
-    #         zoom_end_idx = min(int(2.0 / dt) + 1, max_3d_length) if zoom_end_idx is None else zoom_end_idx
-    #         print(f"  VMR zoom window: 1.0s to 2.0s (indices {zoom_start_idx} to {zoom_end_idx})")
-    #     else:
-    #         # Default for other sets: indices 599-699
-    #         if zoom_start_idx is None:
-    #             zoom_start_idx = 599
-    #         if zoom_end_idx is None:
-    #             zoom_end_idx = 699
+    # Calculate zoom window automatically if not provided (same logic as plot_location_comparison)
+    # We'll calculate it based on the first CSV file's time array
+    zoom_window_calculated = False
+    if zoom_start_idx is None or zoom_end_idx is None:
+        # We'll calculate the zoom window after reading the first CSV file
+        # For now, set a flag to calculate it later
+        zoom_window_calculated = False
 
     # Prepare target times for optional downsampling of 0D CSVs
     target_times = None
@@ -869,6 +855,9 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
     # Calculate MSE for each modality
     mse_results = {}
     
+    # Store data for plotting: {obs_key: {'3d': {...}, 'geometric': {...}, 'NORMAL_JUNCTION': {...}, 'BloodVesselJunction': {...}}}
+    plot_data_by_location = {}
+    
     for modality_name, csv_path in csv_results_dict.items():
         original_csv_path = csv_path
         if not original_csv_path or not os.path.exists(original_csv_path):
@@ -884,8 +873,9 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             downsampled_name = f"{base}_downsampled_to_3d_times.csv"
             downsampled_path = os.path.join(csv_dir, downsampled_name)
             if not os.path.exists(downsampled_path):
-                if verbose:
-                    print(f"\n  {modality_name}: downsampling 0D CSV to match 3D times -> {downsampled_path}")
+                print(f"\n  {modality_name}: downsampling 0D CSV to match 3D times")
+                print(f"    Source file: {original_csv_path}")
+                print(f"    Target file: {downsampled_path}")
                 ok = downsample_csv_file_to_times(original_csv_path, downsampled_path, target_times, method=downsample_method, verbose=verbose)
                 if not ok:
                     print(f"    ✗ Downsampling failed for: {original_csv_path}")
@@ -898,8 +888,8 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             else:
                 # Use existing downsampled file
                 csv_path = downsampled_path
-                if verbose:
-                    print(f"    ✓ Re-using existing downsampled CSV: {downsampled_path}")
+                print(f"    ✓ Re-using existing downsampled CSV: {downsampled_path}")
+                print(f"    [NOTE] This file was created from: {original_csv_path}")
         else:
             csv_path = original_csv_path
 
@@ -915,8 +905,43 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         
         print(f"    Found {len(results_0d)} vessels, {len(times_0d)} time points")
         
-        # Determine zoom window - matching the shaded region in plots
-        # This corresponds to the zoom window used in plot_inlet_comparison.py and plot_outlet_comparison.py
+        # Calculate zoom window automatically if not provided (same logic as plot_location_comparison)
+        if not zoom_window_calculated and (zoom_start_idx is None or zoom_end_idx is None):
+            # Use the same logic as plot_location_comparison: last 20% of time period (60% to 80%)
+            times_0d_sorted = sorted(times_0d)
+            if len(times_0d_sorted) > 0:
+                time_start = times_0d_sorted[0]
+                time_end = times_0d_sorted[-1]
+                total_time_span = time_end - time_start
+                
+                # Last 20% of time period (from 60% to 80%)
+                zoom_time_start = time_start + 0.6 * total_time_span
+                zoom_time_end = time_start + 0.8 * total_time_span
+                
+                # Find indices corresponding to these times
+                if zoom_start_idx is None:
+                    zoom_start_idx = np.searchsorted(times_0d_sorted, zoom_time_start)
+                if zoom_end_idx is None:
+                    zoom_end_idx = min(np.searchsorted(times_0d_sorted, zoom_time_end, side='right'), len(times_0d_sorted))
+                
+                # Validate zoom window
+                zoom_start_idx = max(0, min(zoom_start_idx, len(times_0d_sorted) - 1))
+                zoom_end_idx = min(zoom_end_idx, len(times_0d_sorted))
+                
+                if zoom_start_idx >= zoom_end_idx:
+                    # Fallback: use last 20% of indices
+                    zoom_start_idx = int(0.6 * len(times_0d_sorted))
+                    zoom_end_idx = int(0.8 * len(times_0d_sorted))
+                
+                zoom_window_calculated = True
+                print(f"    Auto-calculated zoom window: {zoom_time_start:.4f}s to {zoom_time_end:.4f}s (indices {zoom_start_idx} to {zoom_end_idx})")
+            else:
+                # Fallback if no time data
+                if zoom_start_idx is None:
+                    zoom_start_idx = 0
+                if zoom_end_idx is None:
+                    zoom_end_idx = len(times_0d_sorted) if times_0d_sorted else 100
+                    zoom_window_calculated = True
         
         # Find the maximum length of 3D observations to validate zoom window
         max_3d_length = 0
@@ -926,19 +951,44 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             elif hasattr(obs_values_3d, '__len__'):
                 max_3d_length = max(max_3d_length, len(obs_values_3d))
         
-        # Validate zoom window
-        assert zoom_start_idx <= max_3d_length
-        assert zoom_end_idx <= max_3d_length
-        assert zoom_start_idx <= zoom_end_idx
+        # Validate zoom window (ensure it doesn't exceed 3D observation length)
+        if zoom_start_idx is not None and zoom_end_idx is not None:
+            zoom_start_idx = min(zoom_start_idx, max_3d_length)
+            zoom_end_idx = min(zoom_end_idx, max_3d_length)
+            if zoom_start_idx >= zoom_end_idx:
+                # Fallback: use last 20% of 3D observation length
+                zoom_start_idx = int(0.6 * max_3d_length)
+                zoom_end_idx = int(0.8 * max_3d_length)
             
         
         num_zoom_timesteps = zoom_end_idx - zoom_start_idx
         print(f"    Using zoom window: timesteps {zoom_start_idx} to {zoom_end_idx-1} ({num_zoom_timesteps} timesteps)")
         
+        # Print all available observation keys
+        all_obs_keys = list(obs_3d.keys())
+        print(f"\n    Available observation keys: {len(all_obs_keys)}")
+        if verbose:
+            for key in sorted(all_obs_keys):
+                print(f"      - {key}")
+        
+        # Also print available vessel names in 0D results for debugging
+        if results_0d:
+            available_vessels = sorted(results_0d.keys())
+            print(f"    Available vessels in 0D results: {len(available_vessels)}")
+            if verbose:
+                for v in available_vessels[:20]:  # Show first 20
+                    print(f"      - {v}")
+                if len(available_vessels) > 20:
+                    print(f"      ... and {len(available_vessels) - 20} more")
+        
         # Calculate MSE for each observation
         modality_mse = {}
         total_mse_pressure = []
         total_mse_flow = []
+        
+        # Track which locations are being processed
+        locations_processed = []
+        locations_skipped = []
         
         for obs_key, obs_values_3d in obs_3d.items():
             if not isinstance(obs_values_3d, list):
@@ -949,11 +999,13 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 obs_values_3d = obs_values_3d[zoom_start_idx:zoom_end_idx]
             else:
                 # If 3D data is shorter than zoom window, skip this observation
+                locations_skipped.append(f"{obs_key} (3D data too short: {len(obs_values_3d)} <= {zoom_start_idx})")
                 continue
             
             # Parse observation key: "pressure:INFLOW:branch0_seg0" or "flow:branch0_seg0:J0"
             parts = obs_key.split(':')
             if len(parts) != 3:
+                locations_skipped.append(f"{obs_key} (invalid format: expected 3 parts, got {len(parts)})")
                 continue
             
             obs_type = parts[0]  # 'pressure' or 'flow'
@@ -962,6 +1014,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             
             # Filter to only INFLOW locations by default
             if part1 != 'INFLOW':
+                locations_skipped.append(f"{obs_key} (not INFLOW)")
                 continue
             
             # Determine vessel name and field (pressure_in/out, flow_in/out)
@@ -993,6 +1046,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                         break
             
             if not vessel_name or not field_name:
+                locations_skipped.append(f"{obs_key} (could not determine vessel_name or field_name)")
                 continue
 
             # FILTER: only include vessels that exist in the original 0D geometry
@@ -1004,6 +1058,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                     vessel_name_set = set([v.get('vessel_name') for v in vessels if v.get('vessel_name')])
                     #if vessel_name not in vessel_name_set:
                     if 'connector' in vessel_name.lower():
+                        locations_skipped.append(f"{obs_key} (vessel {vessel_name} is a connector)")
                         if verbose:
                             print(f"    Skipping observation {obs_key}: '{vessel_name}' is a connector or not in original 0D vessels")
                         continue
@@ -1017,6 +1072,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             
             # Extract 0D data for this vessel
             if vessel_name not in results_0d:
+                locations_skipped.append(f"{obs_key} (vessel {vessel_name} not in 0D results)")
                 continue
             
             # Extract 0D values at available time points
@@ -1028,6 +1084,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                     obs_values_0d_raw.append(results_0d[vessel_name][time][field_name])
             
             if len(times_0d_valid) < 2:
+                locations_skipped.append(f"{obs_key} (insufficient 0D time points: {len(times_0d_valid)})")
                 continue
             
             # Apply zoom window filter to 0D data: use same index range [zoom_start_idx:zoom_end_idx]
@@ -1036,9 +1093,11 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 times_0d_zoomed = times_0d_valid[zoom_start_idx:zoom_end_idx]
             else:
                 # If 0D data is shorter than zoom window, skip this observation
+                locations_skipped.append(f"{obs_key} (0D data too short: {len(obs_values_0d_raw)} <= {zoom_start_idx})")
                 continue
             
             if len(obs_values_0d_zoomed) == 0:
+                locations_skipped.append(f"{obs_key} (no data in zoom window)")
                 continue
             
             # Interpolate 0D data to match 3D observation time points (now both are in zoom window)
@@ -1081,6 +1140,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             # Remove NaN and inf values
             valid_mask = np.isfinite(obs_values_0d) & np.isfinite(obs_values_3d)
             if not np.any(valid_mask):
+                locations_skipped.append(f"{obs_key} (no valid finite values)")
                 continue
             
             obs_values_0d_clean = obs_values_0d[valid_mask]
@@ -1089,6 +1149,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             # Ensure same length (take minimum)
             min_len = min(len(obs_values_0d_clean), len(obs_values_3d_clean))
             if min_len == 0:
+                locations_skipped.append(f"{obs_key} (min_len=0 after filtering)")
                 continue
             
             obs_values_0d_clean = obs_values_0d_clean[:min_len]
@@ -1099,6 +1160,12 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             
             mse = np.mean(diff**2)
             mae = np.mean(np.abs(diff))
+            
+            # Track this location as successfully processed
+            locations_processed.append(obs_key)
+            
+            if verbose:
+                print(f"      ✓ Processed {obs_key}: MSE={mse:.3E}, MAE={mae:.3E}, n={min_len}")
             
             # Save comparison plot for debugging
             try:
@@ -1145,6 +1212,39 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             except Exception as e:
                 pass  # Silently fail if plotting is not available
             
+            # Store data for combined plotting across all modalities
+            if obs_key not in plot_data_by_location:
+                plot_data_by_location[obs_key] = {
+                    '3d_times': None,
+                    '3d_values': None,
+                    'obs_type': obs_type,
+                    'vessel_name': vessel_name,
+                    'field_name': field_name
+                }
+            
+            # Store 3D data (only once, same for all modalities)
+            if plot_data_by_location[obs_key]['3d_times'] is None:
+                # Use the zoomed 3D values that were already extracted
+                # Create time array matching the zoomed 3D data
+                num_3d_zoomed = len(obs_values_3d_clean)
+                if target_times and len(target_times) >= zoom_end_idx:
+                    # Use target_times if available (zoom window)
+                    plot_data_by_location[obs_key]['3d_times'] = np.array(target_times[zoom_start_idx:zoom_end_idx])[valid_mask][:min_len]
+                else:
+                    # Fallback: create normalized time array
+                    plot_data_by_location[obs_key]['3d_times'] = np.linspace(0.0, 1.0, num_3d_zoomed)
+                
+                plot_data_by_location[obs_key]['3d_values'] = obs_values_3d_clean
+            
+            # Store 0D data for this modality
+            # Use the same time array as 3D (already interpolated and cleaned)
+            plot_data_by_location[obs_key][modality_name] = {
+                'times': plot_data_by_location[obs_key]['3d_times'],
+                'values': obs_values_0d_clean,
+                'mse': mse,
+                'mae': mae
+            }
+            
             modality_mse[obs_key] = {
                 'mse': mse,
                 'type': obs_type,
@@ -1165,15 +1265,107 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             'overall_mse': np.mean(total_mse_pressure + total_mse_flow) if (total_mse_pressure or total_mse_flow) else np.nan
         }
         
-        # Print summary (only in verbose mode)
+        # Print summary of locations used
+        print(f"\n    Locations used for MSE calculation: {len(locations_processed)}")
+        if locations_processed:
+            for loc in sorted(locations_processed):
+                print(f"      ✓ {loc}")
+        
+        if locations_skipped:
+            print(f"\n    Locations skipped: {len(locations_skipped)}")
+            if verbose:
+                for loc in sorted(locations_skipped):
+                    print(f"      ⊘ {loc}")
+        
         if verbose:
-            print(f"    Calculated MSE for {len(modality_mse)} observation series")
+            print(f"\n    Calculated MSE for {len(modality_mse)} observation series")
             if total_mse_pressure:
                 print(f"    Mean Pressure MSE: {np.mean(total_mse_pressure):.3E}")
             if total_mse_flow:
                 print(f"    Mean Flow MSE: {np.mean(total_mse_flow):.3E}")
             if total_mse_pressure or total_mse_flow:
                 print(f"    Overall MSE: {np.mean(total_mse_pressure + total_mse_flow):.3E}")
+    
+    # Generate combined plots for each location showing all modalities
+    if plot_data_by_location:
+        try:
+            import matplotlib
+            matplotlib.use('Agg')  # Use non-interactive backend
+            import matplotlib.pyplot as plt
+            
+            # Create output directory for MSE comparison plots
+            base_dir = os.path.dirname(calibration_input_path)
+            mse_plots_dir = os.path.join(base_dir, 'mse_comparison_plots')
+            os.makedirs(mse_plots_dir, exist_ok=True)
+            
+            print(f"\n  Generating MSE comparison plots...")
+            
+            for obs_key, plot_data in plot_data_by_location.items():
+                if plot_data['3d_times'] is None:
+                    continue
+                
+                # Create safe filename from observation key
+                safe_obs_key = obs_key.replace(':', '_').replace('/', '_')
+                plot_filename = f"{safe_obs_key}_mse_comparison.png"
+                plot_path = os.path.join(mse_plots_dir, plot_filename)
+                
+                # Create figure with two subplots (pressure and flow)
+                obs_type = plot_data['obs_type']
+                fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+                
+                times_3d = plot_data['3d_times']
+                values_3d = plot_data['3d_values']
+                
+                # Plot 3D observations (reference)
+                ax.plot(times_3d, values_3d, 'k-', linewidth=2.5, label='3D (reference)', alpha=0.9, zorder=10)
+                
+                # Plot each 0D modality
+                modality_colors = {
+                    'geometric': 'blue',
+                    'NORMAL_JUNCTION': 'green',
+                    'BloodVesselJunction': 'red',
+                    'BloodVesselJunction_NN': 'orange'
+                }
+                modality_styles = {
+                    'geometric': '-',
+                    'NORMAL_JUNCTION': '--',
+                    'BloodVesselJunction': '-.',
+                    'BloodVesselJunction_NN': ':'
+                }
+                
+                for mod_name in ['geometric', 'NORMAL_JUNCTION', 'BloodVesselJunction', 'BloodVesselJunction_NN']:
+                    if mod_name in plot_data:
+                        mod_data = plot_data[mod_name]
+                        color = modality_colors.get(mod_name, 'gray')
+                        style = modality_styles.get(mod_name, '-')
+                        mse_val = mod_data.get('mse', np.nan)
+                        label = f"{mod_name} (MSE={mse_val:.3E})"
+                        ax.plot(mod_data['times'], mod_data['values'], 
+                               color=color, linestyle=style, linewidth=2, 
+                               label=label, alpha=0.8)
+                
+                # Formatting
+                ax.set_xlabel('Time (normalized)', fontsize=14)
+                ylabel = 'Pressure (dynes/cm²)' if obs_type == 'pressure' else 'Flow (cm³/s)'
+                ax.set_ylabel(ylabel, fontsize=14)
+                ax.set_title(f'MSE Comparison: {obs_key}', fontsize=16, weight='bold')
+                ax.legend(loc='best', fontsize=10)
+                ax.grid(True, alpha=0.3)
+                
+                plt.tight_layout()
+                plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+                plt.close()
+                
+                if verbose:
+                    print(f"      ✓ Saved plot: {plot_path}")
+            
+            print(f"    ✓ Generated {len(plot_data_by_location)} MSE comparison plots in: {mse_plots_dir}")
+            
+        except Exception as e:
+            if verbose:
+                print(f"    ✗ Warning: Could not generate MSE comparison plots: {e}")
+                import traceback
+                traceback.print_exc()
     
     # Get all observation keys and modalities for summary
     all_obs_keys = set()

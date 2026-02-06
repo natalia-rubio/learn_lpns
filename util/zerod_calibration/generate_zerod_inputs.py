@@ -122,9 +122,13 @@ def main():
         # Check if base files exist
         skip_base = False
         if args.no_redo:
-            if os.path.exists(geometric_input_path) and os.path.exists(bifurcations_geometric_input_path):
+            bifurcations_EL_geometric_input_path = geometry_variants['bifurcations_EL']['geometric_input']
+            if (os.path.exists(geometric_input_path) and 
+                os.path.exists(bifurcations_geometric_input_path) and
+                os.path.exists(bifurcations_EL_geometric_input_path)):
                 check_and_track_file(geometric_input_path, "base generation")
                 check_and_track_file(bifurcations_geometric_input_path, "bifurcations generation")
+                check_and_track_file(bifurcations_EL_geometric_input_path, "EL-adjusted bifurcations generation")
                 skip_base = True
         
         if not skip_base:
@@ -162,42 +166,49 @@ def main():
             split_junctions_from_files(geometric_input_path, centerline_path, bifurcations_geometric_input_path)
             generated_files.append(bifurcations_geometric_input_path)
             print(f"  Bifurcations-only geometric input saved to: {bifurcations_geometric_input_path}")
+            
+            # Generate entrance length-adjusted bifurcations version (if bifurcations file exists)
+            bifurcations_EL_geometric_input_path = geometry_variants['bifurcations_EL']['geometric_input']
+            if check_and_track_file(bifurcations_EL_geometric_input_path, "EL-adjusted bifurcations generation"):
+                pass
+            else:
+                print(f"\n  Creating entrance length-adjusted bifurcations geometric input...")
+                adjust_junction_boundaries_by_entrance_length_from_files(
+                    bifurcations_geometric_input_path, 
+                    centerline_path, 
+                    bifurcations_EL_geometric_input_path,
+                    verbose=verbose
+                )
+                generated_files.append(bifurcations_EL_geometric_input_path)
+                print(f"  Entrance length-adjusted bifurcations geometric input saved to: {bifurcations_EL_geometric_input_path}")
     
-    # Generate entrance length-adjusted bifurcations version (if bifurcations file exists)
-    bifurcations_geometric_input_path = geometry_variants['bifurcations']['geometric_input']
-    if os.path.exists(bifurcations_geometric_input_path):
-        print(f"\n  Creating entrance length-adjusted bifurcations geometric input...")
-        bifurcations_EL_geometric_input_path = os.path.join(base_dir, 'bifurcations_EL_geometric_input.json')
-        if check_and_track_file(bifurcations_EL_geometric_input_path, "EL-adjusted bifurcations generation"):
-            pass
+    # Extract geometric params for all geometry variants
+    for geo_variant_name, geo_variant_paths in geometry_variants.items():
+        # Skip bifurcations_EL if bifurcations doesn't exist (EL depends on bifurcations)
+        if geo_variant_name == 'bifurcations_EL':
+            bifurcations_input = geometry_variants['bifurcations']['geometric_input']
+            if not os.path.exists(bifurcations_input):
+                continue
+        
+        variant_geometric_input = geo_variant_paths['geometric_input']
+        if not os.path.exists(variant_geometric_input):
+            continue
+        
+        if geo_variant_name == 'bifurcations_EL':
+            # For EL-adjusted geometry, use EL-adjusted structure for parameter extraction
+            if not check_and_track_file(variant_geometric_input, f"geometric params extraction for {geo_variant_name}"):
+                extract_and_add_geometric_params(
+                    centerline_path, 
+                    geometry_variants['bifurcations']['geometric_input'],  # Base geometric input (for reference)
+                    variant_geometric_input,  # EL-adjusted config to update
+                    el_adjusted_geometric_input_path=variant_geometric_input  # Use EL-adjusted structure
+                )
+                print(f"  Geometric parameters extracted and added to {variant_geometric_input}")
         else:
-            adjust_junction_boundaries_by_entrance_length_from_files(
-                bifurcations_geometric_input_path, 
-                centerline_path, 
-                bifurcations_EL_geometric_input_path,
-                verbose=verbose
-            )
-            generated_files.append(bifurcations_EL_geometric_input_path)
-            print(f"  Entrance length-adjusted bifurcations geometric input saved to: {bifurcations_EL_geometric_input_path}")
-    import pdb; pdb.set_trace()
-    # Always extract geometric params (updates existing file)
-    bifurcations_geometric_input_path = geometry_variants['bifurcations']['geometric_input']
-    if not check_and_track_file(bifurcations_geometric_input_path, "geometric params extraction"):
-        extract_and_add_geometric_params(centerline_path, bifurcations_geometric_input_path, bifurcations_geometric_input_path)
-        print(f"  Geometric parameters extracted and added to {bifurcations_geometric_input_path}")
-    
-    # Extract geometric params for EL-adjusted geometry (if it exists)
-    bifurcations_EL_geometric_input_path = os.path.join(base_dir, 'bifurcations_EL_geometric_input.json')
-    if os.path.exists(bifurcations_EL_geometric_input_path):
-        if not check_and_track_file(bifurcations_EL_geometric_input_path, "EL-adjusted geometric params extraction"):
-            extract_and_add_geometric_params(
-                centerline_path, 
-                bifurcations_geometric_input_path,  # Base geometric input (for reference)
-                bifurcations_EL_geometric_input_path,  # EL-adjusted config to update
-                el_adjusted_geometric_input_path=bifurcations_EL_geometric_input_path  # Use EL-adjusted structure
-            )
-            print(f"  Geometric parameters extracted and added to {bifurcations_EL_geometric_input_path}")
-    import pdb; pdb.set_trace()
+            # For other variants, standard parameter extraction
+            if not check_and_track_file(variant_geometric_input, f"geometric params extraction for {geo_variant_name}"):
+                extract_and_add_geometric_params(centerline_path, variant_geometric_input, variant_geometric_input)
+                print(f"  Geometric parameters extracted and added to {variant_geometric_input}")
 
         
     # Step 2: Extract observations and create calibration inputs for each junction type
@@ -301,8 +312,15 @@ def main():
             
             
             
-            # Process BOTH geometry variants: original and bifurcations-only
+            # Process geometry variants: original, bifurcations, and bifurcations_EL
             for geo_variant_name, geo_variant_paths in geometry_variants.items():
+                # Skip bifurcations_EL if bifurcations doesn't exist (EL depends on bifurcations)
+                if geo_variant_name == 'bifurcations_EL':
+                    bifurcations_input = geometry_variants['bifurcations']['geometric_input']
+                    if not os.path.exists(bifurcations_input):
+                        print(f"\n  ✗ Skipping {geo_variant_name}: bifurcations geometric input not found: {bifurcations_input}")
+                        continue
+                
                 print(f"\n" + "-"*50)
                 print(f"Processing {geo_variant_name.upper()} geometry variant")
                 print("-"*50)
@@ -342,34 +360,49 @@ def main():
                 else:
                     print(f"\n  Creating base calibration input for {geo_variant_name}...")
                     try:
-                        # For bifurcations geometry:
+                        # For bifurcations and bifurcations_EL geometries:
                         # - Always rename existing observations to match bifurcated junction names
-                        # - Optionally add synthetic connector-vessel observations
-                        if geo_variant_name == 'bifurcations':
+                        # - Optionally add synthetic connector-vessel observations (only for bifurcations, not EL)
+                        if geo_variant_name in ['bifurcations', 'bifurcations_EL']:
                             with open(variant_geometric_input, 'r') as f:
                                 bifurcated_geometric_input = json.load(f)
-                            include_synthetic_observations = True
-                            if include_synthetic_observations:
-                                # Load the original geometric input and centerline data
-                                original_geometric_input_path = geometry_variants['original']['geometric_input']
-                                with open(original_geometric_input_path, 'r') as f:
-                                    original_geometric_input = json.load(f)
+                            
+                            # For bifurcations: generate synthetic connector observations
+                            # For bifurcations_EL: skip synthetic observations (vessels already merged/converted)
+                            if geo_variant_name == 'bifurcations':
+                                include_synthetic_observations = True
+                                if include_synthetic_observations:
+                                    # Load the original geometric input and centerline data
+                                    original_geometric_input_path = geometry_variants['original']['geometric_input']
+                                    with open(original_geometric_input_path, 'r') as f:
+                                        original_geometric_input = json.load(f)
 
-                                # Read centerline data
-                                centerline_data, _ = read_centerline_vtp(centerline_path)
+                                    # Read centerline data
+                                    centerline_data, _ = read_centerline_vtp(centerline_path)
 
-                                print(f"    Generating synthetic observations for connector vessels...")
-                                augmented_observations = generate_connector_observations(
-                                    observations,
-                                    original_geometric_input,
-                                    bifurcated_geometric_input,
-                                    centerline_data
-                                )
-                            else:
-                                print(f"    Skipping synthetic observations for connector vessels")
-                                print(f"    Renaming existing observation keys to match bifurcated junction names...")
-                                augmented_observations = rename_observations_for_bifurcations(
-                                    observations, bifurcated_geometric_input
+                                    print(f"    Generating synthetic observations for connector vessels...")
+                                    augmented_observations = generate_connector_observations(
+                                        observations,
+                                        original_geometric_input,
+                                        bifurcated_geometric_input,
+                                        centerline_data
+                                    )
+                                else:
+                                    print(f"    Skipping synthetic observations for connector vessels")
+                                    print(f"    Renaming existing observation keys to match bifurcated junction names...")
+                                    augmented_observations = rename_observations_for_bifurcations(
+                                        observations, bifurcated_geometric_input
+                                    )
+                            else:  # bifurcations_EL
+                                # Extract observations directly from 1D solution using centerline_node_ids
+                                print(f"    Extracting observations from 1D solution using centerline_node_ids...")
+                                from util.zerod_calibration.oned_to_zerod import extract_observations_from_1d_with_node_ids
+                                augmented_observations = extract_observations_from_1d_with_node_ids(
+                                    centerline_path,
+                                    variant_geometric_input,
+                                    geo_dir=geo_dir,
+                                    start_idx=0,
+                                    derivative_method='central'
                                 )
 
                             create_calibration_input(
@@ -888,7 +921,7 @@ def main():
         print("="*60)
         
         # Specify which plot types to generate: 'original', 'bifurcations', 'combined'
-        plot_types = ["bifurcations",]
+        plot_types = ["bifurcations","bifurcations_EL"]
         
         try:
             # Import plotting functions from unified location comparison script
@@ -906,25 +939,25 @@ def main():
             except Exception:
                 pass
             
-            # Use original geometry calibration input for location list
-            original_calibration_input = geometry_variants['original']['calibration_input']
-            orig_geometric_results = geometry_variants['original']['geometric_results']
-            
-            if not os.path.exists(original_calibration_input) or not os.path.exists(orig_geometric_results):
-                print(f"    Skipping plots (missing original geometry files)")
-            else:
-                all_locations = get_all_locations_from_calibration_input(str(original_calibration_input))
-                
-                # Filter to only INFLOW locations by default
-                all_locations = [loc for loc in all_locations if loc.startswith('INFLOW:')]
-                
-                # Generate plots for each requested plot type
-                for plot_type in plot_types:
+            # Generate plots for each requested plot type
+            for plot_type in plot_types:
                     if plot_type == 'combined':
                         # Generate combined comparison plots (original vs bifurcations for each junction type)
                         print(f"\n  Creating combined geometry variant comparison plots...")
                         combined_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, 'combined')
                         os.makedirs(combined_output_dir, exist_ok=True)
+                        
+                        # Use original geometry calibration input for location list (for combined plots)
+                        original_calibration_input = geometry_variants['original']['calibration_input']
+                        orig_geometric_results = geometry_variants['original']['geometric_results']
+                        
+                        if not os.path.exists(original_calibration_input) or not os.path.exists(orig_geometric_results):
+                            print(f"    Skipping combined plots (missing original geometry files)")
+                            continue
+                        
+                        all_locations = get_all_locations_from_calibration_input(str(original_calibration_input))
+                        # Filter to only INFLOW locations by default
+                        all_locations = [loc for loc in all_locations if loc.startswith('INFLOW:')]
                         
                         # Build combined CSV paths dict: keys are "original_jtype" and "bifurcations_jtype"
                         combined_csv_paths = {}
@@ -977,7 +1010,7 @@ def main():
                         else:
                             print(f"    Skipping combined plots (no CSV results found)")
                     
-                    elif plot_type in ['original', 'bifurcations']:
+                    elif plot_type in ['original', 'bifurcations', 'bifurcations_EL']:
                         # Generate plots for individual geometry variant
                         geo_variant_name = plot_type
                         print(f"\n  Creating {geo_variant_name} geometry variant comparison plots...")
@@ -991,6 +1024,15 @@ def main():
                         
                         if not os.path.exists(variant_calibration_input) or not os.path.exists(variant_geometric_results):
                             print(f"    Skipping {geo_variant_name} plots (missing files)")
+                            continue
+                        
+                        # Extract locations from this variant's calibration input
+                        variant_locations = get_all_locations_from_calibration_input(str(variant_calibration_input))
+                        # Filter to only INFLOW locations by default
+                        # variant_locations = [loc for loc in variant_locations if loc.startswith('INFLOW:')]
+                        
+                        if not variant_locations:
+                            print(f"    Skipping {geo_variant_name} plots (no locations found in calibration input)")
                             continue
                         
                         # Build CSV paths for this variant
@@ -1012,8 +1054,18 @@ def main():
                                 variant_csv_paths['BloodVesselJunction_NN'] = str(nn_results_csv)
                         
                         if variant_csv_paths or variant_geometric_csv_paths:
+                            # Build vessel name mapping for EL-adjusted geometry
+                            vessel_name_mapping = None
+                            if geo_variant_name == 'bifurcations_EL':
+                                from util.visualizations.plot_location_comparison import build_vessel_name_mapping
+                                bifurcations_input = geometry_variants['bifurcations']['geometric_input']
+                                if os.path.exists(bifurcations_input) and os.path.exists(variant_geometric_input):
+                                    vessel_name_mapping = build_vessel_name_mapping(
+                                        bifurcations_input, variant_geometric_input
+                                    )
+                            
                             success_count = 0
-                            for location in all_locations:
+                            for location in variant_locations:
                                 safe_location = location.replace(':', '_')
                                 plot_path = os.path.join(variant_output_dir, f"{safe_location}_comparison.png")
                                 try:
@@ -1030,7 +1082,8 @@ def main():
                                         zoom_start_idx=args.zoom_start,
                                         zoom_end_idx=args.zoom_end,
                                         verbose=False,
-                                        geometric_csv_paths=variant_geometric_csv_paths
+                                        geometric_csv_paths=variant_geometric_csv_paths,
+                                        vessel_name_mapping=vessel_name_mapping
                                     )
                                     if success:
                                         success_count += 1
@@ -1039,7 +1092,7 @@ def main():
                                     import traceback
                                     traceback.print_exc()
                             
-                            print(f"    Created {success_count}/{len(all_locations)} {geo_variant_name} comparison plots")
+                            print(f"    Created {success_count}/{len(variant_locations)} {geo_variant_name} comparison plots")
                             print(f"    {geo_variant_name.capitalize()} plot output directory: {variant_output_dir}")
                         else:
                             print(f"    Skipping {geo_variant_name} plots (no CSV results found)")
