@@ -420,7 +420,7 @@ def timestep_from_1D(centerline_soln_path, geo_dir):
     return time_step_size
 
 def get_paths(base_dir, args):
-# Define geometry variants: original and bifurcations-only
+# Define geometry variants: original, bifurcations-only, and bifurcations_EL
     geometry_variants = {
         'original': {
             'geometric_input': os.path.join(base_dir, 'geometric_input.json'),
@@ -432,6 +432,12 @@ def get_paths(base_dir, args):
             'geometric_input': os.path.join(base_dir, 'bifurcations_geometric_input.json'),
             'geometric_results': os.path.join(base_dir, 'bifurcations_geometric_results.csv'),
             'calibration_input': os.path.join(base_dir, 'bifurcations_calibration_input.json'),
+            'junction_types': {}
+        },
+        'bifurcations_EL': {
+            'geometric_input': os.path.join(base_dir, 'bifurcations_EL_geometric_input.json'),
+            'geometric_results': os.path.join(base_dir, 'bifurcations_EL_geometric_results.csv'),
+            'calibration_input': os.path.join(base_dir, 'bifurcations_EL_calibration_input.json'),
             'junction_types': {}
         }
     }

@@ -492,6 +492,346 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
 
     return observations
 
+
+def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0, derivative_method='central'):
+    """
+    Extract observation data from 1D centerline solution VTP file using centerline_node_ids.
+    
+    This version uses the centerline_node_ids stored in vessels to directly map to GlobalNodeId
+    values in the centerline data, which is more accurate for EL-adjusted geometries where
+    vessels have been merged or boundaries have been adjusted.
+    
+    Args:
+        centerline_soln_path: Path to centerline solution VTP (with pressure/velocity arrays)
+        geometric_input_path: Path to geometric 0D input JSON (to understand vessel/junction structure)
+        geo_dir: Geometry directory containing XML file (optional, will try to infer from paths)
+        start_idx: Starting index for observations (default: 0). Observations will be sliced from this index.
+        derivative_method: Method for computing derivatives ('central', 'forward', or 'backward', default: 'forward').
+        
+    Returns:
+        Dictionary with observation data (y, dy) for calibration
+    """
+    print(f"Reading 1D solution from: {centerline_soln_path}")
+    centerline_data, _ = read_centerline_vtp(centerline_soln_path)
+    
+    print(f"  Start index for observations: {start_idx}")
+    # Read geometric input to understand vessel/junction structure
+    with open(geometric_input_path, 'r') as f:
+        geometric_input = json.load(f)
+    
+    vessels = geometric_input.get('vessels', [])
+    junctions = geometric_input.get('junctions', [])
+    
+    # Find all timestep arrays
+    pressure_timesteps = []
+    flow_timesteps = []
+    end_idx = -1
+    
+    for key in centerline_data.keys():
+        if key.startswith('pressure_'):
+            pressure_timesteps.append(key)
+        elif key.startswith('velocity_') or key.startswith('flow_'):
+            flow_timesteps.append(key)
+    
+    # Sort timesteps
+    def extract_timestep(name):
+        try:
+            return int(name.split('_')[-1])
+        except:
+            return 0
+    
+    pressure_timesteps.sort(key=extract_timestep)
+    flow_timesteps.sort(key=extract_timestep)
+    
+    if not pressure_timesteps or not flow_timesteps:
+        raise ValueError("No pressure or flow timesteps found in centerline solution")
+    
+    # Calculate timestep increment from the solution
+    timestep_indices = [extract_timestep(name) for name in pressure_timesteps]
+    if len(timestep_indices) > 1:
+        increments = [timestep_indices[i+1] - timestep_indices[i] for i in range(len(timestep_indices)-1)]
+        timestep_increment = max(set(increments), key=increments.count) if increments else 1
+    else:
+        timestep_increment = 1
+    
+    # Try to get time_step_size from XML
+    time_step_size = None
+    if geo_dir is None:
+        geo_dir = os.path.dirname(geometric_input_path)
+        parts = geo_dir.split(os.sep)
+        if 'zeroD' in parts:
+            idx = parts.index('zeroD')
+            parts[idx] = 'threeD'
+            geo_dir = os.sep.join(parts)
+    
+    xml_path = os.path.join(geo_dir, 'fluid_simulation_0-0.xml')
+    if os.path.exists(xml_path):
+        sim_params = parse_simulation_xml(xml_path)
+        if sim_params and 'time_step_size' in sim_params:
+            time_step_size = sim_params['time_step_size']
+            print(f"  Found XML time_step_size: {time_step_size:.6f} s")
+    elif 'VMR' in centerline_soln_path:
+        geometry_name = centerline_soln_path.split('/')[-2]
+        # Use the same VMR time step dictionary as in the original function
+        VMR_time_step_dict = {
+            '0002_0001': 0.01,
+            '0003_0001': 0.004,
+            '0005_1001': 0.001,
+            '0006_0001': 0.0003,
+            '0063_1001': 0.0004,
+            '0064_1001': 0.0004,
+            '0065_1001': 0.0004,
+            '0066_0001': 0.0033,
+            '0067_0001': 0.002,
+            '0068_0001': 0.0008,
+            '0069_0001': 0.0014,
+            '0070_0001': 0.0013,
+            '0072_0001': 0.002,
+            '0073_0001': 0.0024,
+            '0074_0001': 0.0023,
+            '0075_1001': 0.0065,
+            '0076_1001': 0.0071,
+            '0077_1001': 0.0004,
+            '0080_0001': 0.0027681568627,
+            '0081_0001': 0.0049,
+            '0082_0001': 0.004,
+            '0083_2002': 0.0003,
+            '0084_0001': 0.0048,
+            '0085_1001': 0.0004,
+            '0086_0001': 0.0042,
+            '0087_1001': 0.0004,
+            '0088_1001': 0.0005,
+            '0089_1001': 0.0005,
+            '0090_0001': 0.0049,
+            '0091_0001': 0.0057,
+            '0092_0001': 0.0048,
+            '0093_0001': 0.0029,
+            '0094_0001': 0.005,
+            '0095_0001': 0.0038,
+            '0096_0001': 0.0054,
+            '0097_0001': 0.0073,
+            '0098_0001': 0.0053,
+            '0099_0001': 0.007,
+            '0101_0001': 0.003,
+            '0102_0001': 0.0057,
+            '0103_0001': 0.0032,
+            '0104_0001': 0.0039,
+            '0105_0001': 0.0038,
+            '0107_0001': 0.0021,
+            '0108_0001': 0.0039215686275,
+            '0110_0001': 0.0002,
+            '0111_0001': 0.001,
+            '0112_1001': 0.0004,
+            '0119_0001': 0.0009,
+            '0129_0000': 0.0007,
+            '0130_0000': 0.0025,
+            '0131_0000': 0.0008,
+            '0134_0002': 0.0085,
+            '0138_1001': 0.0003,
+            '0139_1001': 0.0003,
+            '0140_2001': 0.0022,
+            '0141_1001': 0.0002,
+            '0142_1001': 0.0024,
+            '0144_1001': 0.0005,
+            '0145_1001': 0.0022,
+            '0146_1001': 0.0006,
+            '0147_1001': 0.0002,
+            '0148_1001': 0.0003,
+            '0149_1001': 0.0005,
+            '0150_0001': 0.0007,
+            '0151_0001': 0.0005,
+            '0154_0001': 0.0013,
+            '0155_0001': 7*10**-4,
+            '0156_0001': 0.0005,
+            '0157_0000': 0.0003,
+            '0158_0001': 0.0029,
+            '0160_6001': 0.0003,
+            '0161_0001': 0.0003,
+            '0162_3001': 0.0005,
+            '0163_0001': 0.0005,
+            '0164_0001': 0.0029317269076,
+            '0165_0001': 0.0029,
+            '0172_0001': 0.0039882352941,
+            '0173_1001': 0.0057,
+            '0174_0000': 0.0001,
+            '0175_0000': 0.0005,
+            '0176_0000': 0.0005,
+            '0183_1002': 0.0143,
+            '0184_0001': 0.0049019607843,
+            '0185_0001': 0.0076,
+            '0186_0002': 0.0086,
+            '0187_0002': 0.01,
+            '0189_0001': 0.013,
+        }
+        if geometry_name in VMR_time_step_dict:
+            time_step_size = VMR_time_step_dict[geometry_name]
+            print(f"  Found time_step_size in VMR dictionary: {time_step_size:.6f} s")
+        else:
+            raise ValueError(f"Could not find time_step_size for {geometry_name} in VMR dictionary")
+    else:
+        raise ValueError("Could not find time_step_size in XML or VMR dictionary")
+    
+    # Extract time array
+    num_timesteps = len(pressure_timesteps)
+    times = np.linspace(0.0, 1.0, num_timesteps)
+    obs_len = len(times)
+    end_idx = -1  # Use all observations by default
+    
+    # Get GlobalNodeId array
+    gid = centerline_data.get('GlobalNodeId', None)
+    if gid is None:
+        raise ValueError("GlobalNodeId array not found in centerline solution - required for node_id-based extraction")
+    
+    # Build mapping from GlobalNodeId to centerline point index
+    gid_to_idx = {}
+    for i, node_id in enumerate(gid):
+        gid_to_idx[int(node_id)] = i
+    
+    # Calculate dt
+    if time_step_size is not None:
+        dt = time_step_size * timestep_increment
+        print(f"  Calculated dt for derivatives: {dt:.6f} s")
+    else:
+        dt = times[1] - times[0] if len(times) > 1 else 1.0
+        print(f"  Warning: Could not find XML time_step_size, using normalized time difference: {dt:.6f}")
+    
+    # Helper function to extract data at a point
+    def extract_at_point(point_idx, times, dt, deriv_method='backward', verbose=False):
+        if point_idx is None or point_idx >= len(gid):
+            return None, None, None, None
+        
+        pressure_data = np.array([centerline_data[pt][point_idx] 
+                               for pt in pressure_timesteps])
+        flow_data = np.array([centerline_data[ft][point_idx] 
+                           for ft in flow_timesteps])
+        
+        # Keep pressure in original units (dynes/cm^2) - conversion to mmHg done in visualization
+        # Use data directly without refinement
+        pressure_refined = pressure_data.tolist()
+        flow_refined = flow_data.tolist()
+        
+        # Compute derivatives
+        if len(times) > 1:
+            if deriv_method == 'forward':
+                pressure_der = np.zeros_like(pressure_data)
+                flow_der = np.zeros_like(flow_data)
+                pressure_der[:-1] = (pressure_data[1:] - pressure_data[:-1]) / dt
+                flow_der[:-1] = (flow_data[1:] - flow_data[:-1]) / dt
+                if len(pressure_data) > 1:
+                    pressure_der[-1] = (pressure_data[-1] - pressure_data[-2]) / dt
+                    flow_der[-1] = (flow_data[-1] - flow_data[-2]) / dt
+                pressure_der = pressure_der.tolist()
+                flow_der = flow_der.tolist()
+            elif deriv_method == 'backward':
+                pressure_der = np.zeros_like(pressure_data)
+                flow_der = np.zeros_like(flow_data)
+                pressure_der[1:] = (pressure_data[1:] - pressure_data[:-1]) / dt
+                flow_der[1:] = (flow_data[1:] - flow_data[:-1]) / dt
+                if len(pressure_data) > 1:
+                    pressure_der[0] = (pressure_data[1] - pressure_data[0]) / dt
+                    flow_der[0] = (flow_data[1] - flow_data[0]) / dt
+                pressure_der = pressure_der.tolist()
+                flow_der = flow_der.tolist()
+            else:
+                # Central differences (default): uses np.gradient
+                pressure_der = np.gradient(pressure_data, dt).tolist()
+                flow_der = np.gradient(flow_data, dt).tolist()
+        else:
+            pressure_der = [0.0] * len(pressure_refined)
+            flow_der = [0.0] * len(flow_refined)
+        
+        return pressure_refined, pressure_der, flow_refined, flow_der
+    
+    # Helper to find point index from centerline_node_ids
+    def find_point_from_node_id(vessel, is_inlet=True):
+        """Find centerline point index from vessel's centerline_node_ids."""
+        if 'centerline_node_ids' not in vessel:
+            return None
+        
+        node_ids = vessel['centerline_node_ids']
+        target_gid = node_ids.get('inlet' if is_inlet else 'outlet')
+        
+        if target_gid is None:
+            return None
+        
+        return gid_to_idx.get(int(target_gid))
+    
+    # Extract observations
+    observations = {"y": {}, "dy": {}}
+    
+    # Extract observations at boundaries (inlet and outlets)
+    # Inflow BC - find vessel with inlet BC
+    for vessel in vessels:
+        if 'boundary_conditions' in vessel and 'inlet' in vessel['boundary_conditions']:
+            inlet_bc = vessel['boundary_conditions']['inlet']
+            vessel_name = vessel['vessel_name']
+            
+            # Use inlet node ID
+            inlet_idx = find_point_from_node_id(vessel, is_inlet=True)
+            if inlet_idx is not None:
+                p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt, derivative_method, verbose=True)
+                if p_ref is not None:
+                    observations["y"][f"pressure:INFLOW:{vessel_name}"] = p_ref[start_idx:end_idx]
+                    observations["dy"][f"pressure:INFLOW:{vessel_name}"] = p_der[start_idx:end_idx]
+                    observations["y"][f"flow:INFLOW:{vessel_name}"] = f_ref[start_idx:end_idx]
+                    observations["dy"][f"flow:INFLOW:{vessel_name}"] = f_der[start_idx:end_idx]
+            break
+    
+    # Outlet BCs
+    for vessel in vessels:
+        if 'boundary_conditions' in vessel:
+            bc_outlet = vessel['boundary_conditions'].get('outlet')
+            if bc_outlet:
+                vessel_name = vessel['vessel_name']
+                # Use outlet node ID
+                outlet_idx = find_point_from_node_id(vessel, is_inlet=False)
+                if outlet_idx is not None:
+                    p_ref, p_der, f_ref, f_der = extract_at_point(outlet_idx, times, dt, derivative_method, verbose=False)
+                    if p_ref is not None:
+                        observations["y"][f"pressure:{vessel_name}:{bc_outlet}"] = p_ref[start_idx:end_idx]
+                        observations["dy"][f"pressure:{vessel_name}:{bc_outlet}"] = p_der[start_idx:end_idx]
+                        observations["y"][f"flow:{vessel_name}:{bc_outlet}"] = f_ref[start_idx:end_idx]
+                        observations["dy"][f"flow:{vessel_name}:{bc_outlet}"] = f_der[start_idx:end_idx]
+    
+    # Extract observations at junctions
+    for junc in junctions:
+        junc_name = junc.get('junction_name', '')
+        inlet_vessel_ids = junc.get('inlet_vessels', [])
+        outlet_vessel_ids = junc.get('outlet_vessels', [])
+        
+        # For inlet vessels: format is "flow:vessel_name:junction_name"
+        for vessel_id in inlet_vessel_ids:
+            if vessel_id < len(vessels):
+                vessel = vessels[vessel_id]
+                vessel_name = vessel['vessel_name']
+                # Use outlet node ID (where vessel connects to junction)
+                pt_idx = find_point_from_node_id(vessel, is_inlet=False)
+                if pt_idx is not None:
+                    p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
+                    if p_ref is not None:
+                        observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref[start_idx:end_idx]
+                        observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der[start_idx:end_idx]
+                        observations["y"][f"flow:{vessel_name}:{junc_name}"] = f_ref[start_idx:end_idx]
+                        observations["dy"][f"flow:{vessel_name}:{junc_name}"] = f_der[start_idx:end_idx]
+        
+        # For outlet vessels: format is "flow:junction_name:vessel_name"
+        for vessel_id in outlet_vessel_ids:
+            if vessel_id < len(vessels):
+                vessel = vessels[vessel_id]
+                vessel_name = vessel['vessel_name']
+                # Use inlet node ID (where vessel connects to junction)
+                pt_idx = find_point_from_node_id(vessel, is_inlet=True)
+                if pt_idx is not None:
+                    p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
+                    if p_ref is not None:
+                        observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref[start_idx:end_idx]
+                        observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der[start_idx:end_idx]
+                        observations["y"][f"flow:{junc_name}:{vessel_name}"] = f_ref[start_idx:end_idx]
+                        observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
+    
+    return observations
+
+
 def find_inlet_outlet_caps(geo_dir):
     """
     Find inlet and outlet cap files from geometry directory.
