@@ -39,6 +39,129 @@ except ImportError:
     plt = None
 
 
+def get_default_include_features() -> List[str]:
+    """
+    Get the default list of features to include in the neural network input.
+    
+    Returns:
+        List of feature names to include (13 features total)
+    """
+    return [
+        "inlet_max_inscribed_radius",
+        "outlet0_max_inscribed_radius_local",
+        "outlet1_max_inscribed_radius_local",
+        "outlet0_max_inscribed_radius_min_on_path",
+        "outlet1_max_inscribed_radius_min_on_path",
+        "outlet0_max_inscribed_radius_max_on_path",
+        "outlet1_max_inscribed_radius_max_on_path",
+        "outlet0_path_length",
+        "outlet1_path_length",
+        "outlet0_tortuosity",
+        "outlet1_tortuosity",
+        "outlet0_angle_diff",
+        "outlet1_angle_diff",
+    ]
+
+def get_default_include_outputs() -> List[str]:
+    """
+    Get the default list of outputs to include in the neural network output.
+    
+    Returns:
+        List of output names to include (3 outputs total)
+    """
+    return [
+        "R_poiseuille_outlet0",
+        "stenosis_coefficient_outlet0",
+        "L_outlet0"
+    ]
+
+
+def filter_features_from_array(
+    X: np.ndarray,
+    feature_names: List[str],
+    include_features: Optional[List[str]] = None,
+    remap_tortuosity: bool = True,
+) -> Tuple[np.ndarray, List[str]]:
+    """
+    Filter features from an array to match the specified feature list.
+    
+    Args:
+        X: Input array of shape (n_samples, n_features)
+        feature_names: List of feature names corresponding to columns of X
+        include_features: List of feature names to include. If None, uses get_default_include_features()
+        remap_tortuosity: If True, remap tortuosity values < 1 to 1
+    
+    Returns:
+        Filtered array and list of selected feature names
+    """
+    if include_features is None:
+        include_features = get_default_include_features()
+    
+    # Validate that all requested features exist
+    missing_features = [f for f in include_features if f not in feature_names]
+    if missing_features:
+        raise ValueError(
+            f"Missing requested features: {missing_features}. "
+            f"Available features: {feature_names}"
+        )
+    
+    # Get column indices for requested features in the specified order
+    col_to_idx = {name: idx for idx, name in enumerate(feature_names)}
+    feature_indices = [col_to_idx[f] for f in include_features]
+    
+    # Extract only the requested features in the specified order
+    X_filtered = X[:, feature_indices]
+    
+    # Apply tortuosity remapping if requested
+    if remap_tortuosity:
+        tortuosity_indices = [
+            idx for idx, name in enumerate(include_features)
+            if 'tortuosity' in name.lower()
+        ]
+        if tortuosity_indices:
+            for idx in tortuosity_indices:
+                X_filtered[:, idx] = np.maximum(X_filtered[:, idx], 1.0)
+    
+    return X_filtered, include_features
+
+
+def filter_outputs_from_array(
+    Y: np.ndarray,
+    output_names: List[str],
+    include_outputs: Optional[List[str]] = None,
+) -> Tuple[np.ndarray, List[str]]:
+    """
+    Filter outputs from an array to match the specified output list.
+    
+    Args:
+        Y: Output array of shape (n_samples, n_outputs)
+        output_names: List of output names corresponding to columns of Y
+        include_outputs: List of output names to include. If None, uses get_default_include_outputs()
+    
+    Returns:
+        Filtered array and list of selected output names
+    """
+    if include_outputs is None:
+        include_outputs = get_default_include_outputs()
+    
+    # Validate that all requested outputs exist
+    missing_outputs = [o for o in include_outputs if o not in output_names]
+    if missing_outputs:
+        raise ValueError(
+            f"Missing requested outputs: {missing_outputs}. "
+            f"Available outputs: {output_names}"
+        )
+    
+    # Get column indices for requested outputs in the specified order
+    col_to_idx = {name: idx for idx, name in enumerate(output_names)}
+    output_indices = [col_to_idx[o] for o in include_outputs]
+    
+    # Extract only the requested outputs in the specified order
+    Y_filtered = Y[:, output_indices]
+    
+    return Y_filtered, include_outputs
+
+
 def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
     if not os.path.exists(csv_path):
         raise ValueError(f"CSV not found: {csv_path}")
@@ -162,6 +285,7 @@ def build_data_dict_from_csvs(
     require_same_rows: bool = True,
     plot_histograms: bool = True,
     histogram_output_dir: Optional[str] = None,
+    geometry_variant: str = "bifurcations",
 ) -> Dict[str, "np.ndarray"]:
     """
     Concatenate multiple geometries' CSVs and build a `data_dict`.
@@ -180,7 +304,8 @@ def build_data_dict_from_csvs(
         require_same_rows: Whether to require same number of rows in input and output CSVs
         plot_histograms: Whether to generate histograms for selected features (default: True)
         histogram_output_dir: Directory to save histogram plots. If None, saves to 
-                             "data/feature_histograms/{set_name}"
+                             "data/feature_histograms/{set_name}/{geometry_variant}"
+        geometry_variant: Geometry variant name (e.g., "bifurcations" or "bifurcations_EL")
 
     Returns:
         Dictionary with keys "input", "output_{output_type}", and "scaling_factors"
@@ -191,25 +316,12 @@ def build_data_dict_from_csvs(
     all_inputs: List[np.ndarray] = []
     all_outputs: List[np.ndarray] = []
 
-
-    include_features = [
-        "inlet_max_inscribed_radius",
-        "outlet0_max_inscribed_radius_local",
-        "outlet1_max_inscribed_radius_local",
-        "outlet0_max_inscribed_radius_min_on_path",
-        "outlet1_max_inscribed_radius_min_on_path",
-        "outlet0_max_inscribed_radius_max_on_path",
-        "outlet1_max_inscribed_radius_max_on_path",
-        "outlet0_path_length",
-        "outlet1_path_length",
-        "outlet0_tortuosity",
-        "outlet1_tortuosity",
-        "outlet0_angle_diff",
-        "outlet1_angle_diff",
-    ]
-    #include_features = None
-    # Track feature order for consistency across geometries
+    # Use default feature and output selection
+    include_features = get_default_include_features()
+    include_outputs = get_default_include_outputs()
+    # Track feature and output order for consistency across geometries
     feature_order: Optional[List[str]] = None
+    output_order: Optional[List[str]] = None
 
     def require_cols(col_to_idx: Dict[str, int], needed: List[str], ctx: str) -> List[int]:
         missing = [c for c in needed if c not in col_to_idx]
@@ -218,8 +330,8 @@ def build_data_dict_from_csvs(
         return [col_to_idx[c] for c in needed]
 
     for geo in geometries:
-        geom_csv = os.path.join(ml_inputs_root, set_name, geo, "geometric_features.csv")
-        out_csv = os.path.join(ml_inputs_root, set_name, geo, "junction_lumped_parameters.csv")
+        geom_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "geometric_features.csv")
+        out_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "junction_lumped_parameters.csv")
 
         geom_header, geom_X = _read_csv_matrix(geom_csv)
         out_header, out_Y = _read_csv_matrix(out_csv)
@@ -230,53 +342,45 @@ def build_data_dict_from_csvs(
                 f"junction_lumped_parameters has {out_Y.shape[0]} rows"
             )
 
-        # Filter features if include_features is specified
-        if include_features is not None:
-            # Validate that all requested features exist
-            missing_features = [f for f in include_features if f not in geom_header]
-            if missing_features:
-                raise ValueError(
-                    f"Missing requested features in {geo}: {missing_features}. "
-                    f"Available features: {geom_header}"
-                )
-            
-            # Set feature order on first geometry, then validate consistency
-            if feature_order is None:
-                feature_order = include_features.copy()
-            else:
-                # Ensure feature order is consistent
-                if set(include_features) != set(feature_order):
-                    raise ValueError(
-                        f"Feature list mismatch: first geometry had {feature_order}, "
-                        f"but {geo} has different features requested"
-                    )
-            
-            # Get column indices for requested features in the specified order
-            col_to_idx = {name: idx for idx, name in enumerate(geom_header)}
-            feature_indices = require_cols(col_to_idx, feature_order, f"geometric_features for {geo}")
-            
-            # Extract only the requested features in the specified order
-            geom_X = geom_X[:, feature_indices]
+        # Filter features using the reusable function
+        geom_X, selected_features = filter_features_from_array(
+            geom_X, geom_header, include_features=include_features, remap_tortuosity=False
+        )
+        # Note: remap_tortuosity=False here because we'll do it after stacking all arrays
+        
+        # Validate feature order consistency across geometries
+        if feature_order is None:
+            feature_order = selected_features
         else:
-            # Use all features, set feature_order on first geometry for consistency check
-            if feature_order is None:
-                feature_order = geom_header.copy()
-            else:
-                # Validate that all geometries have the same features in the same order
-                if geom_header != feature_order:
-                    raise ValueError(
-                        f"Feature mismatch for {geo}: expected {feature_order}, got {geom_header}"
-                    )
+            if selected_features != feature_order:
+                raise ValueError(
+                    f"Feature list mismatch: first geometry had {feature_order}, "
+                    f"but {geo} has {selected_features}"
+                )
 
-        # Use filtered columns from geometric_features
+        # Filter outputs using the reusable function
+        out_Y, selected_outputs = filter_outputs_from_array(
+            out_Y, out_header, include_outputs=include_outputs
+        )
+        
+        # Validate output order consistency across geometries
+        if output_order is None:
+            output_order = selected_outputs
+        else:
+            if selected_outputs != output_order:
+                raise ValueError(
+                    f"Output list mismatch: first geometry had {output_order}, "
+                    f"but {geo} has {selected_outputs}"
+                )
+
+        # Use filtered columns from geometric_features and junction_lumped_parameters
         all_inputs.append(geom_X)
-        # Use all columns from junction_lumped_parameters (already includes both outlets)
         all_outputs.append(out_Y)
 
     input_array = np.vstack(all_inputs)
     output_array = np.vstack(all_outputs)
 
-    # Remap tortuosity values less than 1 to 1
+    # Remap tortuosity values less than 1 to 1 (after stacking)
     # Tortuosity should be >= 1 (straight line = 1, curved paths > 1)
     if feature_order is not None:
         # Find indices of tortuosity columns
@@ -293,8 +397,8 @@ def build_data_dict_from_csvs(
     # Generate histograms if requested
     if plot_histograms and include_features is not None and feature_order is not None:
         if histogram_output_dir is None:
-            # Default output directory
-            histogram_output_dir = os.path.join("results", "feature_histograms", set_name)
+            # Default output directory includes geometry variant
+            histogram_output_dir = os.path.join("data", "feature_histograms", set_name, geometry_variant)
         
         plot_feature_histograms(
             input_array=input_array,
@@ -324,6 +428,11 @@ def build_data_dict_from_csvs(
 
 __all__ = [
     "build_data_dict_from_csvs",
+    "get_default_include_features",
+    "get_default_include_outputs",
+    "filter_features_from_array",
+    "filter_outputs_from_array",
+    "_read_csv_matrix",
 ]
 
 

@@ -22,7 +22,7 @@ def launch_training(network_params, optimizer_params, training_params):
     network_params["target_coef_ind"] = 0
     network_params["layer_width"] = 40
     network_params["num_layers"] = 1
-    training_params["num_epochs"] = 500
+    training_params["num_epochs"] = 5000
     optimizer_params["decay_rate"] = 0.5
     optimizer_params["init"] = 0.01
     model = NeuralNet(network_params, optimizer_params)
@@ -42,33 +42,47 @@ def launch_training(network_params, optimizer_params, training_params):
 if __name__ == "__main__":
     set_name = sys.argv[1]
     num_geos = int(sys.argv[2])
+    geometry_variant_arg = sys.argv[3] if len(sys.argv) > 3 else "all"
     output_type = "rri"#, "ri", or "rr"
     set_type = "test"
     #pdb.set_trace()
 
-    split_ind_dict = load_dict(
-        f"data/split_indices/{set_name}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
-    )
+    # Determine which geometry variants to process
+    if geometry_variant_arg == "all":
+        geometry_variants_to_process = ["bifurcations", "bifurcations_EL"]
+    else:
+        geometry_variants_to_process = [geometry_variant_arg]
+    
+    # Process each geometry variant
+    for geometry_variant in geometry_variants_to_process:
+        print(f"\n{'='*80}")
+        print(f"Training models for geometry variant: {geometry_variant}")
+        print(f"{'='*80}")
+        
+        split_ind_dict = load_dict(
+            f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
+        )
 
-    network_params = {"num_input_features": 22,
-                      "num_layers": 1,
-                      "layer_width":20,
-                      "output_type": output_type,
-                      "set_name": set_name,
-                      "set_type": set_type,
-                      "num_geos": num_geos,
-                      "data_root": "data",
-                      "pred_mode": "m1"}
-    
-    training_params = {"num_epochs": 1000, 
-                       "batch_size": 1,
-                       "train_inds": split_ind_dict["train_ind"],
-                       "val_inds": split_ind_dict["val_ind"],
-                       "num_offsets": split_ind_dict["num_offsets"],}
-    
-    optimizer_params = {#"step_size": 0.0002,
-                        "init" : 0.02,
-                        "transition_steps": 1000,
-                        "decay_rate" : 0.95}
-    
-    launch_training(network_params, optimizer_params, training_params)
+        network_params = {"num_input_features": 13,
+                          "num_layers": 1,
+                          "layer_width":20,
+                          "output_type": output_type,
+                          "set_name": set_name,
+                          "set_type": set_type,
+                          "num_geos": num_geos,
+                          "data_root": "data",
+                          "geometry_variant": geometry_variant,
+                          "pred_mode": "m1"}
+        
+        training_params = {"num_epochs": 1000, 
+                           "batch_size": 1,
+                           "train_inds": split_ind_dict["train_ind"],
+                           "val_inds": split_ind_dict["val_ind"],
+                           "num_offsets": split_ind_dict["num_offsets"],}
+        
+        optimizer_params = {#"step_size": 0.0002,
+                            "init" : 0.02,
+                            "transition_steps": 1000,
+                            "decay_rate" : 0.95}
+        
+        launch_training(network_params, optimizer_params, training_params)

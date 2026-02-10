@@ -71,7 +71,6 @@ def load_junction_geometric_features(
         gp = j.get("geometric_params", {})
 
         outlet_vessels = j.get("outlet_vessels", [])
-
         if require_two_outlets and len(outlet_vessels) != 2:
             # Skip non-bifurcation junctions in this mode
             if verbose:
@@ -79,7 +78,6 @@ def load_junction_geometric_features(
             continue
         if verbose:
             print(f"Processing junction {j_name}: {outlet_vessels}")
-
 
         # --- Per-junction scalars ---
         inlet_max_r = _safe_get(gp, "inlet_max_inscribed_radius", default=None)
@@ -95,6 +93,7 @@ def load_junction_geometric_features(
         outlet_max_r_min_path = gp.get("max_inscribed_radius_min_on_path", {}) or {}
         outlet_max_r_max_path = gp.get("max_inscribed_radius_max_on_path", {}) or {}
         outlet_angle_diffs = gp.get("outlet_angle_diffs", {}) or {}
+
         # Map vessel_name -> metrics
         outlet_names = list(outlet_path_lengths.keys())
         if require_two_outlets and len(outlet_names) != 2:
@@ -105,7 +104,26 @@ def load_junction_geometric_features(
                 if 0 <= vid < len(vessels):
                     outlet_names.append(vessels[vid].get("vessel_name", f"v{vid}"))
 
-        
+        if len(outlet_names) < 2:
+            # Cannot form a consistent feature vector; skip
+            continue
+
+        # Sort outlets by path length (descending); if missing, treat as 0
+        def _pl(name: str) -> float:
+            val = outlet_path_lengths.get(name)
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return 0.0
+
+        outlet_names_sorted = sorted(outlet_names, key=_pl, reverse=True)[:2]
+
+        # Skip junctions where the primary outlet (outlet0) is a connector vessel
+        primary_outlet = outlet_names_sorted[0]
+        if 'connector' in primary_outlet and 'connectorEL' not in primary_outlet:
+            if verbose:
+                print(f"Skipping junction {j_name}: primary outlet {primary_outlet} is a connector vessel")
+            continue
 
         def _to_float(x):
             try:
@@ -151,36 +169,35 @@ def load_junction_geometric_features(
 
     # Build TWO rows per junction: one with outlet0 first, one with outlet1 first
         # Row 1: inlet + outlet0 + outlet1
-        if 'connector' not in outlet_names[0] or 'connectorEL' in outlet_names[0]:
-            feat_row_0_first: List[float] = [outlet_vessels[0]]
-            if verbose:
-                print(f"Adding outlet 0 features: {outlet_names[0]}")
-                print(f"Adding inlet max inscribed radius: {inlet_max_r}")
-            feat_row_0_first.append(_to_float(inlet_max_r))
-            feat_row_0_first.extend(_to_float(c) for c in inlet_tangent)
-            feat_row_0_first.extend(get_outlet_features(outlet_names[0]))
-            feat_row_0_first.extend(get_outlet_features(outlet_names[1]))
-            rows.append(feat_row_0_first)
-            junction_names.append(j_name)
-            outlet_primary_names.append(outlet_names[0])
+        feat_row_0_first: List[float] = []
+        if verbose:
+            print(f"Adding inlet max inscribed radius: {inlet_max_r}")
+        feat_row_0_first.append(_to_float(inlet_max_r))
+        if verbose:
+            print(f"Adding inlet tangent features: {inlet_tangent}")
+        feat_row_0_first.extend(_to_float(c) for c in inlet_tangent)
+        feat_row_0_first.extend(get_outlet_features(outlet_names_sorted[0]))
+        feat_row_0_first.extend(get_outlet_features(outlet_names_sorted[1]))
+        rows.append(feat_row_0_first)
+        junction_names.append(j_name)
+        outlet_primary_names.append(outlet_names_sorted[0])
 
         # Row 2: inlet + outlet1 + outlet0 (swapped)
         # Skip swapped sample if outlet1 would be a connector (connector-as-primary exclusion)
-        if 'connector' not in outlet_names[1] or 'connectorEL' in outlet_names[1]:
-            print(f"Adding outlet 1 features: {outlet_names[1]}")
-            feat_row_1_first: List[float] = [outlet_vessels[1]]
+        if 'connector' not in outlet_names_sorted[1] or 'connectorEL' in outlet_names_sorted[1]:
+            feat_row_1_first: List[float] = []
             feat_row_1_first.append(_to_float(inlet_max_r))
             feat_row_1_first.extend(_to_float(c) for c in inlet_tangent)
-            feat_row_1_first.extend(get_outlet_features(outlet_names[1]))
-            feat_row_1_first.extend(get_outlet_features(outlet_names[0]))
+            feat_row_1_first.extend(get_outlet_features(outlet_names_sorted[1]))
+            feat_row_1_first.extend(get_outlet_features(outlet_names_sorted[0]))
             rows.append(feat_row_1_first)
             junction_names.append(j_name)  # Same junction name for both rows
-            outlet_primary_names.append(outlet_names[1])
+            outlet_primary_names.append(outlet_names_sorted[1])
         else:
             if verbose:
                 print(
                     f"Skipping swapped sample for junction {j_name}: "
-                    f"primary outlet would be connector {outlet_names[1]}"
+                    f"primary outlet would be connector {outlet_names_sorted[1]}"
                 )
 
     if not rows:
@@ -190,7 +207,6 @@ def load_junction_geometric_features(
 
     # Feature names in the same order as feat_row construction above
     feature_names: List[str] = [
-        "outlet_vessel_id",
         "inlet_max_inscribed_radius",
         "inlet_tangent_x",
         "inlet_tangent_y",

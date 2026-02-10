@@ -46,17 +46,32 @@ def train_nn(model, training_params):
                         weights = model.weights)
         train_hist.append(train_loss)
 
-        val_loss = loss_pure(input = model.input[val_inds,:],
-                        outputs= model.output[val_inds,:],
-                        scaling_factors = model.data_dict["scaling_factors"][val_inds,:],
-                        scaling_dict = model.scaling_dict,
-                        target_coef_ind = model.target_coef_ind,
-                        weights = model.weights)
-        val_hist.append(val_loss)
-
-        print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
-              "Training set accuracy {:e}  |  ".format(train_loss) + \
-              "Validation set accuracy {:e}".format(val_loss))
+        # Handle empty validation set (100% train)
+        if len(val_inds) > 0:
+            val_loss = loss_pure(input = model.input[val_inds,:],
+                            outputs= model.output[val_inds,:],
+                            scaling_factors = model.data_dict["scaling_factors"][val_inds,:],
+                            scaling_dict = model.scaling_dict,
+                            target_coef_ind = model.target_coef_ind,
+                            weights = model.weights)
+            val_hist.append(val_loss)
+            print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
+                  "Training set accuracy {:e}  |  ".format(train_loss) + \
+                  "Validation set accuracy {:e}".format(val_loss))
+        else:
+            val_loss = float('nan')
+            val_hist.append(val_loss)
+            print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
+                  "Training set accuracy {:e}  |  ".format(train_loss) + \
+                  "Validation set: N/A (100% train)")
+        
+        # Early stopping: stop training if loss goes below 10^-3
+        # Use validation loss if available, otherwise use training loss
+        loss_to_check = val_loss if len(val_inds) > 0 and not np.isnan(val_loss) else train_loss
+        if loss_to_check < 1e-3:
+            print(f"\n  Early stopping: Loss ({loss_to_check:.2e}) is below threshold (1e-3)")
+            print(f"  Stopping training at epoch {epoch+1}/{training_params['num_epochs']}")
+            break
         
         if (epoch+1)%100 == 0 and plotting:
             if epoch == 0:
@@ -67,12 +82,18 @@ def train_nn(model, training_params):
             plt.xlabel("Epoch"); plt.ylabel("Loss (RMSE) (mmHg)"); plt.title("Training and Validation Loss")
             plt.yscale("log")
             plt.legend()
-            out_dir = os.path.join("results", "models", str(model.set_name))
+            geometry_variant = getattr(model, 'geometry_variant', 'bifurcations')
+            out_dir = os.path.join("results", "models", str(model.set_name), geometry_variant)
             os.makedirs(out_dir, exist_ok=True)
             plt.savefig(os.path.join(out_dir, f"{model_name}_training_plot.png"), bbox_inches='tight')
 
-    out_dir = os.path.join("results", "models", str(model.set_name))
+    geometry_variant = getattr(model, 'geometry_variant', 'bifurcations')
+    out_dir = os.path.join("results", "models", str(model.set_name), geometry_variant)
     os.makedirs(out_dir, exist_ok=True)
     dill_save(model, os.path.join(out_dir, f"{model_name}_model"))
     dill_save(model, os.path.join(out_dir, f"{model_name2}_model"))
-    return val_loss.item()
+    # Return final validation loss (or NaN if 100% train)
+    if len(val_inds) > 0:
+        return val_loss.item()
+    else:
+        return float('nan')

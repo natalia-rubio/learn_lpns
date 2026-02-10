@@ -20,17 +20,21 @@ class NeuralNet():
 
         # Default set_type to "test" for convenience.
         self.set_type = network_params.get("set_type", "test")
+        
+        # Geometry variant (default: "bifurcations" for backward compatibility)
+        self.geometry_variant = network_params.get("geometry_variant", "bifurcations")
 
         data_root = network_params.get("data_root", "data")
         jax_arrays_path = os.path.join(
             data_root,
             "jax_arrays",
             self.set_name,
+            self.geometry_variant,
             self.set_type,
             f"jax_arrays_num_geos_{network_params['num_geos']}.pkl",
         )
         self.data_dict = load_dict(jax_arrays_path)
-
+        #import pdb; pdb.set_trace()
         # scaling_dict is not used in the current loss, but keep attribute for API compatibility.
         self.scaling_dict = network_params.get("scaling_dict", {})
         self.output_type    = network_params["output_type"]

@@ -26,6 +26,7 @@ For each junction we currently store:
 import json
 import numpy as np
 from util.zerod_calibration.file_io import read_centerline_vtp
+import re
 
 
 def get_angle_diff(vec1, vec2):
@@ -135,6 +136,28 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                 inlet_idx = i
             elif gid[i] > 0:
                 outlet_indices.append(i)
+    
+    # Helper to find centerline point index from GlobalNodeId
+    def find_point_from_gid(gid_value):
+        """
+        Find centerline point index corresponding to a GlobalNodeId.
+        
+        Args:
+            gid_value: GlobalNodeId (int)
+        
+        Returns:
+            Point index (int) or None if not found
+        """
+        if gid is None:
+            return None
+        gid_np = np.asarray(gid)
+        matches = np.where(gid_np == gid_value)[0]
+        if len(matches) == 0:
+            return None
+        if len(matches) > 1:
+            # If multiple matches, use the first one (shouldn't happen, but handle gracefully)
+            print(f"    Warning: Multiple centerline points found with GID {gid_value}, using first match")
+        return int(matches[0])
     
     # Helper to find a centerline point corresponding to a 0D vessel segment
     # (Same logic as in oned_to_zerod.py)
@@ -462,7 +485,14 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
         if not np.any(junction_mask):
             # No junction region found - this can happen for simple pass-through junctions
             # Return empty metrics dict (caller will handle gracefully)
+            print(f"    Debug: No centerline points found with BifurcationId={junction_bif_id}")
+            print(f"    Debug: Available BifurcationIds in centerline: {np.unique(bifurcation_id_array[~np.isnan(bifurcation_id_array)]) if bifurcation_id_array is not None else 'None'}")
             return metrics
+        
+        num_junction_points = np.sum(junction_mask)
+        print(f"    Debug: Found {num_junction_points} centerline points with BifurcationId={junction_bif_id}")
+        # Additional debug context for matching failures
+        print(f"    Debug: compute_junction_outlet_metrics context: inlet_branch_id={inlet_branch_id}, outlet_branch_ids={outlet_branch_ids}")
 
         junc_indices = np.where(junction_mask)[0]
         junction_paths = path_arr_np[junction_mask]
@@ -509,23 +539,38 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
 
             max_path_idx = int(np.argmax(seg_paths))
             endpoint = seg_points[max_path_idx]
-
             best_outlet = None
             best_distance = float('inf')
+            # Debug: print segment info
+            try:
+                print(f"    Debug: segment {seg_start}-{seg_end}, segment_path_length={segment_path_length:.6f}")
+                print(f"      startpoint={startpoint}, endpoint={endpoint}")
+            except Exception:
+                pass
             for outlet_branch_id in outlet_branch_ids:
                 if outlet_branch_id not in branch_inlet_point:
                     raise ValueError(f"Outlet branch {outlet_branch_id} not found in branch_inlet_point for junction BifurcationId={junction_bif_id}")
                 outlet_inlet = branch_inlet_point[outlet_branch_id]
                 distance = float(np.linalg.norm(endpoint - outlet_inlet))
+                print(f"      Debug: distance from segment endpoint to outlet branch {outlet_branch_id} inlet: {distance:.6f}")
                 if distance < best_distance:
                     best_distance = distance
                     best_outlet = outlet_branch_id
 
             if best_outlet is None:
-                raise ValueError(f"Could not match segment to any outlet branch (best_distance={best_distance:.6f})")
+                print(f"    Debug: Could not match segment to any outlet branch (best_distance={best_distance:.6f})")
+                print(f"    Debug: Available outlet branch IDs: {outlet_branch_ids}")
+                print(f"    Debug: Segment endpoint: {endpoint}")
+                continue  # Skip this segment instead of raising error
             threshold = 10
             if best_distance >= threshold:
-                raise ValueError(f"Best outlet match distance {best_distance:.6f} exceeds threshold of {threshold}")
+                print(f"    Debug: Best outlet match distance {best_distance:.6f} exceeds threshold of {threshold} for outlet {best_outlet}")
+                if best_outlet is not None and best_outlet in branch_inlet_point:
+                    print(f"    Debug: Segment endpoint: {endpoint}, outlet inlet: {branch_inlet_point[best_outlet]}")
+                else:
+                    print(f"    Debug: Segment endpoint: {endpoint}, no valid best_outlet to show inlet coords")
+                print(f"    Debug: Skipping segment {seg_start}-{seg_end} (no reliable match)")
+                continue  # Skip this segment instead of raising error
 
             # Collect radius extrema for this segment (we'll add inlet/outlet points below)
             seg_radii = sorted_radii[seg_start:seg_end]
@@ -583,54 +628,105 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
         inlet_radius_val = None
         inlet_branch_id = None
 
-        # For inlet vessels: get area at outlet (end) of the vessel (where it connects to junction)
-        if not inlet_vessel_ids:
-            raise ValueError(f"Junction {junc_name} has no inlet vessels")
+        # Get junction inlet GID (from junction's centerline_node_ids)
+        junc_node_ids = junc.get('centerline_node_ids', {})
+        inlet_gid = junc_node_ids.get('inlet')
         
-        inlet_id = inlet_vessel_ids[0]
-        if inlet_id >= len(vessels):
-            raise ValueError(f"Inlet vessel ID {inlet_id} out of bounds for junction {junc_name}")
+        if inlet_gid is not None:
+            # Use GID directly to find the junction inlet point
+            inlet_pt_idx = find_point_from_gid(inlet_gid)
+            if inlet_pt_idx is None:
+                print(f"    Warning: Could not find centerline point with GID {inlet_gid} for junction {junc_name} inlet, falling back to vessel lookup")
+                inlet_gid = None
         
-        inlet_vessel = vessels[inlet_id]
-        inlet_name = inlet_vessel.get('vessel_name', '')
-        if not inlet_name:
-            raise ValueError(f"Inlet vessel {inlet_id} has empty vessel_name for junction {junc_name}")
+        if inlet_gid is None:
+            # Fallback: use vessel-based lookup (for backward compatibility)
+            if not inlet_vessel_ids:
+                raise ValueError(f"Junction {junc_name} has no inlet vessels and no inlet GID")
+            
+            inlet_id = inlet_vessel_ids[0]
+            if inlet_id >= len(vessels):
+                raise ValueError(f"Inlet vessel ID {inlet_id} out of bounds for junction {junc_name}")
+            
+            inlet_vessel = vessels[inlet_id]
+            inlet_name = inlet_vessel.get('vessel_name', '')
+            if not inlet_name:
+                raise ValueError(f"Inlet vessel {inlet_id} has empty vessel_name for junction {junc_name}")
+            
+            inlet_branch_id = get_branch_id_from_name(inlet_name)
+            inlet_pt_idx = find_point_for_vessel_segment(inlet_name, prefer_end=True)
+            if inlet_pt_idx is None:
+                raise ValueError(f"Could not find outlet point for inlet vessel {inlet_name} in junction {junc_name}")
+        else:
+            # Get vessel name for area dictionary key
+            if not inlet_vessel_ids:
+                raise ValueError(f"Junction {junc_name} has no inlet vessels")
+            inlet_id = inlet_vessel_ids[0]
+            if inlet_id >= len(vessels):
+                raise ValueError(f"Inlet vessel ID {inlet_id} out of bounds for junction {junc_name}")
+            inlet_vessel = vessels[inlet_id]
+            inlet_name = inlet_vessel.get('vessel_name', '')
+            if not inlet_name:
+                raise ValueError(f"Inlet vessel {inlet_id} has empty vessel_name for junction {junc_name}")
+            inlet_branch_id = get_branch_id_from_name(inlet_name)
         
-        inlet_branch_id = get_branch_id_from_name(inlet_name)
-        pt_idx = find_point_for_vessel_segment(inlet_name, prefer_end=True)
-        if pt_idx is None:
-            raise ValueError(f"Could not find outlet point for inlet vessel {inlet_name} in junction {junc_name}")
-        if pt_idx >= len(area):
-            raise ValueError(f"Point index {pt_idx} out of bounds for area array (length {len(area)}) for inlet vessel {inlet_name}")
+        if inlet_pt_idx >= len(area):
+            raise ValueError(f"Point index {inlet_pt_idx} out of bounds for area array (length {len(area)}) for junction {junc_name} inlet")
         
-        inlet_vessel_areas[inlet_name] = float(area[pt_idx])
+        inlet_vessel_areas[inlet_name] = float(area[inlet_pt_idx])
 
-        # Tangent at inlet side (along branch towards junction)
-        mask = branch_id == inlet_branch_id
-        idx = np.where(mask)[0]
-        if idx.size < 2:
-            raise ValueError(f"Insufficient points ({idx.size}) for computing inlet tangent for branch {inlet_branch_id} in junction {junc_name}")
+        # Tangent at inlet side: use points near the inlet GID point
+        # Find nearby points on the same branch to compute tangent
+        if inlet_branch_id is not None:
+            mask = branch_id == inlet_branch_id
+            idx = np.where(mask)[0]
+            if idx.size >= 2:
+                # Find the inlet point in the branch indices
+                branch_paths = path_arr_np[idx]
+                order = np.argsort(branch_paths)
+                idx_sorted = idx[order]
+                
+                # Find inlet point position in sorted list
+                inlet_pos = np.where(idx_sorted == inlet_pt_idx)[0]
+                if len(inlet_pos) > 0:
+                    inlet_pos = inlet_pos[0]
+                    # Use point before inlet (upstream) to compute tangent
+                    if inlet_pos > 0:
+                        prev_idx = idx_sorted[inlet_pos - 1]
+                        v = points_array[inlet_pt_idx] - points_array[prev_idx]
+                    else:
+                        # If inlet is first point, use next point
+                        next_idx = idx_sorted[inlet_pos + 1] if inlet_pos + 1 < len(idx_sorted) else inlet_pt_idx
+                        v = points_array[next_idx] - points_array[inlet_pt_idx]
+                    
+                    nrm = np.linalg.norm(v)
+                    if nrm > 0.0:
+                        inlet_tangent = (v / nrm).tolist()
         
-        branch_paths = path_arr_np[idx]
-        order = np.argsort(branch_paths)
-        idx_sorted = idx[order]
-        end_idx = idx_sorted[-1]
-        prev_idx = idx_sorted[-2]
-        v = points_array[end_idx] - points_array[prev_idx]
-        nrm = np.linalg.norm(v)
-        if nrm <= 0.0:
-            raise ValueError(f"Zero-length vector for inlet tangent computation in junction {junc_name}")
-        inlet_tangent = (v / nrm).tolist()
+        if inlet_tangent is None:
+            raise ValueError(f"Could not compute inlet tangent for junction {junc_name}")
 
-        # MaximumInscribedSphereRadius at inlet branch outlet
-        if inlet_branch_id not in branch_outlet_idx:
-            raise ValueError(f"Inlet branch {inlet_branch_id} not found in branch_outlet_idx for junction {junc_name}")
-        idx_out = branch_outlet_idx[inlet_branch_id]
-        inlet_radius_val = float(max_inscribed_radius[idx_out])
+        # MaximumInscribedSphereRadius at junction inlet point
+        inlet_radius_val = float(max_inscribed_radius[inlet_pt_idx])
 
         # For outlet vessels: get area at inlet (start) of the vessel (where it connects to junction)
         if not outlet_vessel_ids:
             raise ValueError(f"Junction {junc_name} has no outlet vessels")
+        
+        # Get outlet GIDs from junction (if available)
+        outlet_gids = junc_node_ids.get('outlets', [])
+        
+        # Create mapping from outlet vessel ID to outlet GID
+        outlet_id_to_gid = {}
+        if outlet_gids and len(outlet_gids) == len(outlet_vessel_ids):
+            for i, vessel_id in enumerate(outlet_vessel_ids):
+                outlet_id_to_gid[vessel_id] = outlet_gids[i]
+        elif outlet_gids:
+            print(f"    Warning: Junction {junc_name} has {len(outlet_gids)} outlet GIDs but {len(outlet_vessel_ids)} outlet vessels, GID mapping may be incomplete")
+            # Try to match by position (may not be accurate)
+            for i, vessel_id in enumerate(outlet_vessel_ids):
+                if i < len(outlet_gids):
+                    outlet_id_to_gid[vessel_id] = outlet_gids[i]
         
         outlet_branch_ids = []
         for vessel_id in outlet_vessel_ids:
@@ -642,11 +738,39 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             if not vessel_name:
                 raise ValueError(f"Outlet vessel {vessel_id} has empty vessel_name for junction {junc_name}")
 
-            # Skip connector vessels for junction metrics (they're artificial and don't have centerline junction regions)
+            # Check if this is a connector vessel
             is_connector = 'connector' in vessel_name
             
-            if is_connector:
-                # For outlets to connector vessels: use inlet vessel outlet values
+            # Extract branch ID even for connectors (needed for junction-level metrics)
+            b_id = get_branch_id_from_name(vessel_name)
+            print(f"Outlet vessel {vessel_name} branch ID: {b_id}")
+            
+            # Get outlet GID for this vessel (if available)
+            outlet_gid = outlet_id_to_gid.get(vessel_id)
+            outlet_pt_idx = None
+            
+            if outlet_gid is not None:
+                # Use GID directly to find the outlet point
+                outlet_pt_idx = find_point_from_gid(outlet_gid)
+                if outlet_pt_idx is None:
+                    print(f"    Warning: Could not find centerline point with GID {outlet_gid} for outlet vessel {vessel_name} in junction {junc_name}, falling back to vessel lookup")
+                    outlet_gid = None
+            
+            if outlet_gid is None:
+                # Fallback: use vessel-based lookup
+                outlet_pt_idx = find_point_for_vessel_segment(vessel_name, prefer_end=False)
+                if outlet_pt_idx is None:
+                    raise ValueError(f"Could not find inlet point for outlet vessel {vessel_name} in junction {junc_name}")
+            
+            if outlet_pt_idx >= len(area):
+                raise ValueError(f"Point index {outlet_pt_idx} out of bounds for area array (length {len(area)}) for outlet vessel {vessel_name}")
+            
+            if is_connector and 'connectorEL' not in vessel_name:
+                # For outlets to connector vessels: these are artificial constructs.
+                # Treat the junction->connector outlet path as zero-length and inherit
+                # inlet properties (tangent, local radius). Do NOT include the
+                # connector's branch id in outlet_branch_ids so the in-junction
+                # path segmentation doesn't try to match segments to connector outlets.
                 # Find the first bifurcation (JX_bif0) to get the original inlet
                 if junc_name.endswith('_bif0'):
                     # This is the first bifurcation, use its inlet vessel outlet
@@ -655,6 +779,13 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                         raise ValueError(f"Inlet vessel outlet area not found for connector outlet {vessel_name} in junction {junc_name}")
                     outlet_vessel_areas[vessel_name] = inlet_vessel_outlet_area
                     outlet_tangents[vessel_name] = inlet_tangent.copy() if inlet_tangent else None
+                    # For connector outlets, set junction-level metrics to inlet values / zero
+                    outlet_path_lengths[vessel_name] = 0.0
+                    outlet_tortuosities[vessel_name] = 0.0
+                    outlet_max_inscribed_radius_min_on_path[vessel_name] = inlet_radius_val
+                    outlet_max_inscribed_radius_max_on_path[vessel_name] = inlet_radius_val
+                    # Angle diff between inlet and connector outlet is zero (same tangent)
+                    outlet_angle_diffs[vessel_name] = 0.0
                 else:
                     # Not the first bifurcation, find the appropriate junction to get inlet vessel
                     # If junction is split, find JX_bif0; otherwise use the junction directly
@@ -715,35 +846,57 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                             outlet_tangents[vessel_name] = None
                     else:
                         outlet_tangents[vessel_name] = None
+
+                    # For connector outlets (non-first bifurcations), inherit inlet radius and set path length/tortuosity to zero
+                    # Find the original junction outlet idx for that branch
+                    if target_branch_id not in branch_outlet_idx:
+                        raise ValueError(f"Junction inlet branch {target_branch_id} not found in branch_outlet_idx")
+                    target_idx_out = branch_outlet_idx[target_branch_id]
+                    connector_inlet_radius = float(max_inscribed_radius[target_idx_out])
+                    outlet_path_lengths[vessel_name] = 0.0
+                    outlet_tortuosities[vessel_name] = 0.0
+                    outlet_max_inscribed_radius_min_on_path[vessel_name] = connector_inlet_radius
+                    outlet_max_inscribed_radius_max_on_path[vessel_name] = connector_inlet_radius
+                    outlet_angle_diffs[vessel_name] = 0.0
+                # Do NOT append connector branch IDs to outlet_branch_ids — connectors are artificial
+                # and should not be matched in compute_junction_outlet_metrics
+                # (they've already been assigned junction-level metrics above)
             else:
-                # Regular outlet vessel processing
-                pt_idx = find_point_for_vessel_segment(vessel_name, prefer_end=False)
-                if pt_idx is None:
-                    raise ValueError(f"Could not find inlet point for outlet vessel {vessel_name} in junction {junc_name}")
-                if pt_idx >= len(area):
-                    raise ValueError(f"Point index {pt_idx} out of bounds for area array (length {len(area)}) for outlet vessel {vessel_name}")
-                
-                outlet_vessel_areas[vessel_name] = float(area[pt_idx])
+                # Regular outlet vessel processing - use outlet_pt_idx computed from GID (or fallback)
+                outlet_vessel_areas[vessel_name] = float(area[outlet_pt_idx])
 
-                b_id = get_branch_id_from_name(vessel_name)
-                outlet_branch_ids.append(b_id)
+                if b_id is not None:
+                    outlet_branch_ids.append(b_id)
 
-                # Tangent at outlet side (from junction into branch)
-                mask = branch_id == b_id
-                idx = np.where(mask)[0]
-                if idx.size < 2:
-                    raise ValueError(f"Insufficient points ({idx.size}) for computing outlet tangent for branch {b_id} (vessel {vessel_name}) in junction {junc_name}")
+                # Tangent at outlet side: use points near the outlet GID point
+                if b_id is not None:
+                    mask = branch_id == b_id
+                    idx = np.where(mask)[0]
+                    if idx.size >= 2:
+                        # Find the outlet point in the branch indices
+                        branch_paths = path_arr_np[idx]
+                        order = np.argsort(branch_paths)
+                        idx_sorted = idx[order]
+                        
+                        # Find outlet point position in sorted list
+                        outlet_pos = np.where(idx_sorted == outlet_pt_idx)[0]
+                        if len(outlet_pos) > 0:
+                            outlet_pos = outlet_pos[0]
+                            # Use point after outlet (downstream) to compute tangent
+                            if outlet_pos + 1 < len(idx_sorted):
+                                next_idx = idx_sorted[outlet_pos + 1]
+                                v = points_array[next_idx] - points_array[outlet_pt_idx]
+                            else:
+                                # If outlet is last point, use previous point
+                                prev_idx = idx_sorted[outlet_pos - 1] if outlet_pos > 0 else outlet_pt_idx
+                                v = points_array[outlet_pt_idx] - points_array[prev_idx]
+                            
+                            nrm = np.linalg.norm(v)
+                            if nrm > 0.0:
+                                outlet_tangents[vessel_name] = (v / nrm).tolist()
                 
-                branch_paths = path_arr_np[idx]
-                order = np.argsort(branch_paths)
-                idx_sorted = idx[order]
-                first_idx = idx_sorted[0]
-                next_idx = idx_sorted[1]
-                v = points_array[next_idx] - points_array[first_idx]
-                nrm = np.linalg.norm(v)
-                if nrm <= 0.0:
-                    raise ValueError(f"Zero-length vector for outlet tangent computation for vessel {vessel_name} in junction {junc_name}")
-                outlet_tangents[vessel_name] = (v / nrm).tolist()
+                if vessel_name not in outlet_tangents:
+                    raise ValueError(f"Could not compute outlet tangent for vessel {vessel_name} in junction {junc_name}")
 
         # In-junction path lengths and radius extrema, following bifurcation_splitting logic
         # Handle both regular junctions (J0) and bifurcated junctions (J0_bif0)
@@ -768,36 +921,54 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             print(f"  Computing in-junction metrics for {junc_name} "
                   f"(inlet branch {inlet_branch_id}, outlets {outlet_branch_ids})")
             outlet_metrics = compute_junction_outlet_metrics(inlet_branch_id, outlet_branch_ids, junction_bif_id)
+            # Debug: show computed outlet_metrics keys and a short summary
+            try:
+                keys = list(outlet_metrics.keys())
+                print(f"    Debug: outlet_metrics keys: {keys}")
+                for k in keys:
+                    v = outlet_metrics.get(k, {})
+                    pl = v.get('path_length', None)
+                    print(f"      Debug: outlet_metrics[{k}] -> path_length={pl}")
+            except Exception:
+                print(f"    Debug: outlet_metrics (raw): {outlet_metrics}")
+        else:
+            print(f"  Warning: {junc_name} has no outlet branch IDs (all outlets may be connectors or invalid)")
+            print(f"    Outlet vessel IDs: {outlet_vessel_ids}")
+            print(f"    Outlet vessel names: {[vessels[vid].get('vessel_name', 'unknown') for vid in outlet_vessel_ids if vid < len(vessels)]}")
+            outlet_metrics = {}  # Initialize to empty dict when no outlet branch IDs
             
             # If no metrics were computed (e.g., no BifurcationId region in centerline),
             # we skip junction-level metrics but still have basic metrics (areas, tangents, local radius)
             if not outlet_metrics:
                 print(f"    Warning: No junction region found for {junc_name} (BifurcationId={junction_bif_id}), "
                       f"skipping junction-level metrics (path lengths, tortuosities, radius min/max on path)")
+
+        # Map outlet_metrics (if any) and connectors into junction-level dictionaries
+        for vessel_id in outlet_vessel_ids:
+            if vessel_id >= len(vessels):
+                raise ValueError(f"Outlet vessel ID {vessel_id} out of bounds for junction {junc_name}")
             
-            for vessel_id in outlet_vessel_ids:
-                if vessel_id >= len(vessels):
-                    raise ValueError(f"Outlet vessel ID {vessel_id} out of bounds for junction {junc_name}")
-                
-                vessel = vessels[vessel_id]
-                vessel_name = vessel.get('vessel_name', '')
-                if not vessel_name:
-                    raise ValueError(f"Outlet vessel {vessel_id} has empty vessel_name for junction {junc_name}")
-                
-                # Handle connector vessels - set path_length and tortuosity to 0
-                is_connector = 'connector' in vessel_name
-                if is_connector:
-                    # Connector vessels don't have junction-level path lengths, tortuosities, or radius metrics
-                    # They're artificial constructs, so set values to 0 or use inlet values
+            vessel = vessels[vessel_id]
+            vessel_name = vessel.get('vessel_name', '')
+            if not vessel_name:
+                raise ValueError(f"Outlet vessel {vessel_id} has empty vessel_name for junction {junc_name}")
+
+            # Handle connector vessels - set path_length and tortuosity to 0
+            is_connector = 'connector' in vessel_name
+            if is_connector:
+                # Distinguish connectors created by bifurcation splitting (have numeric suffix
+                # like '_connector0') from connectors created by EL adjustment (typically
+                # end with '_connector' with no numeric suffix). Treat them differently.
+                numbered_conn = re.search(r"_connector(\d+)$", vessel_name)
+                if numbered_conn:
+                    # Splitting-created connector: keep previous behavior (inherit inlet/tangent, zero-length)
                     outlet_path_lengths[vessel_name] = 0.0
                     outlet_tortuosities[vessel_name] = 0.0
-                    
+
                     # Use junction inlet radius for radius min/max on path (connectors inherit from original inlet)
                     if junc_name.endswith('_bif0'):
-                        # This is the first bifurcation, use its inlet vessel outlet radius
                         connector_inlet_radius = inlet_radius_val
                     elif '_bif' in junc_name:
-                        # Not the first bifurcation, find JX_bif0
                         junction_base = junc_name.split('_bif')[0]
                         target_junc_name = f"{junction_base}_bif0"
                         target_junc = None
@@ -805,37 +976,34 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                             if j.get('junction_name') == target_junc_name:
                                 target_junc = j
                                 break
-                        
+
                         if target_junc is None:
                             raise ValueError(f"Could not find first bifurcation {target_junc_name} for connector outlet {vessel_name}")
-                        
+
                         target_inlet_ids = target_junc.get('inlet_vessels', [])
                         if not target_inlet_ids:
                             raise ValueError(f"Junction {target_junc_name} has no inlet vessels (for connector outlet {vessel_name})")
-                        
+
                         target_inlet_id = target_inlet_ids[0]
                         if target_inlet_id >= len(vessels):
                             raise ValueError(f"Junction inlet vessel ID {target_inlet_id} out of bounds")
-                        
+
                         target_inlet_vessel = vessels[target_inlet_id]
                         target_inlet_name = target_inlet_vessel.get('vessel_name', '')
                         if not target_inlet_name:
                             raise ValueError(f"Junction inlet vessel {target_inlet_id} has empty vessel_name")
-                        
-                        # Use target junction inlet vessel outlet radius
+
                         target_branch_id = get_branch_id_from_name(target_inlet_name)
                         if target_branch_id not in branch_outlet_idx:
                             raise ValueError(f"Junction inlet branch {target_branch_id} not found in branch_outlet_idx")
                         target_idx_out = branch_outlet_idx[target_branch_id]
                         connector_inlet_radius = float(max_inscribed_radius[target_idx_out])
                     else:
-                        # Junction is not split - use it directly
                         connector_inlet_radius = inlet_radius_val
-                    
+
                     outlet_max_inscribed_radius_min_on_path[vessel_name] = connector_inlet_radius
                     outlet_max_inscribed_radius_max_on_path[vessel_name] = connector_inlet_radius
 
-                    # Angle between inlet tangent and connector outlet tangent
                     if inlet_tangent is None:
                         raise ValueError(
                             f"Inlet tangent is None when computing angle_diff for connector outlet {vessel_name} "
@@ -849,48 +1017,204 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                         )
                     outlet_angle_diffs[vessel_name] = get_angle_diff(inlet_tangent, out_tan)
                     continue
-                
-                b_id = get_branch_id_from_name(vessel_name)
-                # Only add junction-level metrics if they were computed (outlet_metrics is not empty)
-                if b_id not in outlet_metrics:
-                    # If outlet_metrics is empty, this junction doesn't have a BifurcationId region
-                    # Skip junction-level metrics but continue with basic metrics
-                    continue
-                
-                m = outlet_metrics[b_id]
-                path_len_val = m['path_length']
-                outlet_path_lengths[vessel_name] = path_len_val
 
-                # Tortuosity between inlet and this outlet (junction-level)
-                if inlet_branch_id not in branch_outlet_point:
-                    raise ValueError(f"Inlet branch {inlet_branch_id} not found in branch_outlet_point for junction {junc_name}")
-                if b_id not in branch_inlet_point:
-                    raise ValueError(f"Outlet branch {b_id} not found in branch_inlet_point for junction {junc_name}")
-                
-                p_in = branch_outlet_point[inlet_branch_id]
-                p_out = branch_inlet_point[b_id]
-                straight_dist = float(np.linalg.norm(p_out - p_in))
-                if straight_dist <= 0.0:
-                    raise ValueError(f"Straight-line distance is zero between inlet and outlet branch {b_id} in junction {junc_name}")
-                
-                outlet_tortuosities[vessel_name] = float(path_len_val / straight_dist)
-                
-                outlet_max_inscribed_radius_min_on_path[vessel_name] = m['radius_min']
-                outlet_max_inscribed_radius_max_on_path[vessel_name] = m['radius_max']
+                # EL-adjusted connector (no numeric suffix): compute junction-level metrics
+                # based on the connector endpoint (where the EL extension ended).
+                # The outlet_pt_idx points to the centerline index at the end of the extension
+                conn_idx = outlet_pt_idx
+                # Compute path-length along centerline from junction inlet (inlet branch outlet point)
+                if inlet_branch_id in branch_outlet_idx and conn_idx is not None:
+                    inlet_boundary_idx = branch_outlet_idx[inlet_branch_id]
+                    el_path_len = float(path_arr_np[conn_idx]) - float(path_arr_np[inlet_boundary_idx])
+                    if el_path_len < 0:
+                        # Fallback to Euclidean distance if path ordering unexpected
+                        el_path_len = float(np.linalg.norm(points_array[conn_idx] - branch_outlet_point[inlet_branch_id]))
+                else:
+                    # Fallback: Euclidean distance from inlet endpoint to connector point
+                    if inlet_branch_id in branch_outlet_point and conn_idx is not None:
+                        el_path_len = float(np.linalg.norm(points_array[conn_idx] - branch_outlet_point[inlet_branch_id]))
+                    else:
+                        el_path_len = 0.0
 
-                # Angle between inlet and outlet tangents for this outlet
-                if inlet_tangent is None:
-                    raise ValueError(
-                        f"Inlet tangent is None when computing angle_diff for outlet {vessel_name} "
-                        f"in junction {junc_name}"
-                    )
-                out_tan = outlet_tangents.get(vessel_name)
-                if out_tan is None:
-                    raise ValueError(
-                        f"Outlet tangent is None when computing angle_diff for outlet {vessel_name} "
-                        f"in junction {junc_name}"
-                    )
-                outlet_angle_diffs[vessel_name] = get_angle_diff(inlet_tangent, out_tan)
+                # Total junction path length to this connector = el_path_len
+                outlet_path_lengths[vessel_name] = float(el_path_len)
+
+                # Tangent at the connector endpoint: compute using branch neighbours if possible
+                out_tan = None
+                if b_id is not None:
+                    mask = branch_id == b_id
+                    idx = np.where(mask)[0]
+                    if idx.size >= 2:
+                        branch_paths = path_arr_np[idx]
+                        order = np.argsort(branch_paths)
+                        idx_sorted = idx[order]
+                        # Find position of conn_idx within idx_sorted
+                        pos = np.where(idx_sorted == conn_idx)[0]
+                        if len(pos) > 0:
+                            pos = pos[0]
+                            if pos + 1 < len(idx_sorted):
+                                next_idx = idx_sorted[pos + 1]
+                                v = points_array[next_idx] - points_array[conn_idx]
+                            elif pos > 0:
+                                prev_idx = idx_sorted[pos - 1]
+                                v = points_array[conn_idx] - points_array[prev_idx]
+                            else:
+                                v = None
+                            if v is not None:
+                                nrm = np.linalg.norm(v)
+                                if nrm > 0.0:
+                                    out_tan = (v / nrm).tolist()
+
+                outlet_tangents[vessel_name] = out_tan
+
+                # Tortuosity: el_path_len / straight distance
+                if inlet_branch_id in branch_outlet_point and conn_idx is not None:
+                    p_in = branch_outlet_point[inlet_branch_id]
+                    p_out = points_array[conn_idx]
+                    straight = float(np.linalg.norm(p_out - p_in))
+                    if straight > 0.0:
+                        outlet_tortuosities[vessel_name] = float(el_path_len / straight)
+                    else:
+                        outlet_tortuosities[vessel_name] = 0.0
+                else:
+                    outlet_tortuosities[vessel_name] = 0.0
+
+                # Radius at connector endpoint
+                if conn_idx is not None:
+                    r_val = float(max_inscribed_radius[conn_idx])
+                else:
+                    r_val = inlet_radius_val
+                outlet_max_inscribed_radius_min_on_path[vessel_name] = r_val
+                outlet_max_inscribed_radius_max_on_path[vessel_name] = r_val
+
+                # Angle diff between inlet and connector outlet tangent
+                if inlet_tangent is not None and out_tan is not None:
+                    outlet_angle_diffs[vessel_name] = get_angle_diff(inlet_tangent, out_tan)
+                else:
+                    outlet_angle_diffs[vessel_name] = 0.0
+                continue
+
+            b_id = get_branch_id_from_name(vessel_name)
+            # Only add junction-level metrics if they were computed (outlet_metrics is not empty)
+            if b_id not in outlet_metrics:
+                # If outlet_metrics is empty or this branch wasn't matched, emit debug info
+                print(f"    Warning: Branch {b_id} (vessel {vessel_name}) not found in outlet_metrics for {junc_name}, setting default path length to 0.0")
+                try:
+                    print(f"      Debug: outlet_metrics keys: {list(outlet_metrics.keys())}")
+                    print(f"      Debug: branch_inlet_idx contains b_id? {b_id in branch_inlet_idx}")
+                    if b_id in branch_inlet_idx:
+                        bi = branch_inlet_idx[b_id]
+                        print(f"      Debug: branch_inlet_idx[{b_id}] = {bi}")
+                        if b_id in branch_inlet_point:
+                            print(f"      Debug: branch_inlet_point[{b_id}] = {branch_inlet_point[b_id]}")
+                except Exception:
+                    pass
+                outlet_path_lengths[vessel_name] = 0.0
+                outlet_tortuosities[vessel_name] = 0.0
+                # Use local radius values for min/max
+                if b_id in branch_inlet_idx:
+                    outlet_idx = branch_inlet_idx[b_id]
+                    outlet_rad = float(max_inscribed_radius[outlet_idx])
+                    outlet_max_inscribed_radius_min_on_path[vessel_name] = outlet_rad
+                    outlet_max_inscribed_radius_max_on_path[vessel_name] = outlet_rad
+                else:
+                    # Fallback to inlet radius
+                    outlet_max_inscribed_radius_min_on_path[vessel_name] = inlet_radius_val
+                    outlet_max_inscribed_radius_max_on_path[vessel_name] = inlet_radius_val
+
+                # Angle difference
+                if inlet_tangent is not None:
+                    out_tan = outlet_tangents.get(vessel_name)
+                    if out_tan is not None:
+                        outlet_angle_diffs[vessel_name] = get_angle_diff(inlet_tangent, out_tan)
+                    else:
+                        outlet_angle_diffs[vessel_name] = 0.0
+                else:
+                    outlet_angle_diffs[vessel_name] = 0.0
+                continue
+
+            m = outlet_metrics[b_id]
+            path_len_val = m['path_length']
+            
+            # For EL-adjusted geometries, add the EL extension distance
+            # The original path length is within the BifurcationId region.
+            # After EL adjustment, the junction extends EL distance down the outlet vessel.
+            # We need to add this EL extension to get the total path length.
+            el_extension = 0.0
+            
+            # Check if this is an EL-adjusted geometry by looking at the vessel's centerline_node_ids
+            # In EL-adjusted geometries, the vessel's inlet is at the new junction boundary (EL distance down)
+            vessel = next((v for v in vessels if v.get('vessel_name') == vessel_name), None)
+            import pdb; pdb.set_trace()
+            if vessel is not None:
+                centerline_node_ids = vessel.get('centerline_node_ids', {})
+                vessel_inlet_gid = centerline_node_ids.get('inlet')
+                
+                # Find the original junction boundary (outlet branch inlet point)
+                # This is where the BifurcationId region ends
+                original_boundary_idx = branch_inlet_idx.get(b_id)
+                
+                if vessel_inlet_gid is not None and original_boundary_idx is not None:
+                    # Find the centerline point corresponding to the vessel's new inlet (EL extension point)
+                    if gid is not None:
+                        gid_np = np.asarray(gid)
+                        new_inlet_mask = gid_np == vessel_inlet_gid
+                        if np.any(new_inlet_mask):
+                            new_inlet_idx = np.where(new_inlet_mask)[0][0]
+                            
+                            # Calculate path distance from original boundary to new inlet along the centerline
+                            # This is the EL extension distance
+                            original_boundary_path = float(path_arr_np[original_boundary_idx])
+                            new_inlet_path = float(path_arr_np[new_inlet_idx])
+                            
+                            # EL extension is the path distance along the centerline
+                            # The new inlet should be downstream of the original boundary (higher path value)
+                            # For EL-adjusted geometries, the junction extends downstream, so new_inlet_path > original_boundary_path
+                            path_diff = new_inlet_path - original_boundary_path
+                            if path_diff > 0:
+                                el_extension = path_diff
+                            else:
+                                # If path_diff is negative or zero, the vessel inlet hasn't moved (not EL-adjusted)
+                                # or there's an issue with the node IDs
+                                el_extension = 0.0
+                            
+                            if el_extension > 0.0:
+                                print(f"    Adding EL extension {el_extension:.6f} cm to path length for {vessel_name} in {junc_name}")
+
+            # Total path length = original junction path length + EL extension
+            total_path_length = path_len_val + el_extension
+            outlet_path_lengths[vessel_name] = total_path_length
+
+            # Tortuosity between inlet and this outlet (junction-level)
+            if inlet_branch_id not in branch_outlet_point:
+                raise ValueError(f"Inlet branch {inlet_branch_id} not found in branch_outlet_point for junction {junc_name}")
+            if b_id not in branch_inlet_point:
+                raise ValueError(f"Outlet branch {b_id} not found in branch_inlet_point for junction {junc_name}")
+            
+            p_in = branch_outlet_point[inlet_branch_id]
+            p_out = branch_inlet_point[b_id]
+            straight_dist = float(np.linalg.norm(p_out - p_in))
+            if straight_dist <= 0.0:
+                raise ValueError(f"Straight-line distance is zero between inlet and outlet branch {b_id} in junction {junc_name}")
+            
+            outlet_tortuosities[vessel_name] = float(path_len_val / straight_dist)
+            
+            outlet_max_inscribed_radius_min_on_path[vessel_name] = m['radius_min']
+            outlet_max_inscribed_radius_max_on_path[vessel_name] = m['radius_max']
+
+            # Angle between inlet and outlet tangents for this outlet
+            if inlet_tangent is None:
+                raise ValueError(
+                    f"Inlet tangent is None when computing angle_diff for outlet {vessel_name} "
+                    f"in junction {junc_name}"
+                )
+            out_tan = outlet_tangents.get(vessel_name)
+            if out_tan is None:
+                raise ValueError(
+                    f"Outlet tangent is None when computing angle_diff for outlet {vessel_name} "
+                    f"in junction {junc_name}"
+                )
+            outlet_angle_diffs[vessel_name] = get_angle_diff(inlet_tangent, out_tan)
 
         # MaximumInscribedSphereRadius at each outlet inlet point (local value)
         outlet_radius_val = {}
