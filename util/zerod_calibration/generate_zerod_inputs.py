@@ -210,7 +210,7 @@ def main():
                 extract_and_add_geometric_params(centerline_path, variant_geometric_input, variant_geometric_input)
                 print(f"  Geometric parameters extracted and added to {variant_geometric_input}")
 
-    import pdb; pdb.set_trace()
+    
     # Step 2: Extract observations and create calibration inputs for each junction type
     if not args.skip_observation:
         # Check if all calibration inputs already exist (if --no-redo is set)
@@ -537,7 +537,7 @@ def main():
                 
             except Exception as e:
                 raise Exception(f"Failed to run data processing pipeline for {geo_variant_name}: {e}")
-            import pdb; pdb.set_trace()
+            
         
     # Step 3.6: After calibration, run NN inference for BloodVesselJunction on bifurcations and bifurcations_EL geometries
     # (Also runs in NN-only mode, using geometric input instead of calibrated output)
@@ -620,7 +620,7 @@ def main():
                     # else:
                     #     # CSV doesn't exist, extract features directly and filter
                     print(f"  CSV not found, extracting features directly from geometric input")
-                    X_full, feature_names_full, junction_names, _ = load_junction_geometric_features(
+                    X_full, feature_names_full, junction_names, outlet_primary_names = load_junction_geometric_features(
                         variant_geometric_input,
                         require_two_outlets=True,
                         verbose=True
@@ -701,26 +701,34 @@ def main():
                             f"Expected one prediction per input row."
                         )
                     
-                    # Build a mapping from junction name to all row indices where it appears
-                    # (a junction can appear 1 or 2 times depending on whether swapped row was skipped)
+                    # Build a mapping from (junction_name, primary_outlet_name) -> row_idx
+                    # This is the authoritative mapping: each row's prediction applies to
+                    # the primary_outlet of that row (the outlet whose features are in the
+                    # outlet0 position for that row).
+                    primary_outlet_to_row = {}  # (junc_name, outlet_name) -> row_idx
                     junction_name_to_row_indices = {}
-                    for row_idx, junc_name in enumerate(junction_names):
+                    for row_idx, (junc_name, pout_name) in enumerate(zip(junction_names, outlet_primary_names)):
+                        primary_outlet_to_row[(junc_name, pout_name)] = row_idx
                         if junc_name not in junction_name_to_row_indices:
                             junction_name_to_row_indices[junc_name] = []
                         junction_name_to_row_indices[junc_name].append(row_idx)
+                    
+                    print(f"      Built prediction mapping: {len(primary_outlet_to_row)} (junction, outlet) entries")
+                    for (jn, on), ri in primary_outlet_to_row.items():
+                        vid = int(X_full[ri, 0])  # outlet_vessel_id is first column
+                        print(f"        ({jn}, {on}) -> row {ri}, vessel_id={vid}")
                 
                     # Map predictions back to junction_values
                     vessels = nn_config.get('vessels', [])
                     vessel_id_to_name = {v.get('vessel_id'): v.get('vessel_name', '') for v in vessels}
+                    vessel_name_to_id = {v.get('vessel_name', ''): v.get('vessel_id') for v in vessels}
                     
                     # Process each junction in the config
                     for junc in nn_config.get('junctions', []):
                         junc_name = junc.get('junction_name', '')
                         
-                        # Skip if this junction wasn't in the feature extraction (e.g., connector primary outlet)
+                        # Skip if this junction wasn't in the feature extraction
                         if junc_name not in junction_name_to_row_indices:
-                            # For skipped junctions, we still need to initialize junction_values if they're BloodVesselJunction
-                            # But we'll leave them as-is from the calibrated output (or set to zeros if missing)
                             if junc.get('junction_type') == 'BloodVesselJunction':
                                 if 'junction_values' not in junc:
                                     outlet_vessel_ids = junc.get('outlet_vessels', [])
@@ -732,90 +740,65 @@ def main():
                                     }
                             continue
                         
-                        # Get the row indices for this junction (can be 1 or 2 rows)
-                        row_indices = junction_name_to_row_indices[junc_name]
-                        if len(row_indices) == 0:
-                            raise ValueError(f"No row indices found for junction {junc_name}")
-                        
-                        # The first row is always outlet0-first (if it exists)
-                        # The second row (if it exists) is outlet1-first
-                        row_outlet0_first = row_indices[0]
-                        row_outlet1_first = row_indices[1] if len(row_indices) > 1 else None
-                        
-                        # Verify row indices are within bounds
-                        if row_outlet0_first >= len(pred_R):
-                            raise ValueError(
-                                f"Row index {row_outlet0_first} out of bounds for junction {junc_name} "
-                                f"(array_size={len(pred_R)})"
-                            )
-                        if row_outlet1_first is not None and row_outlet1_first >= len(pred_R):
-                            raise ValueError(
-                                f"Row index {row_outlet1_first} out of bounds for junction {junc_name} "
-                                f"(array_size={len(pred_R)})"
-                            )
-                        
-                        # Get outlet vessels
+                        # Get outlet vessels in file order (junction's outlet_vessels list)
                         outlet_vessel_ids = junc.get('outlet_vessels', [])
                         if len(outlet_vessel_ids) != 2:
                             continue
                         
                         outlet_vessel_names = [vessel_id_to_name.get(vid, '') for vid in outlet_vessel_ids]
                         
-                        # Get geometric_params to determine outlet ordering
-                        gp = junc.get('geometric_params', {})
-                        outlet_path_lengths = gp.get('outlet_path_lengths', {})
-                        
-                        # Sort outlets by descending path length (matching inputs_from_0d_config.py)
-                        outlet_names_sorted = sorted(
-                            outlet_vessel_names,
-                            key=lambda vn: float(outlet_path_lengths.get(vn, 0.0)),
-                            reverse=True
-                        )
-                        
-                        # Map sorted outlets to file order
-                        outlet_index_in_file = {vn: i for i, vn in enumerate(outlet_vessel_names)}
-                        outlet0_sorted = outlet_names_sorted[0]
-                        outlet1_sorted = outlet_names_sorted[1]
-                        
-                        # Initialize junction_values if needed
+                        # Initialize junction_values
                         if 'junction_values' not in junc:
                             junc['junction_values'] = {}
                         
-                        # Set predictions for each outlet (in file order)
-                        R_values = [0.0, 0.0]
-                        S_values = [0.0, 0.0]
-                        L_values = [0.0, 0.0]
+                        R_values = [0.0] * len(outlet_vessel_ids)
+                        S_values = [0.0] * len(outlet_vessel_ids)
+                        L_values = [0.0] * len(outlet_vessel_ids)
                         
-                        file_idx_outlet0 = outlet_index_in_file[outlet0_sorted]
-                        file_idx_outlet1 = outlet_index_in_file[outlet1_sorted]
+                        # For each outlet vessel (in file order), find its prediction row
+                        for file_idx, (vid, vname) in enumerate(zip(outlet_vessel_ids, outlet_vessel_names)):
+                            # Skip non-EL connectors (zero parameters)
+                            if 'connector' in vname and 'connectorEL' not in vname:
+                                print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> connector, set to 0")
+                                continue
+                            
+                            # Look up the row where this outlet was the primary outlet
+                            row_idx = primary_outlet_to_row.get((junc_name, vname))
+                            
+                            if row_idx is not None:
+                                # Verify vessel_id consistency
+                                expected_vid = int(X_full[row_idx, 0])
+                                if expected_vid != vid:
+                                    raise ValueError(
+                                        f"Vessel ID mismatch for {junc_name}/{vname}: "
+                                        f"config has vessel_id={vid}, but feature row {row_idx} has "
+                                        f"outlet_vessel_id={expected_vid}"
+                                    )
+                                
+                                R_values[file_idx] = float(pred_R[row_idx])
+                                S_values[file_idx] = float(pred_S[row_idx])
+                                L_values[file_idx] = float(pred_L[row_idx])
+                                print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
+                                      f"row {row_idx}: R={R_values[file_idx]:.4f}, S={S_values[file_idx]:.4f}, L={L_values[file_idx]:.4f}")
+                            else:
+                                # No dedicated prediction row for this outlet (e.g., it was
+                                # only in the secondary/outlet1 position). Fall back to the
+                                # other outlet's row if available.
+                                other_outlet = [on for on in outlet_vessel_names if on != vname]
+                                fallback_row = None
+                                if other_outlet:
+                                    fallback_row = primary_outlet_to_row.get((junc_name, other_outlet[0]))
+                                if fallback_row is not None:
+                                    R_values[file_idx] = float(pred_R[fallback_row])
+                                    S_values[file_idx] = float(pred_S[fallback_row])
+                                    L_values[file_idx] = float(pred_L[fallback_row])
+                                    print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
+                                          f"fallback from row {fallback_row} (primary={other_outlet[0]}): "
+                                          f"R={R_values[file_idx]:.4f}, S={S_values[file_idx]:.4f}, L={L_values[file_idx]:.4f}")
+                                else:
+                                    print(f"        ⚠ {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
+                                          f"no prediction row found, keeping zeros")
                         
-                         # Row outlet0-first: predictions are for outlet0_sorted
-                         # Row outlet1-first (if exists): predictions are for outlet1_sorted
-                        if 'connector' in outlet0_sorted:
-                            R_values[file_idx_outlet0] = 0.0
-                            S_values[file_idx_outlet0] = 0.0
-                            L_values[file_idx_outlet0] = 0.0
-                        else:
-                            R_values[file_idx_outlet0] = float(pred_R[row_outlet0_first])
-                            S_values[file_idx_outlet0] = float(pred_S[row_outlet0_first])
-                            L_values[file_idx_outlet0] = float(pred_L[row_outlet0_first])
-                        
-                        if 'connector' in outlet1_sorted:
-                            R_values[file_idx_outlet1] = 0.0
-                            S_values[file_idx_outlet1] = 0.0
-                            L_values[file_idx_outlet1] = 0.0
-                        elif row_outlet1_first is not None:
-                            # Use prediction from outlet1-first row
-                            R_values[file_idx_outlet1] = float(pred_R[row_outlet1_first])
-                            S_values[file_idx_outlet1] = float(pred_S[row_outlet1_first])
-                            L_values[file_idx_outlet1] = float(pred_L[row_outlet1_first])
-                        else:
-                            # No swapped row available (outlet1 is connector), use outlet0 prediction
-                            # This shouldn't happen if outlet1 is not a connector, but handle it anyway
-                            R_values[file_idx_outlet1] = float(pred_R[row_outlet0_first])
-                            S_values[file_idx_outlet1] = float(pred_S[row_outlet0_first])
-                            L_values[file_idx_outlet1] = float(pred_L[row_outlet0_first])
-                    
                         junc['junction_values']['R_poiseuille'] = R_values
                         junc['junction_values']['stenosis_coefficient'] = S_values
                         junc['junction_values']['L'] = L_values

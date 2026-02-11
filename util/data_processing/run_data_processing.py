@@ -156,7 +156,7 @@ def main():
                 geo,
                 calib_output_filename,
             )
-            Y, target_names, y_junction_names = load_junction_lumped_parameters(
+            Y, target_names, y_junction_names, y_primary_outlet_names = load_junction_lumped_parameters(
                 calib_output_path,
                 require_two_outlets=True,
                 junction_names=junction_names,
@@ -165,6 +165,31 @@ def main():
             if y_junction_names != junction_names:
                 raise ValueError("Internal error: junction ordering mismatch between inputs and outputs.")
             print(f"Loaded {len(Y)} junctions with {len(target_names)} target values")
+            
+            # --- Consistency checks between inputs and outputs ---
+            # 1) Primary outlet names must match row-by-row
+            if y_primary_outlet_names != outlet_primary_names:
+                for idx, (inp_name, out_name) in enumerate(zip(outlet_primary_names, y_primary_outlet_names)):
+                    if inp_name != out_name:
+                        print(f"  ⚠ Row {idx}: input primary_outlet={inp_name}, output primary_outlet={out_name}")
+                raise ValueError(
+                    f"Primary outlet name mismatch between inputs and outputs for {geo}. "
+                    f"Inputs: {outlet_primary_names}, Outputs: {y_primary_outlet_names}"
+                )
+            
+            # 2) outlet_vessel_id column must match row-by-row
+            input_vid_col_idx = feature_names.index("outlet_vessel_id")
+            output_vid_col_idx = target_names.index("outlet_vessel_id")
+            for row_idx in range(len(X)):
+                input_vid = int(X[row_idx, input_vid_col_idx])
+                output_vid = int(Y[row_idx, output_vid_col_idx])
+                if input_vid != output_vid:
+                    raise ValueError(
+                        f"outlet_vessel_id mismatch at row {row_idx} for {geo}: "
+                        f"input has vessel_id={input_vid}, output has vessel_id={output_vid}. "
+                        f"Junction={junction_names[row_idx]}, primary_outlet={outlet_primary_names[row_idx]}"
+                    )
+            print(f"  ✓ Consistency check passed: {len(X)} rows, outlet_vessel_ids and primary_outlet_names match")
 
             os.makedirs(os.path.dirname(targets_csv_path), exist_ok=True)
             with open(targets_csv_path, "w") as f:
@@ -179,7 +204,7 @@ def main():
             with open(targets_meta_path, "w") as fmet:
                 writer = csv.writer(fmet)
                 writer.writerow(["junction_name", "primary_outlet_name"])
-                for jname, pout in zip(junction_names, outlet_primary_names):
+                for jname, pout in zip(y_junction_names, y_primary_outlet_names):
                     writer.writerow([jname, pout])
             print(f"Saved targets meta to {targets_meta_path}")
 
