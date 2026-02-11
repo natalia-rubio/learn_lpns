@@ -81,6 +81,7 @@ def load_junction_lumped_parameters(
                 if verbose:
                     print(f"Skipping outlet {i} of junction {j_name}: {vessel_name} is a connector vessel (not EL-adjusted)")
                 continue
+            print(f"Adding outlet {i} of junction {j_name}: {vessel_name} with oulet vessel id : {outlet_vessel_ids[i]}")
             row = [outlet_vessel_ids[i],]
             for param_name in sorted(jv.keys()):
                 val = jv[param_name]

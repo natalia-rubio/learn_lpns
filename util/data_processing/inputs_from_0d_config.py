@@ -154,7 +154,7 @@ def load_junction_geometric_features(
         if 'connector' not in outlet_names[0] or 'connectorEL' in outlet_names[0]:
             feat_row_0_first: List[float] = [outlet_vessels[0]]
             if verbose:
-                print(f"Adding outlet 0 features: {outlet_names[0]}")
+                print(f"Adding outlet 0 features: {outlet_names[0]}, outlet vessel id: {outlet_vessels[0]}")
                 print(f"Adding inlet max inscribed radius: {inlet_max_r}")
             feat_row_0_first.append(_to_float(inlet_max_r))
             feat_row_0_first.extend(_to_float(c) for c in inlet_tangent)
@@ -167,7 +167,7 @@ def load_junction_geometric_features(
         # Row 2: inlet + outlet1 + outlet0 (swapped)
         # Skip swapped sample if outlet1 would be a connector (connector-as-primary exclusion)
         if 'connector' not in outlet_names[1] or 'connectorEL' in outlet_names[1]:
-            print(f"Adding outlet 1 features: {outlet_names[1]}")
+            print(f"Adding outlet 1 features: {outlet_names[1]}, outlet vessel id: {outlet_vessels[1]} of {outlet_vessels}")
             feat_row_1_first: List[float] = [outlet_vessels[1]]
             feat_row_1_first.append(_to_float(inlet_max_r))
             feat_row_1_first.extend(_to_float(c) for c in inlet_tangent)
