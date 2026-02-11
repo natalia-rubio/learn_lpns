@@ -48,16 +48,16 @@ def train_nn(model, training_params):
 
         # Handle empty validation set (100% train)
         if len(val_inds) > 0:
-            val_loss = loss_pure(input = model.input[val_inds,:],
-                            outputs= model.output[val_inds,:],
-                            scaling_factors = model.data_dict["scaling_factors"][val_inds,:],
-                            scaling_dict = model.scaling_dict,
-                            target_coef_ind = model.target_coef_ind,
-                            weights = model.weights)
-            val_hist.append(val_loss)
-            print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
-                  "Training set accuracy {:e}  |  ".format(train_loss) + \
-                  "Validation set accuracy {:e}".format(val_loss))
+        val_loss = loss_pure(input = model.input[val_inds,:],
+                        outputs= model.output[val_inds,:],
+                        scaling_factors = model.data_dict["scaling_factors"][val_inds,:],
+                        scaling_dict = model.scaling_dict,
+                        target_coef_ind = model.target_coef_ind,
+                        weights = model.weights)
+        val_hist.append(val_loss)
+        print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
+              "Training set accuracy {:e}  |  ".format(train_loss) + \
+              "Validation set accuracy {:e}".format(val_loss))
         else:
             val_loss = float('nan')
             val_hist.append(val_loss)
@@ -94,6 +94,6 @@ def train_nn(model, training_params):
     dill_save(model, os.path.join(out_dir, f"{model_name2}_model"))
     # Return final validation loss (or NaN if 100% train)
     if len(val_inds) > 0:
-        return val_loss.item()
+    return val_loss.item()
     else:
         return float('nan')

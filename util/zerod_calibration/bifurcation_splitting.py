@@ -526,22 +526,20 @@ def split_junctions(geometric_input, centerline_data):
                         if inlet_gid is not None:
                             centerline_node_ids['inlet'] = inlet_gid
                     
-                    outlet_gids = []
+                    outlet_gids = {}
                     if side_outlet_vessel:
                         side_gid = get_vessel_gid(side_outlet_vessel, 'inlet')
                         if side_gid is not None:
-                            outlet_gids.append(side_gid)
+                            outlet_gids[side_outlet_vessel['vessel_name']] = side_gid
                     
                     if main_outlet_vessel:
                         main_gid = get_vessel_gid(main_outlet_vessel, 'inlet')
                         if main_gid is not None:
-                            outlet_gids.append(main_gid)
+                            outlet_gids[main_outlet_vessel['vessel_name']] = main_gid
                     
                     if centerline_node_ids or outlet_gids:
-                        if centerline_node_ids:
-                            new_junc['centerline_node_ids'] = centerline_node_ids
+                        new_junc['centerline_node_ids'] = centerline_node_ids
                         if outlet_gids:
-                            new_junc['centerline_node_ids'] = new_junc.get('centerline_node_ids', {})
                             new_junc['centerline_node_ids']['outlets'] = outlet_gids
                 
                 print(f"    Created {new_junc_name}: inlet={current_inlet_id}, outlets=[{side_outlet_id}, {main_outlet_id}] (final)")
@@ -584,30 +582,26 @@ def split_junctions(geometric_input, centerline_data):
                 
                 # Add GIDs to junction: inlet GID from inlet vessel outlet, outlet GIDs from outlet vessel inlets
                 if gid_array is not None:
-                    inlet_vessel = vessel_by_id.get(current_inlet_id)
+                    inlet_vessel_obj = vessel_by_id.get(current_inlet_id)
                     side_outlet_vessel = vessel_by_id.get(side_outlet_id)
                     
                     centerline_node_ids = {}
-                    if inlet_vessel:
-                        inlet_gid = get_vessel_gid(inlet_vessel, 'outlet')
+                    if inlet_vessel_obj:
+                        inlet_gid = get_vessel_gid(inlet_vessel_obj, 'outlet')
                         if inlet_gid is not None:
                             centerline_node_ids['inlet'] = inlet_gid
                     
-                    outlet_gids = []
+                    outlet_gids = {}
                     if side_outlet_vessel:
                         side_gid = get_vessel_gid(side_outlet_vessel, 'inlet')
                         if side_gid is not None:
-                            outlet_gids.append(side_gid)
+                            outlet_gids[side_outlet_vessel['vessel_name']] = side_gid
                     # Connector vessel doesn't have GIDs yet, will be set after annotation
-                    # We'll update this after vessels are annotated
-                    # The inlet GID of the connector vessel is the outlet GID of the junction's inlet vessel
-                    main_gid = get_vessel_gid(inlet_vessel, 'outlet')
-                    outlet_gids.append(main_gid)
+                    outlet_gids[connector_name] = None  # Placeholder, updated after annotation
+                    
                     if centerline_node_ids or outlet_gids:
-                        if centerline_node_ids:
-                            new_junc['centerline_node_ids'] = centerline_node_ids
+                        new_junc['centerline_node_ids'] = centerline_node_ids
                         if outlet_gids:
-                            new_junc['centerline_node_ids'] = new_junc.get('centerline_node_ids', {})
                             new_junc['centerline_node_ids']['outlets'] = outlet_gids
                 
                 print(f"    Created {new_junc_name}: inlet={current_inlet_id}, outlets=[{side_outlet_id}, {next_vessel_id}] (connector: {connector_name})")
@@ -647,14 +641,14 @@ def split_junctions(geometric_input, centerline_data):
                     if inlet_gid is not None:
                         centerline_node_ids['inlet'] = inlet_gid
 
-            # Get outlet GIDs from outlet vessel inlets
-            outlet_gids = []
+            # Get outlet GIDs from outlet vessel inlets (as dict: vessel_name -> gid)
+            outlet_gids = {}
             for outlet_id in outlet_vessels:
                 out_v = next((v for v in result['vessels'] if v['vessel_id'] == outlet_id), None)
                 if out_v is not None:
                     out_gid = get_vessel_gid(out_v, 'inlet')
                     if out_gid is not None:
-                        outlet_gids.append(out_gid)
+                        outlet_gids[out_v['vessel_name']] = out_gid
 
             if outlet_gids:
                 centerline_node_ids['outlets'] = outlet_gids
@@ -1999,13 +1993,15 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                         centerline_node_ids['inlet'] = inlet_gid
             
             # Get outlet GIDs from outlet vessel inlets
-            outlet_gids = []
+            outlet_gids = {}
             for outlet_id in outlet_vessels:
                 outlet_vessel = vessel_by_id.get(outlet_id)
+                outlet_vessel_name = outlet_vessel.get('vessel_name', '')
                 if outlet_vessel:
                     outlet_gid = get_vessel_gid(outlet_vessel, 'inlet')
                     if outlet_gid is not None:
-                        outlet_gids.append(outlet_gid)
+                        #outlet_gids.append(outlet_gid)
+                        outlet_gids[outlet_vessel_name] = outlet_gid
             
             if centerline_node_ids or outlet_gids:
                 if 'centerline_node_ids' not in junc:

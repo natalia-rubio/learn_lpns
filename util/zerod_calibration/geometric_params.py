@@ -713,20 +713,17 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
         if not outlet_vessel_ids:
             raise ValueError(f"Junction {junc_name} has no outlet vessels")
         
-        # Get outlet GIDs from junction (if available)
-        outlet_gids = junc_node_ids.get('outlets', [])
+        # Get outlet GIDs from junction (if available) - dict of vessel_name -> gid
+        outlet_gids = junc_node_ids.get('outlets', {})
         
-        # Create mapping from outlet vessel ID to outlet GID
+        # Create mapping from outlet vessel ID to outlet GID using vessel names
         outlet_id_to_gid = {}
-        if outlet_gids and len(outlet_gids) == len(outlet_vessel_ids):
-            for i, vessel_id in enumerate(outlet_vessel_ids):
-                outlet_id_to_gid[vessel_id] = outlet_gids[i]
-        elif outlet_gids:
-            print(f"    Warning: Junction {junc_name} has {len(outlet_gids)} outlet GIDs but {len(outlet_vessel_ids)} outlet vessels, GID mapping may be incomplete")
-            # Try to match by position (may not be accurate)
-            for i, vessel_id in enumerate(outlet_vessel_ids):
-                if i < len(outlet_gids):
-                    outlet_id_to_gid[vessel_id] = outlet_gids[i]
+        if outlet_gids and isinstance(outlet_gids, dict):
+            for vessel_id in outlet_vessel_ids:
+                if vessel_id < len(vessels):
+                    vessel_name = vessels[vessel_id].get('vessel_name', '')
+                    if vessel_name in outlet_gids and outlet_gids[vessel_name] is not None:
+                        outlet_id_to_gid[vessel_id] = outlet_gids[vessel_name]
         
         outlet_branch_ids = []
         for vessel_id in outlet_vessel_ids:

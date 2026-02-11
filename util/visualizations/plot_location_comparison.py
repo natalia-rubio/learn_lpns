@@ -800,10 +800,10 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         zoom_time_end = time_start + 0.8 * total_time_span
         
         # Find indices corresponding to these times
-        if zoom_start_idx is None:
+            if zoom_start_idx is None:
             # Find index where time >= zoom_time_start
             zoom_start_idx = np.searchsorted(times_geo, zoom_time_start)
-        if zoom_end_idx is None:
+            if zoom_end_idx is None:
             # Find index where time >= zoom_time_end (or use last index)
             zoom_end_idx = min(np.searchsorted(times_geo, zoom_time_end, side='right'), num_time_steps)
     
