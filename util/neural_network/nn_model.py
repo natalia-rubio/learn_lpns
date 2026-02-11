@@ -35,7 +35,7 @@ class NeuralNet():
         )
         self.data_dict = load_dict(jax_arrays_path)
 
-        import pdb; pdb.set_trace()
+        #import pdb; pdb.set_trace()
         # scaling_dict is not used in the current loss, but keep attribute for API compatibility.
         self.scaling_dict = network_params.get("scaling_dict", {})
         self.output_type    = network_params["output_type"]

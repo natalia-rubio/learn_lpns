@@ -48,16 +48,16 @@ def train_nn(model, training_params):
 
         # Handle empty validation set (100% train)
         if len(val_inds) > 0:
-        val_loss = loss_pure(input = model.input[val_inds,:],
-                        outputs= model.output[val_inds,:],
-                        scaling_factors = model.data_dict["scaling_factors"][val_inds,:],
-                        scaling_dict = model.scaling_dict,
-                        target_coef_ind = model.target_coef_ind,
-                        weights = model.weights)
-        val_hist.append(val_loss)
-        print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
-              "Training set accuracy {:e}  |  ".format(train_loss) + \
-              "Validation set accuracy {:e}".format(val_loss))
+            val_loss = loss_pure(input = model.input[val_inds,:],
+                            outputs= model.output[val_inds,:],
+                            scaling_factors = model.data_dict["scaling_factors"][val_inds,:],
+                            scaling_dict = model.scaling_dict,
+                            target_coef_ind = model.target_coef_ind,
+                            weights = model.weights)
+            val_hist.append(val_loss)
+            print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
+                "Training set accuracy {:e}  |  ".format(train_loss) + \
+                "Validation set accuracy {:e}".format(val_loss))
         else:
             val_loss = float('nan')
             val_hist.append(val_loss)
@@ -72,6 +72,13 @@ def train_nn(model, training_params):
             print(f"\n  Early stopping: Loss ({loss_to_check:.2e}) is below threshold (1e-3)")
             print(f"  Stopping training at epoch {epoch+1}/{training_params['num_epochs']}")
             break
+
+        # Check improvement in validation loss, if less than 1% for 10 consecutive epochs, stop training
+        if len(val_hist) > 10:
+            if val_hist[-10] - val_hist[-1] < 0.01 * val_hist[-1]:
+                print(f"\n  Early stopping: Validation loss improvement is less than 1% for 10 consecutive epochs")
+                print(f"  Stopping training at epoch {epoch+1}/{training_params['num_epochs']}")
+                
         
         if (epoch+1)%100 == 0 and plotting:
             if epoch == 0:
@@ -94,6 +101,6 @@ def train_nn(model, training_params):
     dill_save(model, os.path.join(out_dir, f"{model_name2}_model"))
     # Return final validation loss (or NaN if 100% train)
     if len(val_inds) > 0:
-    return val_loss.item()
+        return val_loss.item()
     else:
         return float('nan')

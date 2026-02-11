@@ -872,7 +872,8 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             base = os.path.basename(original_csv_path).replace('.csv', '')
             downsampled_name = f"{base}_downsampled_to_3d_times.csv"
             downsampled_path = os.path.join(csv_dir, downsampled_name)
-            if not os.path.exists(downsampled_path):
+            #if not os.path.exists(downsampled_path):
+            if True:
                 print(f"\n  {modality_name}: downsampling 0D CSV to match 3D times")
                 print(f"    Source file: {original_csv_path}")
                 print(f"    Target file: {downsampled_path}")

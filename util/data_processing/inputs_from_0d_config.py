@@ -65,6 +65,17 @@ def load_junction_geometric_features(
     # Per-row primary outlet name (the outlet used as outlet0 for that row)
     outlet_primary_names: List[str] = []
 
+    # Build vessel_id -> vessel_name mapping from the config
+    vessels = cfg.get("vessels", [])
+    vessel_id_to_name = {}
+    vessel_name_to_id = {}
+    for v in vessels:
+        vid = v.get("vessel_id")
+        vname = v.get("vessel_name", "")
+        if vid is not None and vname:
+            vessel_id_to_name[vid] = vname
+            vessel_name_to_id[vname] = vid
+
     # We assume bifurcation geometry: each junction has exactly 1 inlet and 2 outlets.
     for j in junctions:
         j_name = j.get("junction_name", "")
@@ -80,6 +91,13 @@ def load_junction_geometric_features(
         if verbose:
             print(f"Processing junction {j_name}: {outlet_vessels}")
 
+        # Build authoritative outlet_name -> vessel_id mapping for this junction
+        # using the junction's outlet_vessels list and the vessels array
+        outlet_vessel_id_map = {}  # vessel_name -> vessel_id
+        for vid in outlet_vessels:
+            vname = vessel_id_to_name.get(vid, "")
+            if vname:
+                outlet_vessel_id_map[vname] = vid
 
         # --- Per-junction scalars ---
         inlet_max_r = _safe_get(gp, "inlet_max_inscribed_radius", default=None)
@@ -95,12 +113,11 @@ def load_junction_geometric_features(
         outlet_max_r_min_path = gp.get("max_inscribed_radius_min_on_path", {}) or {}
         outlet_max_r_max_path = gp.get("max_inscribed_radius_max_on_path", {}) or {}
         outlet_angle_diffs = gp.get("outlet_angle_diffs", {}) or {}
-        # Map vessel_name -> metrics
+        # Map vessel_name -> metrics (use outlet_path_lengths keys as canonical names)
         outlet_names = list(outlet_path_lengths.keys())
         if require_two_outlets and len(outlet_names) != 2:
             # Fall back to using junction's outlet list order (by vessel index) if needed
             outlet_names = []
-            vessels = cfg.get("vessels", [])
             for vid in outlet_vessels:
                 if 0 <= vid < len(vessels):
                     outlet_names.append(vessels[vid].get("vessel_name", f"v{vid}"))
@@ -150,37 +167,58 @@ def load_junction_geometric_features(
             ]
 
     # Build TWO rows per junction: one with outlet0 first, one with outlet1 first
+        # Look up vessel IDs from outlet_names via the authoritative mapping
+        outlet0_name = outlet_names[0]
+        outlet1_name = outlet_names[1]
+        outlet0_vid = outlet_vessel_id_map.get(outlet0_name)
+        outlet1_vid = outlet_vessel_id_map.get(outlet1_name)
+        
+        if outlet0_vid is None:
+            raise ValueError(
+                f"Junction {j_name}: outlet '{outlet0_name}' not found in outlet_vessels {outlet_vessels}. "
+                f"Vessel name-to-id mapping: {outlet_vessel_id_map}"
+            )
+        if outlet1_vid is None:
+            raise ValueError(
+                f"Junction {j_name}: outlet '{outlet1_name}' not found in outlet_vessels {outlet_vessels}. "
+                f"Vessel name-to-id mapping: {outlet_vessel_id_map}"
+            )
+        
+        if verbose:
+            print(f"  outlet0: {outlet0_name} (vessel_id={outlet0_vid}), outlet1: {outlet1_name} (vessel_id={outlet1_vid})")
+
         # Row 1: inlet + outlet0 + outlet1
-        if 'connector' not in outlet_names[0] or 'connectorEL' in outlet_names[0]:
-            feat_row_0_first: List[float] = [outlet_vessels[0]]
+        if 'connector' not in outlet0_name or 'connectorEL' in outlet0_name:
+            feat_row_0_first: List[float] = [outlet0_vid]
             if verbose:
-                print(f"Adding outlet 0 features: {outlet_names[0]}, outlet vessel id: {outlet_vessels[0]}")
+                print(f"Adding outlet 0 features: {outlet0_name}, outlet vessel id: {outlet0_vid}")
                 print(f"Adding inlet max inscribed radius: {inlet_max_r}")
             feat_row_0_first.append(_to_float(inlet_max_r))
             feat_row_0_first.extend(_to_float(c) for c in inlet_tangent)
-            feat_row_0_first.extend(get_outlet_features(outlet_names[0]))
-            feat_row_0_first.extend(get_outlet_features(outlet_names[1]))
+            feat_row_0_first.extend(get_outlet_features(outlet0_name))
+            feat_row_0_first.extend(get_outlet_features(outlet1_name))
             rows.append(feat_row_0_first)
             junction_names.append(j_name)
-            outlet_primary_names.append(outlet_names[0])
+            outlet_primary_names.append(outlet0_name)
 
         # Row 2: inlet + outlet1 + outlet0 (swapped)
         # Skip swapped sample if outlet1 would be a connector (connector-as-primary exclusion)
-        if 'connector' not in outlet_names[1] or 'connectorEL' in outlet_names[1]:
-            print(f"Adding outlet 1 features: {outlet_names[1]}, outlet vessel id: {outlet_vessels[1]} of {outlet_vessels}")
-            feat_row_1_first: List[float] = [outlet_vessels[1]]
+        if 'connector' not in outlet1_name or 'connectorEL' in outlet1_name:
+            if verbose:
+                print(f"Adding outlet 1 features: {outlet1_name}, outlet vessel id: {outlet1_vid}")
+            feat_row_1_first: List[float] = [outlet1_vid]
             feat_row_1_first.append(_to_float(inlet_max_r))
             feat_row_1_first.extend(_to_float(c) for c in inlet_tangent)
-            feat_row_1_first.extend(get_outlet_features(outlet_names[1]))
-            feat_row_1_first.extend(get_outlet_features(outlet_names[0]))
+            feat_row_1_first.extend(get_outlet_features(outlet1_name))
+            feat_row_1_first.extend(get_outlet_features(outlet0_name))
             rows.append(feat_row_1_first)
             junction_names.append(j_name)  # Same junction name for both rows
-            outlet_primary_names.append(outlet_names[1])
+            outlet_primary_names.append(outlet1_name)
         else:
             if verbose:
                 print(
                     f"Skipping swapped sample for junction {j_name}: "
-                    f"primary outlet would be connector {outlet_names[1]}"
+                    f"primary outlet would be connector {outlet1_name}"
                 )
 
     if not rows:

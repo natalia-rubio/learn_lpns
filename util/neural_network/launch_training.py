@@ -74,7 +74,7 @@ if __name__ == "__main__":
                           "geometry_variant": geometry_variant,
                           "pred_mode": "m1"}
         
-        training_params = {"num_epochs": 1000, 
+        training_params = {"num_epochs": 500, 
                            "batch_size": 1,
                            "train_inds": split_ind_dict["train_ind"],
                            "val_inds": split_ind_dict["val_ind"],

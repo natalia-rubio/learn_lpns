@@ -22,7 +22,7 @@ def load_junction_lumped_parameters(
     require_two_outlets: bool = True,
     junction_names: Optional[List[str]] = None,
     verbose: bool = False,
-) -> Tuple[np.ndarray, List[str], List[str]]:
+) -> Tuple[np.ndarray, List[str], List[str], List[str]]:
     """
     Extract a junction-level target matrix from a calibration output JSON.
 
@@ -30,20 +30,19 @@ def load_junction_lumped_parameters(
       - `junction_name`
       - `outlet_vessels` (list of vessel indices)
       - `junction_values` (dict of parameter_name -> list[float] per outlet)
-      - `geometric_params.outlet_path_lengths` (dict vessel_name -> float), used
-        to order outlets in the same way as `inputs_from_0d_config.py`.
 
     Args:
         calibration_output_path: path to a calibrated output JSON.
         require_two_outlets: if True, only use junctions with exactly two outlets.
-        junction_names: if provided, return rows in exactly this order (and
-            raise if any are missing).
+        junction_names: if provided, verify rows appear in exactly this order
+            (and raise if any are missing).
         verbose: print debug information.
 
     Returns:
         Y: (n_junctions, n_targets) float array
         target_names: list of column names
         out_junction_names: list of junction names corresponding to Y rows
+        out_primary_outlet_names: list of primary outlet vessel names per row
     """
     with open(calibration_output_path, "r") as f:
         cfg = json.load(f)
@@ -57,7 +56,16 @@ def load_junction_lumped_parameters(
 
     rows: List[List[float]] = []
     out_junction_names: List[str] = []
+    out_primary_outlet_names: List[str] = []
     target_names: Optional[List[str]] = None
+
+    # Build vessel_id -> vessel_name mapping
+    vessel_id_to_name = {}
+    for v in vessels:
+        vid = v.get("vessel_id")
+        vname = v.get("vessel_name", "")
+        if vid is not None and vname:
+            vessel_id_to_name[vid] = vname
 
     for j in junctions:
         j_name = j.get("junction_name", "")
@@ -73,15 +81,18 @@ def load_junction_lumped_parameters(
             raise ValueError(f"Junction {j_name} missing dict 'junction_values' in calibration output.")
         assert len(outlet_vessel_ids) == 2, f"Junction {j_name} has unexpected number of outlets: {outlet_vessel_ids}"
         for i in range(len(outlet_vessel_ids)):
-            vessel_name = vessels[outlet_vessel_ids[i]].get("vessel_name", "")
+            vessel_name = vessel_id_to_name.get(outlet_vessel_ids[i], "")
+            if not vessel_name:
+                vessel_name = vessels[outlet_vessel_ids[i]].get("vessel_name", "")
             other_i = abs(i - 1)
             if verbose:
-                print(f"Processing outlet {i} of junction {j_name}: {vessel_name}")
+                print(f"Processing outlet {i} of junction {j_name}: {vessel_name} (vessel_id={outlet_vessel_ids[i]})")
             if 'connector' in vessel_name and 'connectorEL' not in vessel_name:
                 if verbose:
                     print(f"Skipping outlet {i} of junction {j_name}: {vessel_name} is a connector vessel (not EL-adjusted)")
                 continue
-            print(f"Adding outlet {i} of junction {j_name}: {vessel_name} with oulet vessel id : {outlet_vessel_ids[i]}")
+            if verbose:
+                print(f"Adding outlet {i} of junction {j_name}: {vessel_name} with outlet vessel id: {outlet_vessel_ids[i]}")
             row = [outlet_vessel_ids[i],]
             for param_name in sorted(jv.keys()):
                 val = jv[param_name]
@@ -91,6 +102,7 @@ def load_junction_lumped_parameters(
 
             rows.append(row)
             out_junction_names.append(j_name)
+            out_primary_outlet_names.append(vessel_name)
 
         target_names = ["outlet_vessel_id"] + [f"{param_name}_outlet{i}" for param_name in sorted(jv.keys()) for i in range(len(outlet_vessel_ids))]
     if not rows:
@@ -100,8 +112,7 @@ def load_junction_lumped_parameters(
 
     Y = np.asarray(rows, dtype=float)
 
-
-    return Y, target_names, out_junction_names
+    return Y, target_names, out_junction_names, out_primary_outlet_names
 
 
 __all__ = [
