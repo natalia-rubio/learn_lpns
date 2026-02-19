@@ -272,7 +272,7 @@ def plot_junction_pressure_differences(calibration_input_path, geometric_input_p
     # Set default zoom window if not provided
     max_length = len(time_array)
     if zoom_start_idx is None or zoom_end_idx is None:
-        if set_name == 'VMR':
+        if 'VMR' in set_name:
             # For VMR: zoom to 1-2 seconds
             zoom_start_time = 1.0
             zoom_end_time = 2.0
@@ -706,29 +706,39 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         plt.rcParams['axes.titlesize'] = 16
         plt.rcParams['legend.fontsize'] = 12
 
-        fig, axes = plt.subplots(3, 1, figsize=(max(10, n_v * 0.3 + 6), 12), sharex=True)
+        fig, axes = plt.subplots(3, 1, figsize=(max(8, n_v * 0.3 + 6), 10), sharex=True)
 
         color_map = {
             'geometric': 'green',
             'NORMAL_JUNCTION': 'red',
             'BloodVesselJunction': 'goldenrod'
         }
+        style_map = {
+            'geometric': {"color": "green", "label": "0D Poiseuille"},
+            'NORMAL_JUNCTION': {"color": "red", "label": "0D $\Delta P = 0$ Junction (Calibrated)"},
+            'BloodVesselJunction': {"color": "goldenrod", "label": "0D RRI Junction (Calibrated)"},
+            'BloodVesselJunction_NN': {"color": "dodgerblue", "label": "0D RRI Junction (NN)"},
+        }
 
         # Prepare legend patches (one legend above the top plot)
         try:
             from matplotlib import patches as mpatches
-            cycle_colors = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['C0', 'C1', 'C2'])
+            #cycle_colors = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['C0', 'C1', 'C2'])
+            cycle_colors = [style_map[mod]["color"] for mod in modalities]
         except Exception:
             mpatches = None
             cycle_colors = ['C0', 'C1', 'C2']
 
         legend_patches = []
-        for idx, mod in enumerate(modalities):
-            col = color_map.get(mod)
-            if col is None:
-                col = cycle_colors[idx % len(cycle_colors)]
+        for mod in modalities:
             if mpatches is not None:
-                legend_patches.append(mpatches.Patch(color=col, label=mod))
+                legend_patches.append(mpatches.Patch(color=style_map[mod]["color"], label=style_map[mod]["label"]))
+        # for idx, mod in enumerate(modalities):
+        #     col = color_map.get(mod)
+        #     if col is None:
+        #         col = cycle_colors[idx % len(cycle_colors)]
+        #     if mpatches is not None:
+        #         legend_patches.append(mpatches.Patch(color=col, label=mod))
 
         for i, (p_key, p_label) in enumerate(params):
             ax = axes[i]
@@ -740,7 +750,8 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
                     col = cycle_colors[j % len(cycle_colors)]
                 ax.bar(offsets, vals, width=width, label=mod, color=col)
 
-            ax.set_ylabel(p_label)
+            # set larger font size for y-axis label
+            ax.set_ylabel(p_label, fontsize=20)
             ax.grid(True, alpha=0.3)
             # if i == 0:
             #     ax.set_title('Zero-D parameter comparison by vessel')
@@ -758,6 +769,8 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         plt.subplots_adjust(top=0.88)
         plt.tight_layout()
         plt.savefig(out_path, dpi=150, bbox_inches='tight')
+        # save as pdf
+        plt.savefig(out_path.replace('.png', '.pdf'), dpi=150, bbox_inches='tight')
         plt.close()
 
         if verbose:
@@ -1159,6 +1172,9 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             # Calculate MSE
             diff = obs_values_0d_clean - obs_values_3d_clean
             
+            # if we are looking at pressure, convert to mmHg by dividing by 1333.322
+            if obs_type == 'pressure':
+                diff = diff / 1333.322
             mse = np.mean(diff**2)
             mae = np.mean(np.abs(diff))
             

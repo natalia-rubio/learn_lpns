@@ -9,6 +9,7 @@ This script creates:
 Based on the workflow in richter2024-paper-tools.
 """
 
+import glob
 import os
 import sys
 sys.path.append("/Users/natalia/cursor_access/learn_lpns")
@@ -83,9 +84,15 @@ def main():
                        help='Only run NN inference and forward simulation on NN inputs (skip calibration)')
     parser.add_argument('--no-redo', action='store_true',
                        help='Skip recreating files if they already exist (check at each step)')
+    parser.add_argument('--normalize', action='store_true',
+                       help='Use z-normalized NN models and apply normalization/unnormalization at inference')
 
     args = parser.parse_args(); verbose = args.verbose
-    
+    if args.normalize:
+        print(f"  Normalization: ON")
+
+    else:   
+        print(f"  Normalization: OFF")
     # Track generated/existing files for logging
     generated_files = []
     
@@ -132,7 +139,7 @@ def main():
                 skip_base = True
         
         if not skip_base:
-            if args.set_name == "VMR":
+            if 'VMR' in args.set_name:
                 richter_0d_path = os.path.join('data', 'zeroD', args.set_name, 'richter-0d', args.geo_name+'.json')
                 zerod_input = load_from_json(richter_0d_path)
                 zerod_input['simulation_parameters']['output_all_cycles'] = True
@@ -193,7 +200,8 @@ def main():
         variant_geometric_input = geo_variant_paths['geometric_input']
         if not os.path.exists(variant_geometric_input):
             continue
-        
+        if geo_variant_name == 'original':
+            continue
         if geo_variant_name == 'bifurcations_EL':
             # For EL-adjusted geometry, use EL-adjusted structure for parameter extraction
             if not check_and_track_file(variant_geometric_input, f"geometric params extraction for {geo_variant_name}"):
@@ -262,8 +270,14 @@ def main():
             
             if not os.path.exists(soln_path):
                 # Try scratch directory location
-                alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
-                                                args.set_name, args.geo_name, 'unsteady_soln.vtp')
+                if 'VMR' in args.set_name:
+                    oneD_dir = os.path.join('data', 'oneD', "VMR", args.geo_name)
+                    alt_soln_path = os.path.join(oneD_dir, 'unsteady_soln.vtp')
+                    if os.path.exists(alt_soln_path):
+                        soln_path = alt_soln_path
+                else:
+                    alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
+                                                    args.set_name, args.geo_name, 'unsteady_soln.vtp')
                 if os.path.exists(alt_soln_path):
                     soln_path = alt_soln_path
             geometric_input_path = geometry_variants['original']['geometric_input']
@@ -273,17 +287,17 @@ def main():
             else:
                 raise FileNotFoundError(f"1D solution not found: {soln_path}")
 
-            # Use the path that was found earlier
-            oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
-            soln_path = os.path.join(oneD_dir, 'unsteady_soln.vtp')
-            if not os.path.exists(soln_path):
-                reduced_results_dir = os.path.join('data', 'reduced_results', args.set_name, args.geo_name)
-                soln_path = os.path.join(reduced_results_dir, 'unsteady_soln.vtp')
-            if not os.path.exists(soln_path):
-                alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
-                                            args.set_name, args.geo_name, 'unsteady_soln.vtp')
-                if os.path.exists(alt_soln_path):
-                    soln_path = alt_soln_path
+            # # Use the path that was found earlier
+            # oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
+            # soln_path = os.path.join(oneD_dir, 'unsteady_soln.vtp')
+            # if not os.path.exists(soln_path):
+            #     reduced_results_dir = os.path.join('data', 'reduced_results', args.set_name, args.geo_name)
+            #     soln_path = os.path.join(reduced_results_dir, 'unsteady_soln.vtp')
+            # if not os.path.exists(soln_path):
+            #     alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
+            #                                 args.set_name, args.geo_name, 'unsteady_soln.vtp')
+            #     if os.path.exists(alt_soln_path):
+            #         soln_path = alt_soln_path
             
             # Get geo_dir
             geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
@@ -643,12 +657,42 @@ def main():
                     print(f"  Junction names in feature extraction: {unique_junction_names}")
                     print(f"  Selected {len(feature_names)} features (matching training data): {feature_names}")
                     
+                    # --- Conditionally apply z-normalization ---
+                    norm_suffix = "_normalized" if args.normalize else ""
+                    if args.normalize:
+                        from util.tools.basic import load_dict
+                        norm_glob_pattern = os.path.join(
+                            'data', 'jax_arrays', args.set_name, geo_variant_name, 'test',
+                            'jax_arrays_num_geos_*_normalized.pkl')
+                        num_geos_glob = glob.glob(norm_glob_pattern)
+                        if not num_geos_glob:
+                            raise FileNotFoundError(
+                                f"No normalized jax_arrays pkl found for {geo_variant_name}. "
+                                f"Run data processing with --normalize first. "
+                                f"Searched: {norm_glob_pattern}"
+                            )
+                        jax_arrays_path = sorted(num_geos_glob)[-1]
+                        print(f"  Loading normalization stats from: {jax_arrays_path}")
+                        norm_data = load_dict(jax_arrays_path)
+                        
+                        input_mean = np.array(norm_data['input_mean'])
+                        input_std = np.array(norm_data['input_std'])
+                        output_mean = np.array(norm_data['output_mean'])
+                        output_std = np.array(norm_data['output_std'])
+                        print(f"  Normalization stats loaded: input ({len(input_mean)} features), output ({len(output_mean)} targets)")
+                        
+                        X_for_nn = (X - input_mean) / input_std
+                        print(f"  Inputs z-normalized for NN inference")
+                    else:
+                        X_for_nn = X
+                        print(f"  Normalization: OFF (raw inputs used)")
+                    
                     # Convert to JAX array
-                    X_jax = jnp.array(X, dtype=jnp.float32)
+                    X_jax = jnp.array(X_for_nn, dtype=jnp.float32)
                     print(f"  Neural network input dimensions: {X_jax.shape} (rows={X_jax.shape[0]}, features={X_jax.shape[1]})")
                 
-                    # Load the three trained models (use geometry variant for model path)
-                    model_dir = os.path.join('results', 'models', args.set_name, geo_variant_name)
+                    # Load the three trained models (use geometry variant + norm suffix for model path)
+                    model_dir = os.path.join('results', 'models', args.set_name, geo_variant_name + norm_suffix)
                     model_base_name = f"rri_{args.set_name}_pred"
                     model_paths = [
                         os.path.join(model_dir, f"{model_base_name}_0_model"),
@@ -661,28 +705,28 @@ def main():
                             raise FileNotFoundError(f"Model not found: {model_path}")
                     
                     # Load models and get predictions
-                    predictions = []
+                    raw_predictions = []
                     for i, model_path in enumerate(model_paths):
                         print(f"      Loading model {i+1}/3: {model_path}")
                         model = dill_load(model_path)
                         pred = predict(X_jax, model.weights)
-                        predictions.append(np.array(pred).flatten())
-                
-                    # Based on outputs_from_config.py and launch_training.py:
-                    # Output columns: 0=R_outlet0, 1=R_outlet1, 2=S_outlet0, 3=S_outlet1, 4=L_outlet0, 5=L_outlet1
-                    # Model 0 (target_coef_ind=0): predicts R_poiseuille_outlet0
-                    # Model 1 (target_coef_ind=1): predicts R_poiseuille_outlet1  
-                    # Model 2 (target_coef_ind=2): predicts stenosis_coefficient_outlet0
-                    # But user said: pred_0=R, pred_1=stenosis, pred_2=L
-                    # Looking at launch_training.py comments:
-                    #   "training model 1: Linear Resistor" (target_coef_ind=0) -> R
-                    #   "training model 2: Stenosis Resistor" (target_coef_ind=1) -> S  
-                    #   "training model 3: Inductor" (target_coef_ind=2) -> L
-                    # So models predict: R (outlet0), S (outlet1?), L (outlet0?)
-                    # Actually, each model predicts one value per row. With two rows per junction:
-                    # - Row 0 (outlet0-first): model predicts for outlet0
-                    # - Row 1 (outlet1-first): model predicts for outlet1
-                    # So we can get both outlets from the two rows.
+                        raw_predictions.append(np.array(pred).flatten())
+                    
+                    # Unnormalize predictions if normalization is on
+                    output_names = ['R_poiseuille', 'stenosis_coefficient', 'L']
+                    if args.normalize:
+                        predictions = []
+                        for coef_idx, pred_norm in enumerate(raw_predictions):
+                            pred_original = pred_norm * output_std[coef_idx] + output_mean[coef_idx]
+                            predictions.append(pred_original)
+                            print(f"      Unnormalized {output_names[coef_idx]}: "
+                                  f"mean={output_mean[coef_idx]:.4f}, std={output_std[coef_idx]:.4f}, "
+                                  f"pred range=[{pred_original.min():.4f}, {pred_original.max():.4f}]")
+                    else:
+                        predictions = raw_predictions
+                        for coef_idx, pred in enumerate(predictions):
+                            print(f"      {output_names[coef_idx]}: "
+                                  f"pred range=[{pred.min():.4f}, {pred.max():.4f}]")
                     
                     # predictions[0] = R_poiseuille (one value per row)
                     # predictions[1] = stenosis_coefficient (one value per row)
@@ -1109,7 +1153,7 @@ def main():
                         # Extract locations from this variant's calibration input
                         variant_locations = get_all_locations_from_calibration_input(str(variant_calibration_input))
                         # Filter to only INFLOW locations by default
-                        # variant_locations = [loc for loc in variant_locations if loc.startswith('INFLOW:')]
+                        variant_locations = [loc for loc in variant_locations if loc.startswith('INFLOW:')]
                         
                         if not variant_locations:
                             print(f"    Skipping {geo_variant_name} plots (no locations found in calibration input)")
@@ -1253,7 +1297,7 @@ def main():
                     print(f"    Warning: No modality JSONs found for {geo_variant_name}, skipping zero-D parameter bar chart")
                     continue
 
-                out_name = f"{prefix}zero_d_parameter_bars.png"
+                out_name = f"{prefix} zero_d_parameter_bars.png"
                 out_path = plot_zero_d_parameter_bars(modality_jsons, output_dir=output_subdir, output_name=out_name, verbose=verbose)
                 if out_path:
                     print(f"    ✓ Saved zero-D parameter bar chart: {out_path}")

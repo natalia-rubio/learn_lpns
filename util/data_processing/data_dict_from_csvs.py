@@ -286,6 +286,7 @@ def build_data_dict_from_csvs(
     plot_histograms: bool = True,
     histogram_output_dir: Optional[str] = None,
     geometry_variant: str = "bifurcations",
+    normalize: bool = False,
 ) -> Dict[str, "np.ndarray"]:
     """
     Concatenate multiple geometries' CSVs and build a `data_dict`.
@@ -315,6 +316,9 @@ def build_data_dict_from_csvs(
 
     all_inputs: List[np.ndarray] = []
     all_outputs: List[np.ndarray] = []
+    # Per-row provenance: (geometry_name, primary_outlet_name) for every row
+    row_geo_names: List[str] = []
+    row_outlet_names: List[str] = []
 
     # Use default feature and output selection
     include_features = get_default_include_features()
@@ -341,6 +345,22 @@ def build_data_dict_from_csvs(
                 f"Row mismatch for geo {geo}: geometric_features has {geom_X.shape[0]} rows, "
                 f"junction_lumped_parameters has {out_Y.shape[0]} rows"
             )
+
+        # Load per-row metadata (geometry + primary outlet name)
+        meta_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "geometric_features_meta.csv")
+        if os.path.exists(meta_csv):
+            with open(meta_csv, "r", newline="") as fm:
+                reader = csv.reader(fm)
+                meta_header = next(reader, None)
+                for r in reader:
+                    if len(r) >= 2:
+                        row_geo_names.append(geo)
+                        row_outlet_names.append(r[1])  # primary_outlet_name
+        else:
+            # No meta file — fill with placeholder names
+            for _ in range(geom_X.shape[0]):
+                row_geo_names.append(geo)
+                row_outlet_names.append("unknown")
 
         # Filter features using the reusable function
         geom_X, selected_features = filter_features_from_array(
@@ -396,6 +416,7 @@ def build_data_dict_from_csvs(
 
     # Generate histograms if requested
     if plot_histograms and include_features is not None and feature_order is not None:
+        print("Plotting histograms...")
         if histogram_output_dir is None:
             # Default output directory includes geometry variant
             histogram_output_dir = os.path.join("data", "feature_histograms", set_name, geometry_variant)
@@ -408,6 +429,70 @@ def build_data_dict_from_csvs(
             num_geos=len(geometries),
         )
 
+    # --- Compute stats (always, for the summary CSV) ---
+    input_mean = np.mean(input_array, axis=0)
+    input_std = np.std(input_array, axis=0)
+    input_std_safe = input_std.copy()
+    input_std_safe[input_std_safe == 0] = 1.0
+
+    output_mean = np.mean(output_array, axis=0)
+    output_std = np.std(output_array, axis=0)
+    output_std_safe = output_std.copy()
+    output_std_safe[output_std_safe == 0] = 1.0
+
+    # --- Write summary CSV (always uses pre-normalization values) ---
+    summary_dir = histogram_output_dir or os.path.join("data", "feature_histograms", set_name, geometry_variant)
+    os.makedirs(summary_dir, exist_ok=True)
+    summary_path = os.path.join(summary_dir, f"data_summary_{set_name}_num_geos_{len(geometries)}.csv")
+
+    with open(summary_path, "w", newline="") as sf:
+        writer = csv.writer(sf)
+        writer.writerow([
+            "variable", "type", "mean", "std", "min", "max",
+            "min_geometry", "min_outlet", "max_geometry", "max_outlet",
+        ])
+
+        # Input features
+        for col_idx, fname in enumerate(feature_order or []):
+            col = input_array[:, col_idx]
+            min_idx = int(np.argmin(col))
+            max_idx = int(np.argmax(col))
+            writer.writerow([
+                fname, "input",
+                f"{np.mean(col):.6g}", f"{np.std(col):.6g}",
+                f"{np.min(col):.6g}", f"{np.max(col):.6g}",
+                row_geo_names[min_idx], row_outlet_names[min_idx],
+                row_geo_names[max_idx], row_outlet_names[max_idx],
+            ])
+
+        # Output targets — include min/max instance provenance
+        for col_idx, oname in enumerate(output_order or []):
+            col = output_array[:, col_idx]
+            min_idx = int(np.argmin(col))
+            max_idx = int(np.argmax(col))
+            writer.writerow([
+                oname, "output",
+                f"{np.mean(col):.6g}", f"{np.std(col):.6g}",
+                f"{np.min(col):.6g}", f"{np.max(col):.6g}",
+                row_geo_names[min_idx], row_outlet_names[min_idx],
+                row_geo_names[max_idx], row_outlet_names[max_idx],
+            ])
+
+    print(f"  Saved data summary to {summary_path}")
+
+    # --- Conditionally apply z-normalization ---
+    if normalize:
+        input_array = (input_array - input_mean) / input_std_safe
+        output_array = (output_array - output_mean) / output_std_safe
+
+        print(f"  Z-normalization applied:")
+        print(f"    Input  mean range: [{input_mean.min():.4f}, {input_mean.max():.4f}]")
+        print(f"    Input  std  range: [{input_std_safe.min():.4f}, {input_std_safe.max():.4f}]")
+        print(f"    Output mean range: [{output_mean.min():.4f}, {output_mean.max():.4f}]")
+        print(f"    Output std  range: [{output_std_safe.min():.4f}, {output_std_safe.max():.4f}]")
+    else:
+        print(f"  Z-normalization: OFF (raw values used)")
+
     n = input_array.shape[0]
     scaling_factors = np.ones((n, 1), dtype=float)
 
@@ -416,13 +501,25 @@ def build_data_dict_from_csvs(
             "input": jnp.asarray(input_array),
             f"output_{output_type}": jnp.asarray(output_array),
             "scaling_factors": jnp.asarray(scaling_factors),
+            "normalized": normalize,
         }
+        if normalize:
+            data_dict["input_mean"] = jnp.asarray(input_mean)
+            data_dict["input_std"] = jnp.asarray(input_std_safe)
+            data_dict["output_mean"] = jnp.asarray(output_mean)
+            data_dict["output_std"] = jnp.asarray(output_std_safe)
     else:
         data_dict = {
             "input": input_array,
             f"output_{output_type}": output_array,
             "scaling_factors": scaling_factors,
+            "normalized": normalize,
         }
+        if normalize:
+            data_dict["input_mean"] = input_mean
+            data_dict["input_std"] = input_std_safe
+            data_dict["output_mean"] = output_mean
+            data_dict["output_std"] = output_std_safe
     return data_dict
 
 
