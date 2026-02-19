@@ -132,7 +132,7 @@ def main():
                 skip_base = True
         
         if not skip_base:
-        if args.set_name == "VMR":
+        if 'VMR' in args.set_name:
             richter_0d_path = os.path.join('data', 'zeroD', args.set_name, 'richter-0d', args.geo_name+'.json')
             zerod_input = load_from_json(richter_0d_path)
             zerod_input['simulation_parameters']['output_all_cycles'] = True
@@ -259,12 +259,22 @@ def main():
                 reduced_results_dir = os.path.join('data', 'reduced_results', args.set_name, args.geo_name)
                 soln_path = os.path.join(reduced_results_dir, 'unsteady_soln.vtp')
             
+            # if this is a VMR set type, try to find the centerline in the VMR oneD directory
+            
+
             if not os.path.exists(soln_path):
-                # Try scratch directory location
-                alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
-                                               args.set_name, args.geo_name, 'unsteady_soln.vtp')
-                if os.path.exists(alt_soln_path):
-                    soln_path = alt_soln_path
+                if 'VMR' in args.set_name:
+                    oneD_dir = os.path.join('data', 'oneD', "VMR", args.geo_name)
+                    alt_soln_path = os.path.join(oneD_dir, 'unsteady_soln.vtp')
+                    if os.path.exists(alt_soln_path):
+                        soln_path = alt_soln_path
+            
+                else:
+                    # Try scratch directory location
+                    alt_soln_path = os.path.join('/scratch/users/nrubio/synthetic_junctions_reduced_results/CCO_trees', 
+                                                args.set_name, args.geo_name, 'unsteady_soln.vtp')
+                    if os.path.exists(alt_soln_path):
+                        soln_path = alt_soln_path
             geometric_input_path = geometry_variants['original']['geometric_input']
             geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
             if os.path.exists(soln_path):

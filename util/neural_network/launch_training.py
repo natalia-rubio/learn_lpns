@@ -16,23 +16,27 @@ def launch_training(network_params, optimizer_params, training_params):
     network_params["output_type"] = "rri"
     
     print("Training RRI model...")
+    lr_init1 = 0.1
+    lr_init2 = 0.1
+    lr_init3 = 0.1
 
-    
     print(f"training model 1:  Linear Resistor")
     network_params["target_coef_ind"] = 0
     network_params["layer_width"] = 40
     network_params["num_layers"] = 1
-    training_params["num_epochs"] = 5000
-    optimizer_params["decay_rate"] = 0.5
-    optimizer_params["init"] = 0.01
+    training_params["num_epochs"] = 2000
+    optimizer_params["decay_rate"] = 0.8
+    optimizer_params["init"] = lr_init1
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
 
+    optimizer_params["init"] = lr_init2
     print(f"training model 2:  Stenosis Resistor")
     network_params["target_coef_ind"] = 1
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
 
+    optimizer_params["init"] = lr_init3
     print(f"training model 3:  Inductor")
     network_params["target_coef_ind"] = 2
     model = NeuralNet(network_params, optimizer_params)
@@ -40,12 +44,23 @@ def launch_training(network_params, optimizer_params, training_params):
     return
 
 if __name__ == "__main__":
-    set_name = sys.argv[1]
-    num_geos = int(sys.argv[2])
-    geometry_variant_arg = sys.argv[3] if len(sys.argv) > 3 else "all"
-    output_type = "rri"#, "ri", or "rr"
+    import argparse
+    parser = argparse.ArgumentParser(description="Launch NN training")
+    parser.add_argument("set_name", help="Set name (e.g., VMR)")
+    parser.add_argument("num_geos", type=int, help="Number of geometries")
+    parser.add_argument("geometry_variant", nargs="?", default="all",
+                        help="Geometry variant: bifurcations, bifurcations_EL, or all (default: all)")
+    parser.add_argument("--normalize", action="store_true",
+                        help="Use normalized jax_arrays (loads *_normalized.pkl)")
+    cli_args = parser.parse_args()
+
+    set_name = cli_args.set_name
+    num_geos = cli_args.num_geos
+    geometry_variant_arg = cli_args.geometry_variant
+    normalize = cli_args.normalize
+    norm_suffix = "_normalized" if normalize else ""
+    output_type = "rri"
     set_type = "test"
-    #pdb.set_trace()
 
     # Determine which geometry variants to process
     if geometry_variant_arg == "all":
@@ -56,7 +71,8 @@ if __name__ == "__main__":
     # Process each geometry variant
     for geometry_variant in geometry_variants_to_process:
         print(f"\n{'='*80}")
-        print(f"Training models for geometry variant: {geometry_variant}")
+        print(f"Training models for geometry variant: {geometry_variant}"
+              f"{' (normalized)' if normalize else ''}")
         print(f"{'='*80}")
         
         split_ind_dict = load_dict(
@@ -72,6 +88,7 @@ if __name__ == "__main__":
                           "num_geos": num_geos,
                           "data_root": "data",
                           "geometry_variant": geometry_variant,
+                          "normalize": normalize,
                           "pred_mode": "m1"}
         
         training_params = {"num_epochs": 500, 

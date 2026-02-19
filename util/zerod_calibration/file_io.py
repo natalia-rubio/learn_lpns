@@ -469,6 +469,8 @@ def get_paths(base_dir, args):
         os.path.join(geo_dir, 'centerlines', 'centerlines.vtp'),
         os.path.join(geo_dir, 'centerlines.vtp'),
     ]
+
+
     centerline_path = None
     for path in centerline_paths:
         if os.path.exists(path):
@@ -482,6 +484,12 @@ def get_paths(base_dir, args):
             oneD_soln_paths = [
                 os.path.join(oneD_dir, 'unsteady_soln.vtp'),
             ]
+            # if this is a VMR set type, try to find the centerline in the VMR oneD directory
+            if 'VMR' in args.set_name:
+                oneD_dir = os.path.join('data', 'oneD', "VMR", args.geo_name)
+                oneD_soln_paths = [
+                    os.path.join(oneD_dir, 'unsteady_soln.vtp'),
+                ]
             for path in oneD_soln_paths:
                 if os.path.exists(path):
                     centerline_path = path

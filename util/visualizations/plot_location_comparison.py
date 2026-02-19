@@ -92,7 +92,7 @@ LINE_STYLES = {
         'color': 'black',
         'linestyle': '-',
         'linewidth': 8,
-        'label': '3D Model',
+        'label': '3D Solution',
         'alpha': 0.5,
     },
     # Geometric 0D (uncalibrated) - original geometry
@@ -100,7 +100,7 @@ LINE_STYLES = {
         'color': 'green',
         'linestyle': '--',
         'linewidth': 4,
-        'label': 'Geometric 0D',
+        'label': '0D Poiseuille',
         'alpha': 0.5,
     },
     # Geometric 0D (uncalibrated) - bifurcations geometry
@@ -108,7 +108,15 @@ LINE_STYLES = {
         'color': 'green',
         'linestyle': ':',
         'linewidth': 4,
-        'label': 'Geometric 0D (bif)',
+        'label': '0D Poiseuille',
+        'alpha': 0.5,
+    },
+    # Geometric 0D (uncalibrated) - bifurcations geometry
+    'bifurcations_EL_geometric_0d': {
+        'color': 'green',
+        'linestyle': ':',
+        'linewidth': 4,
+        'label': '0D Poiseuille',
         'alpha': 0.5,
     },
     # Original geometry calibrated results
@@ -116,14 +124,14 @@ LINE_STYLES = {
         'color': 'red',
         'linestyle': '--',
         'linewidth': 4,
-        'label': 'Normal Junction (orig)',
+        'label': '0D $\Delta P = 0$ Junction (Calibrated) (orig)',
         'alpha': 0.5,
     },
     'original_BloodVesselJunction': {
         'color': 'orange',
         'linestyle': '--',
         'linewidth': 4,
-        'label': 'Blood Vessel Junction (orig)',
+        'label': '0D RRI Junction (Calibrated) (orig)',
         'alpha': 0.5,
     },
     'original_DirIndepJunction': {
@@ -145,14 +153,14 @@ LINE_STYLES = {
         'color': 'red',
         'linestyle': ':',
         'linewidth': 4,
-        'label': 'Normal Junction (bif)',
+        'label': '0D $\Delta P = 0$ Junction (Calibrated) (bif)',
         'alpha': 0.5,
     },
     'bifurcations_BloodVesselJunction': {
         'color': 'orange',
         'linestyle': ':',
         'linewidth': 4,
-        'label': 'Blood Vessel Junction (bif)',
+        'label': '0D RRI Junction (Calibrated) (bif)',
         'alpha': 0.5,
     },
     'bifurcations_DirIndepJunction': {
@@ -174,14 +182,14 @@ LINE_STYLES = {
         'color': 'red',
         'linestyle': '--',
         'linewidth': 4,
-        'label': 'Normal Junction',
+        'label': '0D $\Delta P = 0$ Junction (Calibrated)',
         'alpha': 0.5,
     },
     'BloodVesselJunction': {
         'color': 'orange',
         'linestyle': '--',
         'linewidth': 4,
-        'label': 'Blood Vessel Junction',
+        'label': '0D RRI Junction (Calibrated)',
         'alpha': 0.5,
     },
     'DirIndepJunction': {
@@ -203,21 +211,21 @@ LINE_STYLES = {
         'color': 'dodgerblue',
         'linestyle': '--',
         'linewidth': 4,
-        'label': 'Blood Vessel Junction (NN)',
+        'label': '0D RRI Junction (NN)',
         'alpha': 0.5,
     },
     'original_BloodVesselJunction_NN': {
         'color': 'dodgerblue',
         'linestyle': '--',
         'linewidth': 4,
-        'label': 'Blood Vessel Junction (NN)',
+        'label': '0D RRI Junction (NN)',
         'alpha': 0.5,
     },
     'BloodVesselJunction_NN': {
         'color': 'dodgerblue',
         'linestyle': '--',
         'linewidth': 4,
-        'label': 'Blood Vessel Junction (NN)',
+        'label': '0D RRI Junction (NN)',
         'alpha': 0.5,
     },
 }
@@ -244,7 +252,7 @@ def get_line_style(key):
             'color': 'dodgerblue',
             'linestyle': '--',
             'linewidth': 4,
-            'label': 'Blood Vessel Junction (NN)',
+            'label': '0D RRI Junction (NN)',
             'alpha': 0.5,
         }
     
@@ -678,7 +686,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         time_period = get_time_period(set_name, geo_name)
     
     if time_period is None:
-        if set_name == 'VMR':
+        if 'VMR' in set_name:
             time_period = 2.0  # Default for VMR
         else:
             time_period = 1.0
@@ -857,6 +865,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         
         # Plot geometric 0D results (can be multiple: original, bifurcations)
         for geo_key, geo_data in geometric_data_dict.items():
+            print(f"geo_key: {geo_key}")
             if geo_data.get('pressures') is not None:
                 style = get_line_style(geo_key)
                 ax.plot(geo_data['times'], geo_data['pressures'], 

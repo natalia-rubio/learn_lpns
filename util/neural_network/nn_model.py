@@ -23,6 +23,10 @@ class NeuralNet():
         
         # Geometry variant (default: "bifurcations" for backward compatibility)
         self.geometry_variant = network_params.get("geometry_variant", "bifurcations")
+        
+        # Normalization flag (default: False for backward compatibility)
+        self.normalize = network_params.get("normalize", False)
+        norm_suffix = "_normalized" if self.normalize else ""
 
         data_root = network_params.get("data_root", "data")
         jax_arrays_path = os.path.join(
@@ -31,8 +35,9 @@ class NeuralNet():
             self.set_name,
             self.geometry_variant,
             self.set_type,
-            f"jax_arrays_num_geos_{network_params['num_geos']}.pkl",
+            f"jax_arrays_num_geos_{network_params['num_geos']}{norm_suffix}.pkl",
         )
+        print(f"  Loading jax_arrays from: {jax_arrays_path}")
         self.data_dict = load_dict(jax_arrays_path)
 
         #import pdb; pdb.set_trace()

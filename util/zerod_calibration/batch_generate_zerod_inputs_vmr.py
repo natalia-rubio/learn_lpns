@@ -50,7 +50,7 @@ def get_vmr_geometries(richter_dir='data/zeroD/VMR/richter-0d'):
     
     return geo_names
 
-def has_coronary_bc(geo_name):
+def has_coronary_bc(set_name, geo_name):
     """
     Check if a geometry has CORONARY type boundary conditions.
     
@@ -61,7 +61,7 @@ def has_coronary_bc(geo_name):
         bool: True if geometry has CORONARY boundary conditions, False otherwise
     """
     # Check the richter-0d source file first
-    richter_path = os.path.join(REPO_ROOT, 'data', 'zeroD', 'VMR', 'richter-0d', f'{geo_name}.json')
+    richter_path = os.path.join(REPO_ROOT, 'data', 'zeroD', set_name, 'richter-0d', f'{geo_name}.json')
     
     if os.path.exists(richter_path):
         try:
@@ -77,7 +77,7 @@ def has_coronary_bc(geo_name):
             pass
     
     # Fallback: check geometric_input.json if it exists
-    geometric_input_path = os.path.join(REPO_ROOT, 'data', 'zeroD', 'VMR', geo_name, 'geometric_input.json')
+    geometric_input_path = os.path.join(REPO_ROOT, 'data', 'zeroD', set_name, geo_name, 'geometric_input.json')
     if os.path.exists(geometric_input_path):
         try:
             with open(geometric_input_path, 'r') as f:
@@ -128,7 +128,7 @@ def load_previous_log(log_file_path):
         print(f"  Warning: Could not load log file {log_file_path}: {e}")
         return None
 
-def check_geometry_complete(geo_name, junction_types, skip_forward=False):
+def check_geometry_complete(set_name, geo_name, junction_types, skip_forward=False):
     """
     Check if a geometry already has all necessary output files.
     
@@ -140,7 +140,7 @@ def check_geometry_complete(geo_name, junction_types, skip_forward=False):
     Returns:
         bool: True if geometry appears complete, False otherwise
     """
-    base_dir = os.path.join(REPO_ROOT, 'data', 'zeroD', 'VMR', geo_name)
+    base_dir = os.path.join(REPO_ROOT, 'data', 'zeroD', set_name, geo_name)
     
     # Check for bifurcations calibrated outputs for each junction type
     for jtype in junction_types:
@@ -179,7 +179,7 @@ def check_geometry_complete(geo_name, junction_types, skip_forward=False):
     
     return True
 
-def run_generate_zerod_inputs(geo_name, args_dict, verbose=False, timeout_seconds=300):
+def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, timeout_seconds=300):
     """
     Run generate_zerod_inputs.py for a single geometry.
     
@@ -195,7 +195,7 @@ def run_generate_zerod_inputs(geo_name, args_dict, verbose=False, timeout_second
     script_path = os.path.join(REPO_ROOT, 'util', 'zerod_calibration', 'generate_zerod_inputs.py')
     
     # Build command
-    cmd = [sys.executable, script_path, '--set-name', 'VMR', '--geo-name', geo_name]
+    cmd = [sys.executable, script_path, '--set-name', set_name, '--geo-name', geo_name]
     
     # Add optional arguments
     if args_dict.get('junction_types'):
@@ -290,7 +290,7 @@ Examples:
   python3 batch_generate_zerod_inputs_vmr.py --verbose
         """
     )
-    
+    parser.add_argument('--set-name', default='VMR', help='Set name (e.g., set_1)')
     parser.add_argument('--geometries', nargs='+', default=None,
                        help='Specific geometry names to process (default: all)')
     parser.add_argument('--junction-types', nargs='+',
@@ -338,7 +338,7 @@ Examples:
     # Note: --all is the default behavior, so we don't need to add it as an option
     
     args = parser.parse_args()
-    
+    set_name = args.set_name
     # Build args dictionary
     args_dict = {
         'junction_types': args.junction_types,
@@ -361,7 +361,7 @@ Examples:
         print(f"Processing {len(geo_names)} specified geometries")
     else:
         print("Discovering VMR geometries...")
-        geo_names = get_vmr_geometries()
+        geo_names = get_vmr_geometries(richter_dir=os.path.join(REPO_ROOT, 'data', 'zeroD', set_name, 'richter-0d'))
         print(f"Found {len(geo_names)} VMR geometries")
     
     # Filter geometries based on --only-failed, --only-timed-out, or --only-successful flags
@@ -411,7 +411,7 @@ Examples:
     print("\n" + "="*70)
     print("Batch Configuration")
     print("="*70)
-    print(f"  Set name: VMR")
+    print(f"  Set name: {set_name}")
     print(f"  Number of geometries: {len(geo_names)}")
     print(f"  Junction types: {', '.join(args.junction_types)}")
     print(f"  Zoom window: [{args.zoom_start}, {args.zoom_end}]")
@@ -451,7 +451,7 @@ Examples:
         print("-" * 70)
         
         # Check if geometry has CORONARY boundary conditions
-        if has_coronary_bc(geo_name):
+        if has_coronary_bc(set_name, geo_name):
             print(f"  ⊘ Skipping {geo_name} (has CORONARY boundary conditions)")
             results['skipped'].append(geo_name)
             continue
@@ -459,6 +459,7 @@ Examples:
         # Check if geometry already exists
         if args.skip_existing:
             if check_geometry_complete(
+                set_name,
                 geo_name, 
                 args.junction_types,
                 skip_forward=args.skip_forward
@@ -468,6 +469,7 @@ Examples:
                 continue
         
         success, error_msg, timed_out, generated_files = run_generate_zerod_inputs(
+            set_name,
             geo_name, 
             args_dict, 
             verbose=args.verbose,

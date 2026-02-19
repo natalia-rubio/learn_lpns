@@ -71,6 +71,7 @@ def main():
     parser.add_argument("--percent-train", type=float, default=0.8, help="Fraction of points used for training (default: 0.8)")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for train/val split (default: 0)")
     parser.add_argument("--data-root", default="data", help="Repo data root (default: data)")
+    parser.add_argument("--normalize", action="store_true", help="Apply z-normalization to inputs/outputs (saves to separate _normalized pkl)")
     parser.add_argument("--verbose", action="store_true", help="Verbose printing")
     args = parser.parse_args()
 
@@ -216,11 +217,13 @@ def main():
             output_type=args.output_type,
             ml_inputs_root=os.path.join(args.data_root, "ml_inputs"),
             geometry_variant=geometry_variant,
+            normalize=args.normalize,
         )
 
+        norm_suffix = "_normalized" if args.normalize else ""
         jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, geometry_variant, args.set_type)
         os.makedirs(jax_out_dir, exist_ok=True)
-        jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}.pkl")
+        jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl")
         save_dict(data_dict, jax_out_path)
         print(f"Wrote data_dict to {jax_out_path}")
 
