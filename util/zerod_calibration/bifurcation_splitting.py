@@ -3,6 +3,7 @@ import copy
 import json
 import csv
 from util.zerod_calibration.file_io import read_centerline_vtp
+from util.zerod_calibration.centerline_path_extraction import get_path_length_from_gid_list
 
 
 
@@ -411,13 +412,34 @@ def split_junctions(geometric_input, centerline_data):
             print(f"    Warning: Could not parse BifurcationId from junction name {junc_name}")
             junction_bif_id = None
         
-        # Compute in-junction path lengths to determine main outlet and ordering
-        if junction_bif_id is not None:
-            in_junction_path_lengths = compute_in_junction_path_lengths(inlet_branch_id, outlet_branch_ids, junction_bif_id)
-        else:
-            in_junction_path_lengths = {}
+        # Compute in-junction path lengths to determine main outlet and ordering.
+        # Prefer pre-computed paths from geometric_params.outlet_centerline_paths
+        # (populated by centerline_path_extraction using BranchIdTmp).
+        in_junction_path_lengths = {}
+        geo_params = junc.get('geometric_params', {})
+        outlet_cl_paths = geo_params.get('outlet_centerline_paths', {})
 
-        
+        if outlet_cl_paths:
+            print(f"    Using pre-computed centerline paths for path lengths")
+            for outlet_id in outlet_vessels:
+                ov = vessel_by_id.get(outlet_id)
+                if ov is None:
+                    continue
+                vname = ov['vessel_name']
+                info = outlet_cl_paths.get(vname, {})
+                gid_list = info.get('path_gids', [])
+                if len(gid_list) >= 2:
+                    pl = get_path_length_from_gid_list(gid_list, centerline_data)
+                    ob = outlet_id_to_branch.get(outlet_id)
+                    if ob is not None:
+                        in_junction_path_lengths[ob] = pl
+            import pdb; pdb.set_trace()
+        else:
+            print(f"    No pre-computed centerline paths found for outlet {outlet_vessels}.")
+            import pdb; pdb.set_trace()
+        # elif junction_bif_id is not None:
+            # in_junction_path_lengths = compute_in_junction_path_lengths(inlet_branch_id, outlet_branch_ids, junction_bif_id)
+
         if in_junction_path_lengths:
             print(f"    In-junction path lengths:")
             for branch_id, path_len in sorted(in_junction_path_lengths.items(), key=lambda x: -x[1]):
@@ -462,7 +484,6 @@ def split_junctions(geometric_input, centerline_data):
                     print(f"    Main outlet (by branchId): {outlet_vessel['vessel_name']} (branch {outlet_branch_id})")
                 else:
                     side_outlets.append(outlet_id)
-        
         # If no main outlet found, use the first outlet as main
         if main_outlet_id is None:
             main_outlet_id = outlet_vessels[0]
@@ -769,25 +790,7 @@ def adjust_junction_boundaries_by_entrance_length_from_files(geometric_input_pat
     return result
 
 
-def generate_connector_observations(original_observations, original_geometric_input, 
-                                     bifurcated_geometric_input, centerline_data):
-    """
-    Generate synthetic observations for connector vessels created during junction splitting.
-    
-    For connector vessels:
-    - Flow: inlet_flow - sum(flows of side outlets that have already branched off)
-    - Pressure: linear interpolation between inlet pressure and main outlet pressure
-    
-    Args:
-        original_observations: Dictionary with 'y' and 'dy' observations from original geometry
-        original_geometric_input: Original geometric input (before splitting)
-        bifurcated_geometric_input: Bifurcated geometric input (after splitting)
-        centerline_data: Centerline data with BranchId and Path arrays
-    
-    Returns:
-        Updated observations dictionary with connector vessel observations
-    """
-    import copy
+
 def rename_observations_for_bifurcations(original_observations, bifurcated_geometric_input):
     """
     Rename existing observation keys to match bifurcations-only junction naming.

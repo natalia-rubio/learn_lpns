@@ -623,6 +623,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
         outlet_max_inscribed_radius_min_on_path = {}
         outlet_max_inscribed_radius_max_on_path = {}
         outlet_angle_diffs = {}
+        outlet_path_gids = {}
 
         inlet_tangent = None
         inlet_radius_val = None
@@ -786,6 +787,8 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     outlet_max_inscribed_radius_max_on_path[vessel_name] = inlet_radius_val
                     # Angle diff between inlet and connector outlet is zero (same tangent)
                     outlet_angle_diffs[vessel_name] = 0.0
+                    # Path is just the inlet point (connector is at same location)
+                    outlet_path_gids[vessel_name] = [int(gid[inlet_pt_idx])] if gid is not None else []
                 else:
                     # Not the first bifurcation, find the appropriate junction to get inlet vessel
                     # If junction is split, find JX_bif0; otherwise use the junction directly
@@ -858,6 +861,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     outlet_max_inscribed_radius_min_on_path[vessel_name] = connector_inlet_radius
                     outlet_max_inscribed_radius_max_on_path[vessel_name] = connector_inlet_radius
                     outlet_angle_diffs[vessel_name] = 0.0
+                    outlet_path_gids[vessel_name] = [int(gid[inlet_pt_idx])] if gid is not None else []
                 # Connectors are artificial — skip the outlet_metrics section below
                 continue
             else:
@@ -1108,21 +1112,34 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
 
                     # Radius min/max on the path from junction inlet to connector endpoint.
                     # Walk actual centerline points rather than using outlet_metrics
-                    # (which augments with branch_outlet_idx that may differ from
-                    # the junction inlet GID point).
+                    # radius_min/max (which augments with branch_outlet_idx that may
+                    # differ from the junction inlet GID point).
                     path_radii = []
                     # 1) Junction inlet point
-                    path_radii.append(float(max_inscribed_radius[inlet_pt_idx]))
+                    r_inlet = float(max_inscribed_radius[inlet_pt_idx])
+                    path_radii.append(r_inlet)
+                    print(f"    MIR_on_path debug for {vessel_name}:")
+                    print(f"      inlet_pt_idx={inlet_pt_idx}, MIR={r_inlet:.6f}")
                     # 2) Points in the BifurcationId junction region on the
-                    #    segment matched to this outlet branch
+                    #    segment matched to this outlet branch, filtered to only
+                    #    include points on the inlet or outlet branch centerline
+                    #    (excludes points on other branches' paths through the junction)
                     if b_id is not None and b_id in outlet_metrics:
                         seg_indices = outlet_metrics[b_id].get('segment_indices', np.array([]))
                         for si in seg_indices:
-                            path_radii.append(float(max_inscribed_radius[si]))
+                            si_branch = int(branch_id[si])
+                            if si_branch != inlet_branch_id and si_branch != b_id:
+                                continue
+                            r_si = float(max_inscribed_radius[si])
+                            path_radii.append(r_si)
+                            print(f"      junction seg idx={si}, GID={int(gid[si]) if gid is not None else '?'}, "
+                                  f"BranchId={si_branch}, Path={float(path_arr_np[si]):.4f}, MIR={r_si:.6f}")
                     # 3) Points on the outlet branch from its inlet up to the
-                    #    connector endpoint (EL extension)
+                    #    connector endpoint (includes branch inlet + EL extension)
                     if conn_idx is not None:
-                        path_radii.append(float(max_inscribed_radius[conn_idx]))
+                        r_conn = float(max_inscribed_radius[conn_idx])
+                        path_radii.append(r_conn)
+                        print(f"      conn_idx={conn_idx}, MIR={r_conn:.6f}")
                         if b_id is not None and b_id in branch_inlet_idx:
                             branch_mask = branch_id == b_id
                             b_indices = np.where(branch_mask)[0]
@@ -1131,10 +1148,14 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                             for bi in b_indices:
                                 pt_path = float(path_arr_np[bi])
                                 if branch_inlet_path_val <= pt_path <= conn_path_val:
-                                    path_radii.append(float(max_inscribed_radius[bi]))
+                                    r_bi = float(max_inscribed_radius[bi])
+                                    path_radii.append(r_bi)
+                                    print(f"      branch pt idx={bi}, GID={int(gid[bi]) if gid is not None else '?'}, "
+                                          f"Path={pt_path:.4f}, MIR={r_bi:.6f}")
                     if path_radii:
                         outlet_max_inscribed_radius_min_on_path[vessel_name] = min(path_radii)
                         outlet_max_inscribed_radius_max_on_path[vessel_name] = max(path_radii)
+                        print(f"      => min={min(path_radii):.6f}, max={max(path_radii):.6f}")
                     else:
                         outlet_max_inscribed_radius_min_on_path[vessel_name] = inlet_radius_val
                         outlet_max_inscribed_radius_max_on_path[vessel_name] = inlet_radius_val
@@ -1145,6 +1166,40 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     else:
                         outlet_angle_diffs[vessel_name] = 0.0
                     print(f"Got outlet angle diff for connector: {vessel_name}: {outlet_angle_diffs[vessel_name]}")
+
+                    # Build ordered list of GIDs on the path from inlet to connector
+                    if gid is not None:
+                        path_point_entries = []
+                        # Inlet point
+                        path_point_entries.append((float(path_arr_np[inlet_pt_idx]), int(gid[inlet_pt_idx])))
+                        # Junction region segment points (filtered by BranchId)
+                        if b_id is not None and b_id in outlet_metrics:
+                            seg_indices = outlet_metrics[b_id].get('segment_indices', np.array([]))
+                            for si in seg_indices:
+                                si_branch = int(branch_id[si])
+                                if si_branch == inlet_branch_id or si_branch == b_id:
+                                    path_point_entries.append((float(path_arr_np[si]), int(gid[si])))
+                        # Outlet branch points up to connector
+                        if conn_idx is not None and b_id is not None and b_id in branch_inlet_idx:
+                            branch_mask = branch_id == b_id
+                            b_indices = np.where(branch_mask)[0]
+                            conn_path_val = float(path_arr_np[conn_idx])
+                            branch_inlet_path_val = float(path_arr_np[branch_inlet_idx[b_id]])
+                            for bi in b_indices:
+                                pt_path = float(path_arr_np[bi])
+                                if branch_inlet_path_val <= pt_path <= conn_path_val:
+                                    path_point_entries.append((pt_path, int(gid[bi])))
+                        # Sort by path and deduplicate
+                        path_point_entries.sort(key=lambda x: x[0])
+                        seen = set()
+                        ordered_gids = []
+                        for _, g in path_point_entries:
+                            if g not in seen:
+                                seen.add(g)
+                                ordered_gids.append(g)
+                        outlet_path_gids[vessel_name] = ordered_gids
+                    else:
+                        outlet_path_gids[vessel_name] = []
                 continue
 
             # Only add junction-level metrics if they were computed (outlet_metrics is not empty)
@@ -1183,6 +1238,16 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                         outlet_angle_diffs[vessel_name] = 0.0
                 else:
                     outlet_angle_diffs[vessel_name] = 0.0
+                # No outlet_metrics — path is just inlet + outlet branch inlet
+                if gid is not None:
+                    path_gid_list = [int(gid[inlet_pt_idx])]
+                    if b_id in branch_inlet_idx:
+                        outlet_g = int(gid[branch_inlet_idx[b_id]])
+                        if outlet_g != path_gid_list[-1]:
+                            path_gid_list.append(outlet_g)
+                    outlet_path_gids[vessel_name] = path_gid_list
+                else:
+                    outlet_path_gids[vessel_name] = []
                 continue
             print(f"Got outlet metrics for branch {b_id}: {outlet_metrics[b_id]}")
             m = outlet_metrics[b_id]
@@ -1271,6 +1336,47 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                 )
             outlet_angle_diffs[vessel_name] = get_angle_diff(inlet_tangent, out_tan)
 
+            # Build ordered list of GIDs on the path from inlet to this outlet
+            if gid is not None:
+                path_point_entries = []
+                # Inlet point
+                path_point_entries.append((float(path_arr_np[inlet_pt_idx]), int(gid[inlet_pt_idx])))
+                # Junction region segment points
+                seg_indices = m.get('segment_indices', np.array([]))
+                for si in seg_indices:
+                    path_point_entries.append((float(path_arr_np[si]), int(gid[si])))
+                # Outlet branch inlet point
+                if b_id in branch_inlet_idx:
+                    oi = branch_inlet_idx[b_id]
+                    path_point_entries.append((float(path_arr_np[oi]), int(gid[oi])))
+                # If there's an EL extension, include branch points up to the
+                # vessel's new inlet GID
+                if el_extension > 0.0 and vessel is not None:
+                    cni = vessel.get('centerline_node_ids', {})
+                    v_inlet_gid = cni.get('inlet')
+                    if v_inlet_gid is not None and b_id in branch_inlet_idx:
+                        branch_mask = branch_id == b_id
+                        b_indices = np.where(branch_mask)[0]
+                        new_inlet_idx = find_point_from_gid(v_inlet_gid)
+                        if new_inlet_idx is not None:
+                            new_inlet_path_val = float(path_arr_np[new_inlet_idx])
+                            branch_inlet_path_val = float(path_arr_np[branch_inlet_idx[b_id]])
+                            for bi in b_indices:
+                                pt_path = float(path_arr_np[bi])
+                                if branch_inlet_path_val <= pt_path <= new_inlet_path_val:
+                                    path_point_entries.append((pt_path, int(gid[bi])))
+                # Sort by path and deduplicate
+                path_point_entries.sort(key=lambda x: x[0])
+                seen = set()
+                ordered_gids = []
+                for _, g in path_point_entries:
+                    if g not in seen:
+                        seen.add(g)
+                        ordered_gids.append(g)
+                outlet_path_gids[vessel_name] = ordered_gids
+            else:
+                outlet_path_gids[vessel_name] = []
+
         # MaximumInscribedSphereRadius at each outlet point (local value).
         # For regular outlets: radius at the branch inlet point.
         # For connectors: radius at the connector's outlet GID (the adjusted outlet point).
@@ -1320,6 +1426,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             'max_inscribed_radius_min_on_path': outlet_max_inscribed_radius_min_on_path,
             'max_inscribed_radius_max_on_path': outlet_max_inscribed_radius_max_on_path,
             'outlet_angle_diffs': outlet_angle_diffs,
+            'outlet_path_gids': outlet_path_gids,
         }
         
         print(f"  {junc_name}: {len(inlet_vessel_areas)} inlet vessels, "
@@ -1395,6 +1502,7 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
             'max_inscribed_radius_min_on_path': areas.get('max_inscribed_radius_min_on_path', {}),
             'max_inscribed_radius_max_on_path': areas.get('max_inscribed_radius_max_on_path', {}),
             'outlet_angle_diffs': areas.get('outlet_angle_diffs', {}),
+            'outlet_path_gids': areas.get('outlet_path_gids', {}),
             }
         print(f"  Added geometric_params to junction {junc_name}")
     

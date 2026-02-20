@@ -34,7 +34,7 @@ from util.zerod_calibration.zerod_handling import *
 from util.zerod_calibration.calibration import *
 from util.zerod_calibration.forward_simulation import *
 from util.zerod_calibration.geometric_params import *
-
+from util.zerod_calibration.centerline_path_extraction import *
 try:
     from scipy.interpolate import CubicSpline, interp1d
     HAS_SCIPY_INTERP = True
@@ -168,9 +168,14 @@ def main():
                 )
                 generated_files.append(geometric_input_path)
             
+            print(f"\n  Adding centerline parameters to geometric input...")
+            geometric_centerline_input_path = geometric_input_path.replace('geometric_input', 'geometric_centerline_input')
+            process_geometric_input(centerline_path, geometric_input_path, geometric_centerline_input_path)
+            print(f"  Centerline parameters added to geometric input saved to: {geometric_centerline_input_path}")
+            import pdb; pdb.set_trace()
             # Generate bifurcations-only version of the geometric input
             print(f"\n  Creating bifurcations-only geometric input...")
-            split_junctions_from_files(geometric_input_path, centerline_path, bifurcations_geometric_input_path)
+            split_junctions_from_files(geometric_centerline_input_path, centerline_path, bifurcations_geometric_input_path)
             generated_files.append(bifurcations_geometric_input_path)
             print(f"  Bifurcations-only geometric input saved to: {bifurcations_geometric_input_path}")
             
