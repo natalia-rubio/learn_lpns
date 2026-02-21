@@ -26,6 +26,47 @@ def _safe_get(d: Dict[str, Any], *keys, default=None):
     return cur
 
 
+def _safe_div(a, b):
+    """Return a/b, or None if either operand is None or b is zero."""
+    if a is None or b is None:
+        return None
+    try:
+        return float(a) / float(b) if float(b) != 0.0 else None
+    except (TypeError, ValueError):
+        return None
+
+def _safe_mult(a, b):
+    """Return a*b, or None if either operand is None."""
+    if a is None or b is None:
+        return None
+    try:
+        return float(a) * float(b)
+    except (TypeError, ValueError):
+        return None
+
+# ---------------------------------------------------------------------------
+# Computed per-outlet features
+# ---------------------------------------------------------------------------
+# Each entry is (suffix, func) where *suffix* becomes the column name
+# "outlet{i}_{suffix}" and *func(outlet_raw, junction_raw)* returns a float.
+#
+# outlet_raw keys:  path_length, tortuosity, tangent, r_local, r_min_path,
+#                   r_max_path, angle_diff
+# junction_raw keys: inlet_max_r, inlet_tangent
+#
+# To add a new computed feature, just append a tuple here.
+# ---------------------------------------------------------------------------
+COMPUTED_OUTLET_FEATURES: List[Tuple[str, Any]] = [
+    ("max_inscribed_radius_ratio",
+     lambda out, junc: _safe_div(out["r_local"], junc["inlet_max_r"])),
+     ("poiseuille_resistance_calc",
+     lambda out, junc: _safe_div(8 * 0.04 * out["path_length"], np.pi * out["r_local"]**4)),
+     ("inductance_calc",   
+     lambda out, junc: _safe_mult(0.06*out["path_length"], out["r_local"]**2)),
+
+]
+
+
 def load_junction_geometric_features(
     config_path: str,
     require_two_outlets: bool = True,
@@ -113,6 +154,9 @@ def load_junction_geometric_features(
         outlet_max_r_min_path = gp.get("max_inscribed_radius_min_on_path", {}) or {}
         outlet_max_r_max_path = gp.get("max_inscribed_radius_max_on_path", {}) or {}
         outlet_angle_diffs = gp.get("outlet_angle_diffs", {}) or {}
+        outlet_L = gp.get("outlet_L", {}) or {}
+        outlet_R_poiseuille = gp.get("outlet_R_poiseuille", {}) or {}
+        outlet_stenosis_coeff = gp.get("outlet_stenosis_coefficient", {}) or {}
         # Map vessel_name -> metrics (use outlet_path_lengths keys as canonical names)
         outlet_names = list(outlet_path_lengths.keys())
         if require_two_outlets and len(outlet_names) != 2:
@@ -131,9 +175,10 @@ def load_junction_geometric_features(
                 raise ValueError(f"Could not convert {x} to float")
                 return None
 
-        # Per-outlet features helper
+        junction_raw = {"inlet_max_r": inlet_max_r, "inlet_tangent": inlet_tangent}
+
         def get_outlet_features(outlet_name: str) -> List[float]:
-            """Extract all features for a single outlet."""
+            """Extract raw + computed features for a single outlet."""
             pl = outlet_path_lengths.get(outlet_name)
             tor = outlet_tortuosities.get(outlet_name)
             tan = outlet_tangents.get(outlet_name, [None, None, None]) or [None, None, None]
@@ -144,17 +189,18 @@ def load_junction_geometric_features(
             r_min_p = outlet_max_r_min_path.get(outlet_name)
             r_max_p = outlet_max_r_max_path.get(outlet_name)
             ang = outlet_angle_diffs.get(outlet_name)
+            L_val = outlet_L.get(outlet_name, 0.0)
+            R_pois = outlet_R_poiseuille.get(outlet_name, 0.0)
+            sten = outlet_stenosis_coeff.get(outlet_name, 0.0)
 
-            if verbose:
-                print(f"Adding outlet path length: {pl}")
-                print(f"Adding outlet tortuosity: {tor}")
-                print(f"Adding outlet tangent features: {tan}")
-                print(f"Adding outlet max inscribed radius local: {r_loc}")
-                print(f"Adding outlet max inscribed radius min on path: {r_min_p}")
-                print(f"Adding outlet max inscribed radius max on path: {r_max_p}")
-                print(f"Adding outlet angle diff (inlet vs outlet tangent): {ang}")
-            
-            return [
+            outlet_raw = {
+                "path_length": pl, "tortuosity": tor, "tangent": tan,
+                "r_local": r_loc, "r_min_path": r_min_p, "r_max_path": r_max_p,
+                "angle_diff": ang, "L": L_val, "R_poiseuille": R_pois,
+                "stenosis_coefficient": sten,
+            }
+
+            features = [
                 _to_float(pl),
                 _to_float(tor),
                 _to_float(tan[0]),
@@ -164,7 +210,15 @@ def load_junction_geometric_features(
                 _to_float(r_min_p),
                 _to_float(r_max_p),
                 _to_float(ang),
+                _to_float(L_val),
+                _to_float(R_pois),
+                _to_float(sten),
             ]
+
+            for _name, func in COMPUTED_OUTLET_FEATURES:
+                features.append(_to_float(func(outlet_raw, junction_raw)))
+
+            return features
 
     # Build TWO rows per junction: one with outlet0 first, one with outlet1 first
         # Look up vessel IDs from outlet_names via the authoritative mapping
@@ -227,31 +281,33 @@ def load_junction_geometric_features(
     X = np.asarray(rows, dtype=float)
 
     # Feature names in the same order as feat_row construction above
+    _raw_outlet_suffixes = [
+        "path_length",
+        "tortuosity",
+        "tangent_x",
+        "tangent_y",
+        "tangent_z",
+        "max_inscribed_radius_local",
+        "max_inscribed_radius_min_on_path",
+        "max_inscribed_radius_max_on_path",
+        "angle_diff",
+        "absorbed_L",
+        "absorbed_R_poiseuille",
+        "absorbed_stenosis_coefficient",
+    ]
+    _computed_outlet_suffixes = [name for name, _ in COMPUTED_OUTLET_FEATURES]
+    _all_outlet_suffixes = _raw_outlet_suffixes + _computed_outlet_suffixes
+
     feature_names: List[str] = [
         "outlet_vessel_id",
         "inlet_max_inscribed_radius",
         "inlet_tangent_x",
         "inlet_tangent_y",
         "inlet_tangent_z",
-        "outlet0_path_length",
-        "outlet0_tortuosity",
-        "outlet0_tangent_x",
-        "outlet0_tangent_y",
-        "outlet0_tangent_z",
-        "outlet0_max_inscribed_radius_local",
-        "outlet0_max_inscribed_radius_min_on_path",
-        "outlet0_max_inscribed_radius_max_on_path",
-        "outlet0_angle_diff",
-        "outlet1_path_length",
-        "outlet1_tortuosity",
-        "outlet1_tangent_x",
-        "outlet1_tangent_y",
-        "outlet1_tangent_z",
-        "outlet1_max_inscribed_radius_local",
-        "outlet1_max_inscribed_radius_min_on_path",
-        "outlet1_max_inscribed_radius_max_on_path",
-        "outlet1_angle_diff",
     ]
+    for prefix in ("outlet0", "outlet1"):
+        for suffix in _all_outlet_suffixes:
+            feature_names.append(f"{prefix}_{suffix}")
     return X, feature_names, junction_names, outlet_primary_names
 
 

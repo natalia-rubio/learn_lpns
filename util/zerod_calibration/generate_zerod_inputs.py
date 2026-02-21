@@ -172,7 +172,7 @@ def main():
             geometric_centerline_input_path = geometric_input_path.replace('geometric_input', 'geometric_centerline_input')
             process_geometric_input(centerline_path, geometric_input_path, geometric_centerline_input_path)
             print(f"  Centerline parameters added to geometric input saved to: {geometric_centerline_input_path}")
-            import pdb; pdb.set_trace()
+
             # Generate bifurcations-only version of the geometric input
             print(f"\n  Creating bifurcations-only geometric input...")
             split_junctions_from_files(geometric_centerline_input_path, centerline_path, bifurcations_geometric_input_path)
@@ -637,8 +637,9 @@ def main():
                     #             f"Row count mismatch: CSV has {len(X)} rows, but feature extraction has {len(X_full)} rows"
                     #         )
                     # else:
-                    #     # CSV doesn't exist, extract features directly and filter
-                    print(f"  CSV not found, extracting features directly from geometric input")
+
+                        # CSV doesn't exist, extract features directly and filter
+                    print(f"  Extracting features directly from geometric input")
                     X_full, feature_names_full, junction_names, outlet_primary_names = load_junction_geometric_features(
                         variant_geometric_input,
                         require_two_outlets=True,
@@ -859,8 +860,9 @@ def main():
                     print(f"      ✓ Neural network predictions applied and saved to {nn_output_path}")
                 
                 except Exception as e:
-                    raise Exception(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
-
+                    #raise Exception(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
+                    print(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
+                    import pdb; pdb.set_trace()
     # Step 4: Run forward simulations for each geometry variant
     if not args.skip_forward:
         # # Adjust refinement factor based on length of inlet flow waveform
@@ -896,7 +898,8 @@ def main():
                                 bvj_input_path = geo_variant_paths['geometric_input']
                                 if not os.path.exists(bvj_input_path):
                                     # Fallback to calibration input if it exists
-                                    bvj_input_path = variant_junction_paths['BloodVesselJunction'].get('calibration_input', '')
+                                    import pdb; pdb.set_trace()
+                                print(f"    Refining inlet BC for forward simulation with input: {bvj_input_path}")
                                 refine_inlet_bc_for_forward_simulation(nn_output_path, calibration_input_path=bvj_input_path)
                                 run_forward_simulation(nn_output_path, nn_results_csv)
                                 generated_files.append(nn_results_csv)
@@ -927,7 +930,6 @@ def main():
                     else:
                         try:
                             # For geometric input, use the variant's calibration input as source
-                            #import pdb; pdb.set_trace()
                             refine_inlet_bc_for_forward_simulation(variant_geometric_input, calibration_input_path=variant_calibration_input)
                             run_forward_simulation(variant_geometric_input, variant_geometric_results)
                             generated_files.append(variant_geometric_results)

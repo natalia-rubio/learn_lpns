@@ -86,7 +86,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
     """
     print(f"Reading centerline solution from: {centerline_soln_path}")
     centerline_data, _ = read_centerline_vtp(centerline_soln_path)
-    
+    verbose = False
     # Read geometric input to understand vessel/junction structure
     with open(geometric_input_path, 'r') as f:
         geometric_input = json.load(f)
@@ -958,10 +958,12 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
 
             # Handle connector vessels - set path_length and tortuosity to 0
             b_id = get_branch_id_from_name(vessel_name)
-            print(f"Got branch id for vessel {vessel_name}: {b_id}")
+            if verbose:
+                print(f"Got branch id for vessel {vessel_name}: {b_id}")
 
             outlet_gid = outlet_id_to_gid.get(vessel_id)
-            print(f"Outlet GID for vessel {vessel_name}: {outlet_gid}")
+            if verbose:
+                print(f"Outlet GID for vessel {vessel_name}: {outlet_gid}")
             outlet_pt_idx = find_point_from_gid(outlet_gid)
 
 
@@ -977,7 +979,8 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                 numbered_conn = re.search(r"_connectorEL(\d+)$", vessel_name)
                 if numbered_conn:
                     # Splitting-created connector: keep previous behavior (inherit inlet/tangent, zero-length)
-                    print(f"Splitting-created connector: {vessel_name}")
+                    if verbose:
+                        print(f"Splitting-created connector: {vessel_name}")
                     outlet_path_lengths[vessel_name] = 0.0
                     outlet_tortuosities[vessel_name] = 0.0
 
@@ -1063,8 +1066,9 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                                 points_array[conn_idx] - points_array[branch_inlet_idx[b_id]]))
 
                     outlet_path_lengths[vessel_name] = float(in_junction_path + el_extension)
-                    print(f"    connectorEL {vessel_name}: in_junction_path={in_junction_path:.4f}, "
-                          f"el_extension={el_extension:.4f}, total={in_junction_path + el_extension:.4f}")
+                    if verbose:
+                        print(f"    connectorEL {vessel_name}: in_junction_path={in_junction_path:.4f}, "
+                            f"el_extension={el_extension:.4f}, total={in_junction_path + el_extension:.4f}")
 
                     # Tangent at the connector endpoint: compute using branch neighbours if possible
                     out_tan = None
@@ -1118,8 +1122,9 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     # 1) Junction inlet point
                     r_inlet = float(max_inscribed_radius[inlet_pt_idx])
                     path_radii.append(r_inlet)
-                    print(f"    MIR_on_path debug for {vessel_name}:")
-                    print(f"      inlet_pt_idx={inlet_pt_idx}, MIR={r_inlet:.6f}")
+                    if verbose:
+                        print(f"    MIR_on_path debug for {vessel_name}:")
+                        print(f"      inlet_pt_idx={inlet_pt_idx}, MIR={r_inlet:.6f}")
                     # 2) Points in the BifurcationId junction region on the
                     #    segment matched to this outlet branch, filtered to only
                     #    include points on the inlet or outlet branch centerline
@@ -1132,14 +1137,16 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                                 continue
                             r_si = float(max_inscribed_radius[si])
                             path_radii.append(r_si)
-                            print(f"      junction seg idx={si}, GID={int(gid[si]) if gid is not None else '?'}, "
-                                  f"BranchId={si_branch}, Path={float(path_arr_np[si]):.4f}, MIR={r_si:.6f}")
+                            if verbose:
+                                print(f"      junction seg idx={si}, GID={int(gid[si]) if gid is not None else '?'}, "
+                                    f"BranchId={si_branch}, Path={float(path_arr_np[si]):.4f}, MIR={r_si:.6f}")
                     # 3) Points on the outlet branch from its inlet up to the
                     #    connector endpoint (includes branch inlet + EL extension)
                     if conn_idx is not None:
                         r_conn = float(max_inscribed_radius[conn_idx])
                         path_radii.append(r_conn)
-                        print(f"      conn_idx={conn_idx}, MIR={r_conn:.6f}")
+                        if verbose:
+                            print(f"      conn_idx={conn_idx}, MIR={r_conn:.6f}")
                         if b_id is not None and b_id in branch_inlet_idx:
                             branch_mask = branch_id == b_id
                             b_indices = np.where(branch_mask)[0]
@@ -1155,7 +1162,8 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     if path_radii:
                         outlet_max_inscribed_radius_min_on_path[vessel_name] = min(path_radii)
                         outlet_max_inscribed_radius_max_on_path[vessel_name] = max(path_radii)
-                        print(f"      => min={min(path_radii):.6f}, max={max(path_radii):.6f}")
+                        if verbose:
+                            print(f"      => min={min(path_radii):.6f}, max={max(path_radii):.6f}")
                     else:
                         outlet_max_inscribed_radius_min_on_path[vessel_name] = inlet_radius_val
                         outlet_max_inscribed_radius_max_on_path[vessel_name] = inlet_radius_val
@@ -1490,7 +1498,8 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
             raise ValueError(f"No geometric data found for junction {junc_name}")
         
         areas = junction_areas[junc_name]
-        junc['geometric_params'] = {
+        existing_gp = junc.get('geometric_params', {})
+        new_gp = {
             'inlet_vessel_areas': areas.get('inlet_vessel_areas', {}),
             'outlet_vessel_areas': areas.get('outlet_vessel_areas', {}),
             'outlet_path_lengths': areas.get('outlet_path_lengths', {}),
@@ -1503,7 +1512,9 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
             'max_inscribed_radius_max_on_path': areas.get('max_inscribed_radius_max_on_path', {}),
             'outlet_angle_diffs': areas.get('outlet_angle_diffs', {}),
             'outlet_path_gids': areas.get('outlet_path_gids', {}),
-            }
+        }
+        existing_gp.update(new_gp)
+        junc['geometric_params'] = existing_gp
         print(f"  Added geometric_params to junction {junc_name}")
     
     # Write output
