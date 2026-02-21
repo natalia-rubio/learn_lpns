@@ -21,7 +21,10 @@ if REPO_ROOT not in sys.path:
 from util.data_processing.inputs_from_0d_config import load_junction_geometric_features
 from util.data_processing.outputs_from_config import load_junction_lumped_parameters
 from util.data_processing.data_dict_from_csvs import build_data_dict_from_csvs
-from util.data_processing.generate_split_indices import generate_split_indices
+from util.data_processing.generate_split_indices import (
+    generate_split_indices,
+    get_geometry_row_ranges,
+)
 from util.tools.basic import save_dict
 
 def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", data_root="data"):
@@ -244,11 +247,23 @@ def main():
         save_dict(data_dict, jax_out_path)
         print(f"Wrote data_dict to {jax_out_path}")
 
-        # ---- Generate train/val split indices ----
+        # ---- Generate train/val split indices (by geometry: all rows from one geometry in same set) ----
         if "input" not in data_dict:
             raise ValueError("Expected 'input' in data_dict")
         num_pts = int(getattr(data_dict["input"], "shape")[0])
-        train_ind, val_ind = generate_split_indices(num_pts=num_pts, percent_train=args.percent_train, seed=args.seed)
+        ml_inputs_root = os.path.join(args.data_root, "ml_inputs")
+        row_ranges, _, geometries_ordered = get_geometry_row_ranges(
+            ml_inputs_root, args.set_name, geometry_variant, geometries=geometries
+        )
+        train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
+            num_pts=num_pts,
+            percent_train=args.percent_train,
+            seed=args.seed,
+            geometry_row_ranges=row_ranges,
+        )
+
+        train_geometries = [geometries_ordered[i] for i in train_geo_idx]
+        val_geometries = [geometries_ordered[i] for i in val_geo_idx]
 
         split_dict = {
             "train_ind": train_ind,
@@ -260,7 +275,20 @@ def main():
         os.makedirs(split_out_dir, exist_ok=True)
         split_out_path = os.path.join(split_out_dir, f"train_val_ind_{args.set_name}_num_geos_{num_geos}")
         save_dict(split_dict, split_out_path)
+
+        geometries_txt_path = split_out_path + "_geometries.txt"
+        with open(geometries_txt_path, "w") as f:
+            f.write("Train geometries:\n")
+            for g in train_geometries:
+                f.write(f"  {g}\n")
+            f.write("Validation geometries:\n")
+            for g in val_geometries:
+                f.write(f"  {g}\n")
+
         print(f"Wrote split indices to {split_out_path} (n_train={len(train_ind)}, n_val={len(val_ind)})")
+        print(f"Wrote geometry set assignment to {geometries_txt_path}")
+        print("Train geometries:", train_geometries)
+        print("Validation geometries:", val_geometries)
 
 if __name__ == "__main__":
     main()
