@@ -163,22 +163,39 @@ def main():
                 junction_names=junction_names,
                 verbose=args.verbose,
             )
-            if y_junction_names != junction_names:
-                raise ValueError("Internal error: junction ordering mismatch between inputs and outputs.")
             print(f"Loaded {len(Y)} junctions with {len(target_names)} target values")
             
-            # --- Consistency checks between inputs and outputs ---
-            # 1) Primary outlet names must match row-by-row
-            if y_primary_outlet_names != outlet_primary_names:
-                for idx, (inp_name, out_name) in enumerate(zip(outlet_primary_names, y_primary_outlet_names)):
-                    if inp_name != out_name:
-                        print(f"  ⚠ Row {idx}: input primary_outlet={inp_name}, output primary_outlet={out_name}")
-                raise ValueError(
-                    f"Primary outlet name mismatch between inputs and outputs for {geo}. "
-                    f"Inputs: {outlet_primary_names}, Outputs: {y_primary_outlet_names}"
-                )
-            
-            # 2) outlet_vessel_id column must match row-by-row
+            # --- Reorder outputs to match input row ordering, then verify ---
+            # Build a lookup from (junction_name, primary_outlet_name) -> output row index
+            if y_primary_outlet_names != outlet_primary_names or y_junction_names != junction_names:
+                output_key_to_idx = {}
+                for idx, (jn, pn) in enumerate(zip(y_junction_names, y_primary_outlet_names)):
+                    output_key_to_idx[(jn, pn)] = idx
+
+                reorder = []
+                for jn, pn in zip(junction_names, outlet_primary_names):
+                    oi = output_key_to_idx.get((jn, pn))
+                    if oi is None:
+                        raise ValueError(
+                            f"Output row for junction={jn}, outlet={pn} not found in "
+                            f"calibration output for {geo}."
+                        )
+                    reorder.append(oi)
+
+                Y = Y[reorder]
+                y_junction_names = [y_junction_names[i] for i in reorder]
+                y_primary_outlet_names = [y_primary_outlet_names[i] for i in reorder]
+                print(f"  Reordered {len(reorder)} output rows to match input ordering")
+
+            # Verify alignment after reordering
+            assert y_junction_names == junction_names, (
+                f"Junction name mismatch after reordering for {geo}: "
+                f"{y_junction_names} != {junction_names}"
+            )
+            assert y_primary_outlet_names == outlet_primary_names, (
+                f"Primary outlet name mismatch after reordering for {geo}: "
+                f"{y_primary_outlet_names} != {outlet_primary_names}"
+            )
             input_vid_col_idx = feature_names.index("outlet_vessel_id")
             output_vid_col_idx = target_names.index("outlet_vessel_id")
             for row_idx in range(len(X)):
@@ -190,7 +207,7 @@ def main():
                         f"input has vessel_id={input_vid}, output has vessel_id={output_vid}. "
                         f"Junction={junction_names[row_idx]}, primary_outlet={outlet_primary_names[row_idx]}"
                     )
-            print(f"  ✓ Consistency check passed: {len(X)} rows, outlet_vessel_ids and primary_outlet_names match")
+            print(f"  ✓ Consistency check passed: {len(X)} rows — junction names, primary outlets, and outlet_vessel_ids all match")
 
             os.makedirs(os.path.dirname(targets_csv_path), exist_ok=True)
             with open(targets_csv_path, "w") as f:

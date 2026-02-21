@@ -24,7 +24,7 @@ def launch_training(network_params, optimizer_params, training_params):
     network_params["target_coef_ind"] = 0
     network_params["layer_width"] = 40
     network_params["num_layers"] = 1
-    training_params["num_epochs"] = 2000
+    training_params["num_epochs"] = 1000
     optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init1
     model = NeuralNet(network_params, optimizer_params)
@@ -79,9 +79,9 @@ if __name__ == "__main__":
             f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
         )
 
-        network_params = {"num_input_features": 13,
-                          "num_layers": 1,
-                          "layer_width":20,
+        network_params = {"num_input_features": 25,
+                          "num_layers": 5,
+                          "layer_width":100,
                           "output_type": output_type,
                           "set_name": set_name,
                           "set_type": set_type,

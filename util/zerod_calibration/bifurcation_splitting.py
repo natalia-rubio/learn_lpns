@@ -433,7 +433,7 @@ def split_junctions(geometric_input, centerline_data):
                     ob = outlet_id_to_branch.get(outlet_id)
                     if ob is not None:
                         in_junction_path_lengths[ob] = pl
-            import pdb; pdb.set_trace()
+
         else:
             print(f"    No pre-computed centerline paths found for outlet {outlet_vessels}.")
             import pdb; pdb.set_trace()
@@ -527,11 +527,21 @@ def split_junctions(geometric_input, centerline_data):
             
             if is_last:
                 # Last bifurcation: connects to main outlet
+                side_outlet_vessel_obj = vessel_by_id.get(side_outlet_id)
+                main_outlet_vessel_obj = vessel_by_id.get(main_outlet_id)
+                side_name_for_gp = side_outlet_vessel_obj['vessel_name'] if side_outlet_vessel_obj else str(side_outlet_id)
+                main_name_for_gp = main_outlet_vessel_obj['vessel_name'] if main_outlet_vessel_obj else str(main_outlet_id)
+
                 new_junc = {
                     "inlet_vessels": [current_inlet_id],
                     "junction_name": new_junc_name,
                     "junction_type": junc_type,
-                    "outlet_vessels": [side_outlet_id, main_outlet_id]
+                    "outlet_vessels": [side_outlet_id, main_outlet_id],
+                    "geometric_params": {
+                        "outlet_L": {side_name_for_gp: 0.0, main_name_for_gp: 0.0},
+                        "outlet_R_poiseuille": {side_name_for_gp: 0.0, main_name_for_gp: 0.0},
+                        "outlet_stenosis_coefficient": {side_name_for_gp: 0.0, main_name_for_gp: 0.0},
+                    },
                 }
                 
                 # Add GIDs to junction: inlet GID from inlet vessel outlet, outlet GIDs from outlet vessel inlets,
@@ -601,11 +611,19 @@ def split_junctions(geometric_input, centerline_data):
                 vessel_by_name[connector_name] = connector_vessel
                 
                 # Create bifurcation junction
+                side_outlet_vessel_obj2 = vessel_by_id.get(side_outlet_id)
+                side_name_for_gp = side_outlet_vessel_obj2['vessel_name'] if side_outlet_vessel_obj2 else str(side_outlet_id)
+
                 new_junc = {
                     "inlet_vessels": [current_inlet_id],
                     "junction_name": new_junc_name,
                     "junction_type": junc_type,
-                    "outlet_vessels": [side_outlet_id, next_vessel_id]
+                    "outlet_vessels": [side_outlet_id, next_vessel_id],
+                    "geometric_params": {
+                        "outlet_L": {side_name_for_gp: 0.0, connector_name: 0.0},
+                        "outlet_R_poiseuille": {side_name_for_gp: 0.0, connector_name: 0.0},
+                        "outlet_stenosis_coefficient": {side_name_for_gp: 0.0, connector_name: 0.0},
+                    },
                 }
                 
                 # Add GIDs to junction: inlet GID from inlet vessel outlet, outlet GIDs from outlet vessel inlets
@@ -1346,6 +1364,43 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     node_ids = vessel.get('centerline_node_ids', {})
         return node_ids.get(which)
     
+    _EL_PARAM_KEYS = ('L', 'R_poiseuille', 'stenosis_coefficient')
+
+    def _absorb_vessel_params(junc, outlet_vessel_name, vessel, fraction=1.0):
+        """Add (a fraction of) a vessel's L/R_poiseuille/stenosis_coefficient to the junction's geometric_params."""
+        gp = junc.setdefault('geometric_params', {})
+        zvals = vessel.get('zero_d_element_values', {})
+        jname = junc.get('junction_name', '?')
+        print(f"    _absorb_vessel_params: junc={jname}, outlet={outlet_vessel_name}, "
+              f"fraction={fraction}, zvals_L={zvals.get('L', 'MISSING')}, "
+              f"zvals_R={zvals.get('R_poiseuille', 'MISSING')}, "
+              f"zvals_S={zvals.get('stenosis_coefficient', 'MISSING')}")
+        for key in _EL_PARAM_KEYS:
+            outlet_dict = gp.setdefault(f'outlet_{key}', {})
+            old_val = outlet_dict.get(outlet_vessel_name, 0.0)
+            new_val = old_val + fraction * zvals.get(key, 0.0)
+            outlet_dict[outlet_vessel_name] = new_val
+            print(f"      outlet_{key}[{outlet_vessel_name}]: {old_val} -> {new_val}")
+
+    def _reduce_vessel_params(vessel, fraction_remaining):
+        """Scale a vessel's L/R_poiseuille/stenosis_coefficient by the remaining fraction after absorption."""
+        zvals = vessel.get('zero_d_element_values', {})
+        for key in _EL_PARAM_KEYS:
+            zvals[key] = zvals.get(key, 0.0) * fraction_remaining
+
+    def _rename_outlet_in_gp(junc, old_name, new_name):
+        """Rename an outlet vessel key in the junction's geometric_params dicts."""
+        gp = junc.get('geometric_params', {})
+        jname = junc.get('junction_name', '?')
+        print(f"    _rename_outlet_in_gp: junc={jname}, {old_name} -> {new_name}")
+        for key in _EL_PARAM_KEYS:
+            outlet_dict = gp.get(f'outlet_{key}', {})
+            if old_name in outlet_dict:
+                outlet_dict[new_name] = outlet_dict.pop(old_name)
+                print(f"      Renamed outlet_{key}[{old_name}] -> outlet_{key}[{new_name}]")
+            else:
+                print(f"      WARNING: outlet_{key} has no key '{old_name}', keys={list(outlet_dict.keys())}")
+
     # Track vessels that need to be removed (if any - currently not used for EL adjustment)
     vessels_to_remove = []
     # Track vessels converted to connectors (renamed and modified in-place)
@@ -1448,10 +1503,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 while merged_length < EL:
                     # Find downstream junction for merged vessel
                     downstream_junction = None
-                    for junc in junctions:
-                        inlet_vessel_ids = junc.get('inlet_vessels', [])
+                    for scan_junc in junctions:
+                        inlet_vessel_ids = scan_junc.get('inlet_vessels', [])
                         if merged_vessel_id in inlet_vessel_ids:
-                            downstream_junction = junc
+                            downstream_junction = scan_junc
                             break
                     
                     # Check if downstream junction exists and has only 1 outlet
@@ -1581,6 +1636,13 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
 
                                         # New merged vessel length: from new boundary to original outlet
                                         new_merged_length = merged_path_end - new_junction_boundary_path
+
+                                        # Absorb proportional params from the merged vessel
+                                        consumed_length = new_junction_boundary_path - merged_path_start
+                                        fraction_consumed = consumed_length / merged_length if merged_length > 0 else 0.0
+                                        _absorb_vessel_params(junc, outlet_vessel_name, merged_vessel, fraction=fraction_consumed)
+                                        _reduce_vessel_params(merged_vessel, 1.0 - fraction_consumed)
+
                                         merged_vessel['vessel_length'] = float(new_merged_length)
 
                                         # Update node IDs:
@@ -1686,10 +1748,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # Update connections: merged vessel now connects directly to what next_vessel was connected to
                     # Find what next_vessel connects to downstream
                     next_vessel_downstream_junction = None
-                    for junc in junctions:
-                        inlet_vessel_ids = junc.get('inlet_vessels', [])
+                    for scan_junc in junctions:
+                        inlet_vessel_ids = scan_junc.get('inlet_vessels', [])
                         if next_vessel_id in inlet_vessel_ids:
-                            next_vessel_downstream_junction = junc
+                            next_vessel_downstream_junction = scan_junc
                             break
                     
                     # Remove next_vessel immediately from vessels list and lookup
@@ -1750,6 +1812,12 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                     
                                     # Update merged vessel length
                                     new_merged_length = new_junction_boundary_path - merged_path_start
+
+                                    # Absorb proportional params from the merged vessel
+                                    fraction_consumed = new_merged_length / merged_length if merged_length > 0 else 0.0
+                                    _absorb_vessel_params(junc, outlet_vessel_name, merged_vessel, fraction=fraction_consumed)
+                                    _reduce_vessel_params(merged_vessel, 1.0 - fraction_consumed)
+
                                     merged_vessel['vessel_length'] = float(new_merged_length)
                                     
                                     # Update node IDs: outlet moves to new boundary
@@ -1764,7 +1832,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                     extension_successful = True
                                     break
                         else:
-                            # Merged vessel length exactly equals EL
+                            # Merged vessel length exactly equals EL — absorb everything
+                            _absorb_vessel_params(junc, outlet_vessel_name, merged_vessel, fraction=1.0)
+                            _reduce_vessel_params(merged_vessel, 0.0)
+
                             if verbose:
                                 print(f"      → Merged vessel length exactly equals EL: {merged_length:.6f} cm")
                             print(f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
@@ -1801,6 +1872,11 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                         if verbose:
                             print(f"      → Renamed merged vessel: {old_name} → {connector_name}")
                     
+                    # Absorb the merged vessel's full params into the junction before zeroing
+                    _absorb_vessel_params(junc, outlet_vessel_name, merged_vessel, fraction=1.0)
+                    if connector_name != outlet_vessel_name:
+                        _rename_outlet_in_gp(junc, outlet_vessel_name, connector_name)
+
                     # Set length to zero
                     merged_vessel['vessel_length'] = 0.0
                     
@@ -1847,6 +1923,11 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     if verbose:
                         print(f"      → Renamed: {old_name} → {connector_name}")
                 
+                # Absorb the vessel's full params into the junction before zeroing
+                _absorb_vessel_params(junc, outlet_vessel_name, outlet_vessel, fraction=1.0)
+                if connector_name != old_name:
+                    _rename_outlet_in_gp(junc, old_name, connector_name)
+
                 # Set length to zero (vessel is now just a connection point)
                 outlet_vessel['vessel_length'] = 0.0
                 
@@ -1921,6 +2002,12 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                         print(f"      → New vessel length: {new_vessel_length:.6f} cm")
                         print(f"      → Length included in junction: {new_junction_boundary_path - outlet_vessel_path_start:.6f} cm")
                     
+                    # Absorb proportional params into the junction
+                    consumed_length = new_junction_boundary_path - outlet_vessel_path_start
+                    fraction_consumed = consumed_length / outlet_vessel_length if outlet_vessel_length > 0 else 0.0
+                    _absorb_vessel_params(junc, outlet_vessel_name, outlet_vessel, fraction=fraction_consumed)
+                    _reduce_vessel_params(outlet_vessel, 1.0 - fraction_consumed)
+
                     # Update vessel length in the geometric input
                     # The vessel now starts at the new boundary point
                     old_length = outlet_vessel.get('vessel_length', 0.0)
@@ -1946,6 +2033,8 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     
                     print(f"  Warning: EL={EL:.4f} extends beyond vessel {outlet_vessel_name} "
                           f"(length={outlet_vessel_length:.4f}), treating as full vessel inclusion")
+                    _absorb_vessel_params(junc, outlet_vessel_name, outlet_vessel, fraction=1.0)
+                    _reduce_vessel_params(outlet_vessel, 0.0)
                     # Set vessel length to very small value (effectively removing it)
                     outlet_vessel['vessel_length'] = 0.01
     

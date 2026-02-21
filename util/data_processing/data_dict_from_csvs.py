@@ -60,6 +60,18 @@ def get_default_include_features() -> List[str]:
         "outlet1_tortuosity",
         "outlet0_angle_diff",
         "outlet1_angle_diff",
+        "outlet0_max_inscribed_radius_ratio",
+        "outlet1_max_inscribed_radius_ratio",
+        "outlet0_poiseuille_resistance_calc",
+        "outlet1_poiseuille_resistance_calc",
+        "outlet0_inductance_calc",
+        "outlet1_inductance_calc",
+        "outlet0_absorbed_R_poiseuille",
+        "outlet1_absorbed_R_poiseuille",
+        "outlet0_absorbed_L",
+        "outlet1_absorbed_L",
+        "outlet0_absorbed_stenosis_coefficient",
+        "outlet1_absorbed_stenosis_coefficient",
     ]
 
 def get_default_include_outputs() -> List[str]:
