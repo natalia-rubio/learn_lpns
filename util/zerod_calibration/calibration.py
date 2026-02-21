@@ -69,6 +69,8 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         "maximum_iterations": 100,
         "calibrate_stenosis_coefficient":True,
         "set_capacitance_to_zero": False,
+        "L2_penalty_R_poiseuille": 10**5,
+        "L2_penalty_stenosis_coefficient": 10**10,
     }
     
     inp["simulation_parameters"]["number_of_time_pts_per_cardiac_cycle"] = len(bc_time)
