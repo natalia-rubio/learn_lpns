@@ -52,6 +52,10 @@ if __name__ == "__main__":
                         help="Geometry variant: bifurcations, bifurcations_EL, or all (default: all)")
     parser.add_argument("--normalize", action="store_true",
                         help="Use normalized jax_arrays (loads *_normalized.pkl)")
+    parser.add_argument("--split-path", default=None,
+                        help="Path to train/val split pickle (default: data/split_indices/.../train_val_ind_{set_name}_num_geos_{num_geos})")
+    parser.add_argument("--model-dir", default=None,
+                        help="Directory to save models (default: results/models/{set_name}/{geometry_variant})")
     cli_args = parser.parse_args()
 
     set_name = cli_args.set_name
@@ -75,9 +79,11 @@ if __name__ == "__main__":
               f"{' (normalized)' if normalize else ''}")
         print(f"{'='*80}")
         
-        split_ind_dict = load_dict(
-            f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
-        )
+        if cli_args.split_path:
+            split_path = cli_args.split_path
+        else:
+            split_path = f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
+        split_ind_dict = load_dict(split_path)
 
         network_params = {"num_input_features": 25,
                           "num_layers": 5,
@@ -96,6 +102,8 @@ if __name__ == "__main__":
                            "train_inds": split_ind_dict["train_ind"],
                            "val_inds": split_ind_dict["val_ind"],
                            "num_offsets": split_ind_dict["num_offsets"],}
+        if cli_args.model_dir:
+            training_params["output_dir"] = cli_args.model_dir
         
         optimizer_params = {#"step_size": 0.0002,
                             "init" : 0.02,

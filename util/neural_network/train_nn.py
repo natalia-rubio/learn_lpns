@@ -22,6 +22,12 @@ def train_nn(model, training_params):
     plotting = True
     train_hist = []
     val_hist = []
+
+    # Output directory: use override from training_params if provided (e.g. for CV trials)
+    out_dir = training_params.get("output_dir")
+    if out_dir is None:
+        geometry_variant = getattr(model, 'geometry_variant', 'bifurcations')
+        out_dir = os.path.join("results", "models", str(model.set_name), geometry_variant + norm_suffix)
     
     num_offsets = training_params["num_offsets"]
     print("Number of offsets: ", num_offsets)
@@ -84,17 +90,14 @@ def train_nn(model, training_params):
         #         break
                 
         
-        if (epoch+1)%100 == 0 and plotting:
-            if epoch == 0:
-                 continue
+    if (epoch+1)%100 == 0 and plotting:
+
             plt.clf()
             plt.plot(np.linspace(0, epoch, epoch+1, True), np.asarray(train_hist), label = "Training Loss", color = 'cornflowerblue')
             plt.plot(np.linspace(0, epoch, epoch+1, True), np.asarray(val_hist), label = "Validation Loss", color = 'salmon')
             plt.xlabel("Epoch"); plt.ylabel("Loss (RMSE) (mmHg)"); plt.title("Training and Validation Loss")
             plt.yscale("log")
             plt.legend()
-            geometry_variant = getattr(model, 'geometry_variant', 'bifurcations')
-            out_dir = os.path.join("results", "models", str(model.set_name), geometry_variant + norm_suffix)
             os.makedirs(out_dir, exist_ok=True)
             plt.savefig(os.path.join(out_dir, f"{model_name}_training_plot.png"), bbox_inches='tight')
 
@@ -105,13 +108,9 @@ def train_nn(model, training_params):
     plt.xlabel("Epoch"); plt.ylabel("Loss (RMSE) (mmHg)"); plt.title("Training and Validation Loss")
     plt.yscale("log")
     plt.legend()
-    geometry_variant = getattr(model, 'geometry_variant', 'bifurcations')
-    out_dir = os.path.join("results", "models", str(model.set_name), geometry_variant + norm_suffix)
     os.makedirs(out_dir, exist_ok=True)
     plt.savefig(os.path.join(out_dir, f"{model_name}_training_plot.png"), bbox_inches='tight')
 
-    geometry_variant = getattr(model, 'geometry_variant', 'bifurcations')
-    out_dir = os.path.join("results", "models", str(model.set_name), geometry_variant + norm_suffix)
     os.makedirs(out_dir, exist_ok=True)
     dill_save(model, os.path.join(out_dir, f"{model_name}_model"))
     dill_save(model, os.path.join(out_dir, f"{model_name2}_model"))
