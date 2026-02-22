@@ -86,6 +86,8 @@ def main():
                        help='Skip recreating files if they already exist (check at each step)')
     parser.add_argument('--normalize', action='store_true',
                        help='Use z-normalized NN models and apply normalization/unnormalization at inference')
+    parser.add_argument('--model-dir', default=None,
+                       help='Directory containing rri_{set_name}_pred_{0,1,2}_model files (default: results/models/{set_name}/{geometry_variant})')
 
     args = parser.parse_args(); verbose = args.verbose
     if args.normalize:
@@ -571,11 +573,11 @@ def main():
             variant_geometric_input = geo_variant_paths['geometric_input']
             
             # Skip if bifurcations_EL depends on bifurcations and it doesn't exist
-            if geo_variant_name == 'bifurcations_EL':
-                bifurcations_input = geometry_variants['bifurcations']['geometric_input']
-                if not os.path.exists(bifurcations_input):
-                    print(f"  ⊘ Skipping NN inference for {geo_variant_name} (bifurcations geometric input not found)")
-                    continue
+            # if geo_variant_name == 'bifurcations_EL':
+            #     bifurcations_input = geometry_variants['bifurcations']['geometric_input']
+            #     if not os.path.exists(bifurcations_input):
+            #         print(f"  ⊘ Skipping NN inference for {geo_variant_name} (bifurcations geometric input not found)")
+            #         continue
             
             # Check if geometric input exists
             if not os.path.exists(variant_geometric_input):
@@ -697,8 +699,11 @@ def main():
                     X_jax = jnp.array(X_for_nn, dtype=jnp.float32)
                     print(f"  Neural network input dimensions: {X_jax.shape} (rows={X_jax.shape[0]}, features={X_jax.shape[1]})")
                 
-                    # Load the three trained models (use geometry variant + norm suffix for model path)
-                    model_dir = os.path.join('results', 'models', args.set_name, geo_variant_name + norm_suffix)
+                    # Load the three trained models (use --model-dir if set, e.g. for CV trials)
+                    if getattr(args, 'model_dir', None):
+                        model_dir = args.model_dir
+                    else:
+                        model_dir = os.path.join('results', 'models', args.set_name, geo_variant_name + norm_suffix)
                     model_base_name = f"rri_{args.set_name}_pred"
                     model_paths = [
                         os.path.join(model_dir, f"{model_base_name}_0_model"),
@@ -862,7 +867,7 @@ def main():
                 except Exception as e:
                     #raise Exception(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
                     print(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
-                    import pdb; pdb.set_trace()
+                    raise
     # Step 4: Run forward simulations for each geometry variant
     if not args.skip_forward:
         # # Adjust refinement factor based on length of inlet flow waveform
@@ -894,11 +899,17 @@ def main():
                         else:
                             print(f"\n    Running simulation with NN-modified {geo_variant_name}/BloodVesselJunction input...")
                             try:
-                                # In NN-only mode, use geometric input as source for BC refinement
-                                bvj_input_path = geo_variant_paths['geometric_input']
+                                # Use same BC source as full pipeline when available: BloodVesselJunction calibration input.
+                                # Fall back to geometric input only when calibration was not run (e.g. NN-only / CV val geometry).
+                                bvj_calib_input = geo_variant_paths['junction_types']['BloodVesselJunction']['calibration_input']
+                                if os.path.exists(bvj_calib_input):
+                                    bvj_input_path = bvj_calib_input
+                                else:
+                                    bvj_input_path = geo_variant_paths['geometric_input']
                                 if not os.path.exists(bvj_input_path):
-                                    # Fallback to calibration input if it exists
-                                    import pdb; pdb.set_trace()
+                                    raise FileNotFoundError(
+                                        f"No BC source found: neither {bvj_calib_input} nor {bvj_input_path}"
+                                    )
                                 print(f"    Refining inlet BC for forward simulation with input: {bvj_input_path}")
                                 refine_inlet_bc_for_forward_simulation(nn_output_path, calibration_input_path=bvj_input_path)
                                 run_forward_simulation(nn_output_path, nn_results_csv)
