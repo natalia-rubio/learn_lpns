@@ -112,22 +112,39 @@ def run_cross_validation(
     mse_csv_name = f"{prefix}mse_comparison.csv" if prefix else "mse_comparison.csv"
 
     all_trial_results = []  # list of dicts: trial_id, val_geometries, mod -> overall_mse
+    seen_val_sets = set()  # frozenset of val geometry names, to ensure each trial has a different val set
 
     for trial in range(num_trials):
         print(f"\n{'='*60}")
         print(f"CV Trial {trial + 1}/{num_trials}")
         print(f"{'='*60}")
 
-        train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
-            num_pts=num_pts,
-            percent_train=0.9,
-            seed=trial,
-            geometry_row_ranges=row_ranges,
-        )
-        train_geometries = [geometries[i] for i in train_geo_idx]
-        val_geometries = [geometries[i] for i in val_geo_idx]
+        # Ensure this trial's validation set is different from all previous trials
+        max_attempts = 200
+        for attempt in range(max_attempts):
+            seed = trial * 1000 + attempt
+            train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
+                num_pts=num_pts,
+                percent_train=0.9,
+                seed=seed,
+                geometry_row_ranges=row_ranges,
+            )
+            train_geometries = [geometries[i] for i in train_geo_idx]
+            val_geometries = [geometries[i] for i in val_geo_idx]
+            if not val_geometries:
+                if attempt == 0:
+                    print(f"  Skipping trial {trial}: no validation geometries (90% of {num_geos} rounded to all)")
+                break
+            val_set = frozenset(val_geometries)
+            if val_set not in seen_val_sets:
+                seen_val_sets.add(val_set)
+                break
+            if attempt == max_attempts - 1:
+                raise RuntimeError(
+                    f"Could not get a distinct validation set for trial {trial} after {max_attempts} attempts. "
+                    f"Not enough geometries for {num_trials} unique 90/10 splits."
+                )
         if not val_geometries:
-            print(f"  Skipping trial {trial}: no validation geometries (90% of {num_geos} rounded to all)")
             continue
 
         split_path = os.path.join(
@@ -140,7 +157,7 @@ def run_cross_validation(
             "val_ind": np.asarray(val_ind, dtype=int),
             "num_offsets": 1,
             "percent_train": 0.9,
-            "seed": trial,
+            "seed": int(seed),
             "num_pts": num_pts,
             "split_by_geometry": True,
             "train_geometries": train_geometries,
@@ -186,6 +203,8 @@ def run_cross_validation(
                 "--NN-only",
                 "--model-dir",
                 model_dir,
+                "--trial-id",
+                str(trial),
             ]
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
             result_deploy = subprocess.run(cmd_deploy, cwd=REPO_ROOT, text=True)

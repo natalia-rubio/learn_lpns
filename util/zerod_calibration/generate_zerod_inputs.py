@@ -88,6 +88,8 @@ def main():
                        help='Use z-normalized NN models and apply normalization/unnormalization at inference')
     parser.add_argument('--model-dir', default=None,
                        help='Directory containing rri_{set_name}_pred_{0,1,2}_model files (default: results/models/{set_name}/{geometry_variant})')
+    parser.add_argument('--trial-id', type=int, default=None,
+                       help='If set (e.g. from cross-validation), append _trial_{id} to plot output paths and filenames')
 
     args = parser.parse_args(); verbose = args.verbose
     if args.normalize:
@@ -1062,6 +1064,7 @@ def main():
         print("\n" + "="*60)
         print("Step 6: Generating comparison plots")
         print("="*60)
+        trial_suffix = f"_trial_{args.trial_id}" if args.trial_id is not None else ""
         
         # Specify which plot types to generate: 'original', 'bifurcations', 'combined'
         plot_types = ["bifurcations","bifurcations_EL"]
@@ -1087,7 +1090,7 @@ def main():
                     if plot_type == 'combined':
                         # Generate combined comparison plots (original vs bifurcations for each junction type)
                         print(f"\n  Creating combined geometry variant comparison plots...")
-                        combined_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, 'combined')
+                        combined_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, f'combined{trial_suffix}')
                         os.makedirs(combined_output_dir, exist_ok=True)
                         
                         # Use original geometry calibration input for location list (for combined plots)
@@ -1126,7 +1129,7 @@ def main():
                             success_count = 0
                             for location in all_locations:
                                 safe_location = location.replace(':', '_')
-                                plot_path = os.path.join(combined_output_dir, f"{safe_location}_combined.png")
+                                plot_path = os.path.join(combined_output_dir, f"{safe_location}{trial_suffix}_combined.png")
                                 try:
                                     success = plot_location_comparison(
                                         str(original_calibration_input),
@@ -1157,7 +1160,7 @@ def main():
                         # Generate plots for individual geometry variant
                         geo_variant_name = plot_type
                         print(f"\n  Creating {geo_variant_name} geometry variant comparison plots...")
-                        variant_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, geo_variant_name)
+                        variant_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, f'{geo_variant_name}{trial_suffix}')
                         os.makedirs(variant_output_dir, exist_ok=True)
                         
                         geo_variant_paths = geometry_variants[geo_variant_name]
@@ -1210,7 +1213,7 @@ def main():
                             success_count = 0
                             for location in variant_locations:
                                 safe_location = location.replace(':', '_')
-                                plot_path = os.path.join(variant_output_dir, f"{safe_location}_comparison.png")
+                                plot_path = os.path.join(variant_output_dir, f"{safe_location}{trial_suffix}_comparison.png")
                                 try:
                                     success = plot_location_comparison(
                                         str(variant_calibration_input),
@@ -1263,7 +1266,8 @@ def main():
                 try:
                     print(f"\n  Creating junction pressure difference plots for {geo_variant_name}...")
                     prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
-                    output_subdir = os.path.join(base_dir, f'{prefix}junction_pressure_diff') if prefix else base_dir
+                    trial_suffix_plots = f"_trial_{args.trial_id}" if args.trial_id is not None else ""
+                    output_subdir = os.path.join(base_dir, f'{prefix}junction_pressure_diff{trial_suffix_plots}') if prefix else base_dir
                     
                     # Limit to first 5 junctions for bifurcations
                     max_junctions = 5 if geo_variant_name == 'bifurcations' else None
@@ -1288,9 +1292,9 @@ def main():
             try:
                 print(f"\n  Creating zero-D parameter bar charts for {geo_variant_name}...")
                 prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
+                trial_suffix_param = f"_trial_{args.trial_id}" if args.trial_id is not None else ""
                 # Save parameter comparison plots under results/param_comparison/<set>/<geo>/<variant>
-                output_subdir = os.path.join('results', 'param_comparison', args.set_name, args.geo_name, geo_variant_name)
-                os.makedirs(output_subdir, exist_ok=True)
+                output_subdir = os.path.join('results', 'param_comparison', args.set_name, args.geo_name, f'{geo_variant_name}{trial_suffix_param}')
                 os.makedirs(output_subdir, exist_ok=True)
 
                 # Build modality -> calibrated JSON path mapping
@@ -1316,7 +1320,7 @@ def main():
                     print(f"    Warning: No modality JSONs found for {geo_variant_name}, skipping zero-D parameter bar chart")
                     continue
 
-                out_name = f"{prefix} zero_d_parameter_bars.png"
+                out_name = f"{prefix}trial_{args.trial_id} zero_d_parameter_bars.png" if args.trial_id is not None else f"{prefix} zero_d_parameter_bars.png"
                 out_path = plot_zero_d_parameter_bars(modality_jsons, output_dir=output_subdir, output_name=out_name, verbose=verbose)
                 if out_path:
                     print(f"    ✓ Saved zero-D parameter bar chart: {out_path}")
