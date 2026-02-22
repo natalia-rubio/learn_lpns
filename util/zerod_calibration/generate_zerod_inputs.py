@@ -919,7 +919,8 @@ def main():
                 variant_calibration_input = geo_variant_paths['calibration_input']
                 variant_junction_paths = geo_variant_paths['junction_types']
                 
-                # Run simulation with geometric input (uncalibrated)
+                # Run simulation with geometric input (uncalibrated).
+                # Uses this variant's geometric input file (e.g. bifurcations_EL_geometric_input.json for bifurcations_EL).
                 geometric_results_path = variant_geometric_results
                 if check_and_track_file(geometric_results_path, f"geometric forward simulation for {geo_variant_name}"):
                     print(f"    ⊘ Skipping geometric simulation (results already exist)")
