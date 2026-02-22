@@ -568,7 +568,14 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
                 # junction_values present (non-empty) -> include this junction
                 junctions_to_include.add(jname)
 
-    # Build junction outlet labels and mapping from the base modality junctions
+    # Build junction outlet labels and mapping from the base modality junctions.
+    # Include every outlet that is not a non-EL connector (show outlets to regular vessels and to connectorEL).
+    def _is_non_el_connector(vessel_name):
+        if not vessel_name:
+            return True
+        vlower = vessel_name.lower()
+        return 'connector' in vlower and 'connectorel' not in vlower
+
     junction_outlet_labels = []
     junction_outlet_map = {}  # label -> (junction_name, outlet_index, outlet_vessel_name)
     base_junctions = modality_data[base_mod].get('junctions', []) if modality_data[base_mod] else []
@@ -587,9 +594,10 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
                 out_vname = vessels[vidx_int].get('vessel_name')
             else:
                 out_vname = None
-            # Only include junction outlets whose outlet vessel is within the selected (first 10) vessels
-            if not out_vname or out_vname not in vessel_names:
+            # Exclude only outlets to non-EL connector vessels (connector0, connector1, etc.)
+            if _is_non_el_connector(out_vname):
                 continue
+            # Include outlets to regular vessels or to EL connectors (connectorEL)
             label = f"{jname}:out{oi}"
             junction_outlet_labels.append(label)
             junction_outlet_map[label] = (jname, oi, out_vname)
@@ -732,7 +740,8 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         legend_patches = []
         for mod in modalities:
             if mpatches is not None:
-                legend_patches.append(mpatches.Patch(color=style_map[mod]["color"], label=style_map[mod]["label"]))
+                style = style_map.get(mod, {"color": "gray", "label": mod})
+                legend_patches.append(mpatches.Patch(color=style["color"], label=style["label"]))
         # for idx, mod in enumerate(modalities):
         #     col = color_map.get(mod)
         #     if col is None:

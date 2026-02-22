@@ -764,6 +764,41 @@ def split_junctions_from_files(geometric_input_path, centerline_path, output_pat
     return result
 
 
+def convert_el_normal_junctions_to_blood_vessel_junction(config):
+    """
+    Convert NORMAL_JUNCTIONs to BloodVesselJunction in an EL-adjusted config and assign
+    junction_values from geometric_params (outlet_L, outlet_R_poiseuille, outlet_stenosis_coefficient).
+    Only multi-outlet junctions (2+ outlets) are converted; single-outlet remain NORMAL_JUNCTION.
+    Modifies config in place.
+    """
+    vessels = config.get("vessels", [])
+    vessel_id_to_name = {v["vessel_id"]: v["vessel_name"] for v in vessels}
+
+    for junc in config.get("junctions", []):
+        if junc.get("junction_type") != "NORMAL_JUNCTION":
+            continue
+        outlet_vessels = junc.get("outlet_vessels", [])
+        if len(outlet_vessels) < 2:
+            continue
+
+        gp = junc.get("geometric_params", {})
+        outlet_L = gp.get("outlet_L", {})
+        outlet_R = gp.get("outlet_R_poiseuille", {})
+        outlet_S = gp.get("outlet_stenosis_coefficient", {})
+
+        outlet_names = [vessel_id_to_name.get(vid, "") for vid in outlet_vessels]
+        L_vals = [outlet_L.get(name, 0.0) for name in outlet_names]
+        R_vals = [outlet_R.get(name, 0.0) for name in outlet_names]
+        S_vals = [outlet_S.get(name, 0.0) for name in outlet_names]
+
+        junc["junction_type"] = "BloodVesselJunction"
+        junc["junction_values"] = {
+            "L": L_vals,
+            "R_poiseuille": R_vals,
+            "stenosis_coefficient": S_vals,
+        }
+
+
 def adjust_junction_boundaries_by_entrance_length_from_files(geometric_input_path, centerline_path, output_path=None, verbose=False):
     """
     Load geometry and centerline files, adjust junction boundaries by entrance length, and save result.
@@ -771,6 +806,11 @@ def adjust_junction_boundaries_by_entrance_length_from_files(geometric_input_pat
     This is an alternative to the standard junction splitting method. Instead of ending junctions
     at the centerline definition, junctions extend a distance EL (entrance length) down each
     outlet vessel, where EL = 10 * MaximumInscribedSphereRadius.
+    
+    The saved file (bifurcations_EL_geometric_input.json) has NORMAL_JUNCTIONs converted to
+    BloodVesselJunction with junction_values taken from geometric_params (outlet_L,
+    outlet_R_poiseuille, outlet_stenosis_coefficient) so the geometric input can be run directly
+    as a forward simulation.
     
     Args:
         geometric_input_path: Path to geometric input JSON
@@ -795,6 +835,9 @@ def adjust_junction_boundaries_by_entrance_length_from_files(geometric_input_pat
     
     # Adjust junction boundaries (pass verbose flag through)
     result = adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_data, verbose=verbose)
+
+    # Convert NORMAL_JUNCTIONs to BloodVesselJunction and set junction_values from geometric_params
+    convert_el_normal_junctions_to_blood_vessel_junction(result)
     
     # Save result
     if output_path is None:
