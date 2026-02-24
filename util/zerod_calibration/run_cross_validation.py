@@ -23,7 +23,59 @@ from util.data_processing.generate_split_indices import (
     generate_split_indices,
     get_geometry_row_ranges,
 )
+from util.data_processing.data_dict_from_csvs import get_default_include_features
 from util.tools.basic import load_dict, save_dict
+
+
+def _check_val_out_of_train_range(X, train_ind, val_ind, row_ranges, geometries, feature_names):
+    """
+    Check for validation rows where any feature is outside the min/max range of the training set.
+    Returns a list of dicts with keys: geometry, row_in_geometry, feature_name, value, train_min, train_max, side.
+    """
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2 or X.shape[1] != len(feature_names):
+        return []
+    X_train = X[train_ind]
+    train_min = np.min(X_train, axis=0)
+    train_max = np.max(X_train, axis=0)
+    out = []
+    for r in val_ind:
+        r = int(r)
+        # Map flat index r to geometry and row within geometry
+        g = None
+        for gi, (s, e) in enumerate(row_ranges):
+            if s <= r < e:
+                g = gi
+                break
+        if g is None:
+            continue
+        geo_name = geometries[g]
+        row_in_geo = r - row_ranges[g][0]
+        for j, fname in enumerate(feature_names):
+            v = float(X[r, j])
+            tmin = float(train_min[j])
+            tmax = float(train_max[j])
+            if v < tmin:
+                out.append({
+                    "geometry": geo_name,
+                    "row_in_geometry": row_in_geo,
+                    "feature_name": fname,
+                    "value": v,
+                    "train_min": tmin,
+                    "train_max": tmax,
+                    "side": "below",
+                })
+            elif v > tmax:
+                out.append({
+                    "geometry": geo_name,
+                    "row_in_geometry": row_in_geo,
+                    "feature_name": fname,
+                    "value": v,
+                    "train_min": tmin,
+                    "train_max": tmax,
+                    "side": "above",
+                })
+    return out
 
 
 def _parse_mse_csv(csv_path):
@@ -188,6 +240,48 @@ def run_cross_validation(
         }
         save_dict(split_dict, split_path)
         print(f"  Split: {len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}")
+
+        # Check for validation features outside training set range; write CSV per split
+        feature_names = get_default_include_features()
+        X_input = np.asarray(data_dict["input"])
+        out_of_range = _check_val_out_of_train_range(
+            X_input, train_ind, val_ind, row_ranges, geometries, feature_names
+        )
+        out_dir_cv = os.path.join("results", "cross_validation", set_name)
+        os.makedirs(out_dir_cv, exist_ok=True)
+        oor_csv = os.path.join(
+            out_dir_cv,
+            f"out_of_range_{geometry_variant}{norm_suffix}_trial_{trial}.csv",
+        )
+        with open(oor_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "geometry",
+                    "row_in_geometry",
+                    "feature_name",
+                    "value",
+                    "train_min",
+                    "train_max",
+                    "side",
+                ]
+            )
+            for row in out_of_range:
+                writer.writerow(
+                    [
+                        row["geometry"],
+                        row["row_in_geometry"],
+                        row["feature_name"],
+                        row["value"],
+                        row["train_min"],
+                        row["train_max"],
+                        row["side"],
+                    ]
+                )
+        if out_of_range:
+            print(f"  Out-of-range: {len(out_of_range)} validation feature(s) outside train range -> {oor_csv}")
+        else:
+            print(f"  Out-of-range: none -> {oor_csv}")
 
         model_dir = os.path.join(
             model_dir_base, f"{geometry_variant}{norm_suffix}_trial_{trial}"
