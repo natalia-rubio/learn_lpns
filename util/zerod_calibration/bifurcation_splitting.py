@@ -2039,11 +2039,35 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # Calculate new vessel length: from new boundary to original outlet
                     # The part from vessel start to new boundary is now part of the junction
                     new_vessel_length = outlet_vessel_path_end - new_junction_boundary_path
+                    length_epsilon = 1e-6  # Treat as zero if within floating-point noise
                     
                     if verbose:
                         print(f"      → Original vessel length: {outlet_vessel_length:.6f} cm")
                         print(f"      → New vessel length: {new_vessel_length:.6f} cm")
                         print(f"      → Length included in junction: {new_junction_boundary_path - outlet_vessel_path_start:.6f} cm")
+                    
+                    # If the new length is zero or negligible, the whole vessel was absorbed into the junction:
+                    # convert to connectorEL (same as "vessel shorter than EL" case) so downstream code treats it as a connector.
+                    if new_vessel_length <= length_epsilon:
+                        if verbose:
+                            print(f"      → New vessel length is ~0, converting to connector (fully absorbed into junction)")
+                        old_name = outlet_vessel.get('vessel_name', '')
+                        connector_name = old_name if 'connector' in old_name.lower() else f"{old_name}_connectorEL"
+                        outlet_vessel['vessel_name'] = connector_name
+                        _absorb_vessel_params(junc, outlet_vessel_name, outlet_vessel, fraction=1.0)
+                        if connector_name != outlet_vessel_name:
+                            _rename_outlet_in_gp(junc, outlet_vessel_name, connector_name)
+                        outlet_vessel['vessel_length'] = 0.0
+                        if 'zero_d_element_values' not in outlet_vessel:
+                            outlet_vessel['zero_d_element_values'] = {}
+                        outlet_vessel['zero_d_element_values']['R_poiseuille'] = 0.0
+                        outlet_vessel['zero_d_element_values']['C'] = 1e-10
+                        outlet_vessel['zero_d_element_values']['L'] = 0.0
+                        outlet_vessel['zero_d_element_values']['stenosis_coefficient'] = 0.0
+                        set_vessel_node_ids(outlet_vessel, outlet_outlet_idx, outlet_outlet_idx)
+                        new_connector_vessels.append(outlet_vessel)
+                        print(f"  Junction {junction_name}: Outlet {outlet_vessel_name} fully absorbed by EL, converted to {connector_name}")
+                        continue
                     
                     # Absorb proportional params into the junction
                     consumed_length = new_junction_boundary_path - outlet_vessel_path_start

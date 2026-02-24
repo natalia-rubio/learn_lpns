@@ -19,6 +19,9 @@ def launch_training(network_params, optimizer_params, training_params):
     lr_init1 = 0.1
     lr_init2 = 0.1
     lr_init3 = 0.1
+    # lr_init1 = 0.01
+    # lr_init2 = 0.01
+    # lr_init3 = 0.01
 
     print(f"training model 1:  Linear Resistor")
     network_params["target_coef_ind"] = 0
@@ -36,6 +39,11 @@ def launch_training(network_params, optimizer_params, training_params):
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
 
+    network_params["target_coef_ind"] = 0
+    network_params["layer_width"] = 5
+    network_params["num_layers"] = 1
+    training_params["num_epochs"] = 1000
+    optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init3
     print(f"training model 3:  Inductor")
     network_params["target_coef_ind"] = 2

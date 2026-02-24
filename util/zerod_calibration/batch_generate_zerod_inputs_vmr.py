@@ -222,7 +222,7 @@ def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, time
         cmd.append('--NN-only')
     if args_dict.get('no_redo', False):
         cmd.append('--no-redo')
-    
+    cmd.append('--normalize')
     # Run command
     try:
         if verbose:

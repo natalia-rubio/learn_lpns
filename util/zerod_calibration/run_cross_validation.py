@@ -64,6 +64,8 @@ def run_cross_validation(
     data_root="data",
     set_type="test",
     ml_inputs_root=None,
+    trial_index=None,
+    normalize=False,
 ):
     if ml_inputs_root is None:
         ml_inputs_root = os.path.join(data_root, "ml_inputs")
@@ -78,17 +80,25 @@ def run_cross_validation(
             f"No geometries found under {ml_inputs_root}/{set_name}/{geometry_variant}"
         )
 
+    norm_suffix = "_normalized" if normalize else ""
     jax_path = os.path.join(
         data_root,
         "jax_arrays",
         set_name,
         geometry_variant,
         set_type,
-        f"jax_arrays_num_geos_{num_geos}.pkl",
+        f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl",
     )
     if not os.path.exists(jax_path):
+        hint = ""
+        if normalize:
+            hint = (
+                f" Generate it by running data processing with --normalize, e.g.: "
+                f"python util/data_processing/run_data_processing.py --set-name {set_name} --geometry-variant {geometry_variant} --normalize"
+            )
         raise FileNotFoundError(
-            f"Jax arrays not found: {jax_path} (expected {num_geos} geometries)"
+            f"Jax arrays not found: {jax_path} (expected {num_geos} geometries"
+            + (" with normalization" if normalize else "") + ")." + hint
         )
 
     data_dict = load_dict(jax_path)
@@ -111,10 +121,23 @@ def run_cross_validation(
     prefix = "" if geometry_variant == "original" else f"{geometry_variant}_"
     mse_csv_name = f"{prefix}mse_comparison.csv" if prefix else "mse_comparison.csv"
 
+    # Optionally run only one trial (0-based index)
+    if trial_index is not None:
+        if trial_index < 0 or trial_index >= num_trials:
+            raise ValueError(
+                f"trial_index must be in [0, {num_trials}), got {trial_index}"
+            )
+        trials_to_run = [trial_index]
+        print(f"Re-running single trial {trial_index} (of {num_trials})")
+    else:
+        trials_to_run = list(range(num_trials))
+    if normalize:
+        print("Using normalized jax arrays and z-normalization for NN training/inference")
+
     all_trial_results = []  # list of dicts: trial_id, val_geometries, mod -> overall_mse
     seen_val_sets = set()  # frozenset of val geometry names, to ensure each trial has a different val set
 
-    for trial in range(num_trials):
+    for trial in trials_to_run:
         print(f"\n{'='*60}")
         print(f"CV Trial {trial + 1}/{num_trials}")
         print(f"{'='*60}")
@@ -166,7 +189,9 @@ def run_cross_validation(
         save_dict(split_dict, split_path)
         print(f"  Split: {len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}")
 
-        model_dir = os.path.join(model_dir_base, f"{geometry_variant}_trial_{trial}")
+        model_dir = os.path.join(
+            model_dir_base, f"{geometry_variant}{norm_suffix}_trial_{trial}"
+        )
         os.makedirs(model_dir, exist_ok=True)
 
         # Train
@@ -181,6 +206,8 @@ def run_cross_validation(
             "--model-dir",
             model_dir,
         ]
+        if normalize:
+            cmd_train.append("--normalize")
         print(f"  Running: {' '.join(cmd_train)}")
         result_train = subprocess.run(cmd_train, cwd=REPO_ROOT, text=True)
         if result_train.returncode != 0:
@@ -206,6 +233,8 @@ def run_cross_validation(
                 "--trial-id",
                 str(trial),
             ]
+            if normalize:
+                cmd_deploy.append("--normalize")
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
             result_deploy = subprocess.run(cmd_deploy, cwd=REPO_ROOT, text=True)
             if result_deploy.returncode != 0:
@@ -238,7 +267,38 @@ def run_cross_validation(
 
     out_dir = os.path.join("results", "cross_validation", set_name)
     os.makedirs(out_dir, exist_ok=True)
-    summary_path = os.path.join(out_dir, f"{geometry_variant}_cv_summary.csv")
+    summary_path = os.path.join(
+        out_dir, f"{geometry_variant}{norm_suffix}_cv_summary.csv"
+    )
+
+    # If we re-ran a single trial and summary already exists, merge this result into it
+    if trial_index is not None and os.path.exists(summary_path):
+        existing_by_trial = {}  # trial_id -> dict (same shape as all_trial_results items)
+        with open(summary_path, "r", newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            if header and header[0] == "trial_id":
+                modalities_existing = header[2:]
+                for row in reader:
+                    if not row or row[0] in ("", "mean", "std"):
+                        break
+                    try:
+                        tid = int(row[0])
+                    except ValueError:
+                        break
+                    existing_by_trial[tid] = {"trial_id": tid, "val_geometries": row[1] if len(row) > 1 else ""}
+                    for i, mod in enumerate(modalities_existing):
+                        if i + 2 < len(row) and row[i + 2].strip() != "":
+                            try:
+                                existing_by_trial[tid][mod] = float(row[i + 2])
+                            except ValueError:
+                                existing_by_trial[tid][mod] = np.nan
+        # Merge: update or add this trial
+        for r in all_trial_results:
+            existing_by_trial[r["trial_id"]] = r
+        # Recompute mean/std over all trials present in the file
+        all_trial_results = [existing_by_trial[tid] for tid in sorted(existing_by_trial)]
+        modalities = sorted(set().union(*(set(k for k in r if k.startswith("MSE_")) for r in all_trial_results)))
 
     with open(summary_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -284,6 +344,18 @@ def main():
     )
     parser.add_argument("--data-root", default="data", help="Data root (default: data)")
     parser.add_argument("--set-type", default="test", help="Set type for paths (default: test)")
+    parser.add_argument(
+        "--trial",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Re-run only trial N (0-based). Merges result into existing CV summary if present.",
+    )
+    parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Use z-normalized jax arrays for training and normalization/unnormalization at NN inference.",
+    )
     args = parser.parse_args()
 
     run_cross_validation(
@@ -292,6 +364,8 @@ def main():
         num_trials=args.num_trials,
         data_root=args.data_root,
         set_type=args.set_type,
+        trial_index=args.trial,
+        normalize=args.normalize,
     )
 
 

@@ -715,6 +715,8 @@ def main():
                     
                     for i, model_path in enumerate(model_paths):
                         if not os.path.exists(model_path):
+                            print(f"NN found not found")
+                            continue
                             raise FileNotFoundError(f"Model not found: {model_path}")
                     
                     # Load models and get predictions
