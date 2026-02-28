@@ -2,6 +2,8 @@
 import os
 import sys
 
+import numpy as np
+
 # Allow running as a script: python util/neural_network/launch_training.py ...
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
@@ -10,24 +12,52 @@ if REPO_ROOT not in sys.path:
 from util.neural_network.nn_model import NeuralNet
 from util.neural_network.train_nn import train_nn
 from util.tools.basic import load_dict
+from util.data_processing.generate_split_indices import get_geometry_row_ranges
+
+
+def parse_split_geometries_txt(txt_path: str):
+    """Parse train/val geometry names from split _geometries.txt file.
+    Returns (train_geometries, val_geometries), each a list of geometry name strings.
+    """
+    if not os.path.exists(txt_path):
+        return None, None
+    train_geos = []
+    val_geos = []
+    section = None
+    with open(txt_path) as f:
+        for line in f:
+            line = line.strip()
+            if line == "Train geometries:":
+                section = "train"
+                continue
+            if line == "Validation geometries:":
+                section = "val"
+                continue
+            if section and line:
+                (train_geos if section == "train" else val_geos).append(line)
+    return train_geos, val_geos
 
 
 def launch_training(network_params, optimizer_params, training_params):
     network_params["output_type"] = "rri"
     
     print("Training RRI model...")
-    lr_init1 = 0.1
-    lr_init2 = 0.1
-    lr_init3 = 0.1
-    # lr_init1 = 0.01
-    # lr_init2 = 0.01
-    # lr_init3 = 0.01
+    # lr_init1 = 0.1
+    # lr_init2 = 0.1
+    # lr_init3 = 0.1
+    lr_init1 = 0.0001
+    lr_init2 = 0.0001
+    lr_init3 = 0.0001
+    # for vessel unnorm
+    lr_init1 = 0.01
+    lr_init2 = 0.001
+    lr_init3 = 0.01
 
     print(f"training model 1:  Linear Resistor")
     network_params["target_coef_ind"] = 0
     network_params["layer_width"] = 40
     network_params["num_layers"] = 1
-    training_params["num_epochs"] = 1000
+    training_params["num_epochs"] = 5000
     optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init1
     model = NeuralNet(network_params, optimizer_params)
@@ -42,10 +72,13 @@ def launch_training(network_params, optimizer_params, training_params):
     network_params["target_coef_ind"] = 0
     network_params["layer_width"] = 5
     network_params["num_layers"] = 1
-    training_params["num_epochs"] = 1000
+    training_params["num_epochs"] = 5000
     optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init3
-    print(f"training model 3:  Inductor")
+    if network_params["model_name_suffix"] == "_vessel":
+        network_params["layer_width"] = 40
+        network_params["num_layers"] = 1
+
     network_params["target_coef_ind"] = 2
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
@@ -56,19 +89,28 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch NN training")
     parser.add_argument("set_name", help="Set name (e.g., VMR)")
     parser.add_argument("num_geos", type=int, help="Number of geometries")
-    parser.add_argument("geometry_variant", nargs="?", default="all",
-                        help="Geometry variant: bifurcations, bifurcations_EL, or all (default: all)")
+    parser.add_argument("geometry_variant", nargs="?", default=None,
+                        help="Geometry variant: bifurcations, bifurcations_EL, or all (default: all). Can also be set via --geometry-variant.")
+    parser.add_argument("--geometry-variant", dest="geometry_variant_flag", default=None,
+                        help="Geometry variant (overrides positional if set). Use this when passing --vessel so order does not matter.")
     parser.add_argument("--normalize", action="store_true",
                         help="Use normalized jax_arrays (loads *_normalized.pkl)")
     parser.add_argument("--split-path", default=None,
                         help="Path to train/val split pickle (default: data/split_indices/.../train_val_ind_{set_name}_num_geos_{num_geos})")
     parser.add_argument("--model-dir", default=None,
                         help="Directory to save models (default: results/models/{set_name}/{geometry_variant})")
+    parser.add_argument("--vessel", action="store_true",
+                        help="Train vessel NN (R/S/L per vessel); uses vessel jax arrays and same geometry-based split")
+    parser.add_argument("--leaky-relu", action="store_true",
+                        help="Use Leaky ReLU instead of ReLU (helps gradient flow with normalized data)")
+    parser.add_argument("--print-gradients", action="store_true",
+                        help="Print gradient stats for the first batch before training (for debugging)")
     cli_args = parser.parse_args()
 
     set_name = cli_args.set_name
     num_geos = cli_args.num_geos
-    geometry_variant_arg = cli_args.geometry_variant
+    print(f"num_geos: {num_geos}")
+    geometry_variant_arg = getattr(cli_args, "geometry_variant_flag", None) or cli_args.geometry_variant or "all"
     normalize = cli_args.normalize
     norm_suffix = "_normalized" if normalize else ""
     output_type = "rri"
@@ -83,7 +125,7 @@ if __name__ == "__main__":
     # Process each geometry variant
     for geometry_variant in geometry_variants_to_process:
         print(f"\n{'='*80}")
-        print(f"Training models for geometry variant: {geometry_variant}"
+        print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}"
               f"{' (normalized)' if normalize else ''}")
         print(f"{'='*80}")
         
@@ -93,29 +135,114 @@ if __name__ == "__main__":
             split_path = f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
         split_ind_dict = load_dict(split_path)
 
-        network_params = {"num_input_features": 25,
-                          "num_layers": 5,
-                          "layer_width":100,
-                          "output_type": output_type,
-                          "set_name": set_name,
-                          "set_type": set_type,
-                          "num_geos": num_geos,
-                          "data_root": "data",
-                          "geometry_variant": geometry_variant,
-                          "normalize": normalize,
-                          "pred_mode": "m1"}
-        
-        training_params = {"num_epochs": 500, 
-                           "batch_size": 1,
-                           "train_inds": split_ind_dict["train_ind"],
-                           "val_inds": split_ind_dict["val_ind"],
-                           "num_offsets": split_ind_dict["num_offsets"],}
-        if cli_args.model_dir:
-            training_params["output_dir"] = cli_args.model_dir
-        
-        optimizer_params = {#"step_size": 0.0002,
-                            "init" : 0.02,
-                            "transition_steps": 1000,
-                            "decay_rate" : 0.95}
-        
+        train_inds = split_ind_dict["train_ind"]
+        val_inds = split_ind_dict["val_ind"]
+        num_offsets = split_ind_dict["num_offsets"]
+
+        if cli_args.vessel:
+            # Vessel NN: load vessel jax to get row_ranges and geometries; map junction split to vessel indices
+            data_root = "data"
+            vessel_pkl = os.path.join(
+                data_root, "jax_arrays", set_name, geometry_variant, set_type,
+                f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl"
+            )
+            vessel_data = load_dict(vessel_pkl)
+            vessel_row_ranges = vessel_data["row_ranges"]
+            vessel_geometries = vessel_data["geometries"]
+            # Map geometry name -> (start, end) for vessel rows (same order as in vessel_data)
+            vessel_geo_to_range = {g: vessel_row_ranges[i] for i, g in enumerate(vessel_geometries)}
+            # Use split _geometries.txt as source of truth so assignment matches the file
+            geometries_txt_path = split_path + "_geometries.txt"
+            train_geo_list, val_geo_list = parse_split_geometries_txt(geometries_txt_path)
+            if train_geo_list is not None and val_geo_list is not None:
+                train_geo_names = set(train_geo_list)
+                val_geo_names = set(val_geo_list)
+            else:
+                # Fallback: infer from junction indices (same num_geos order as junction pkl)
+                junction_row_ranges, _, geometries_ordered = get_geometry_row_ranges(
+                    os.path.join(data_root, "ml_inputs"), set_name, geometry_variant,
+                    geometries=vessel_geometries,
+                )
+                train_ind_set = set(np.asarray(train_inds).ravel())
+                train_geo_names = set()
+                for gi, (s, e) in enumerate(junction_row_ranges):
+                    if train_ind_set.intersection(range(s, e)):
+                        train_geo_names.add(geometries_ordered[gi])
+                val_geo_names = set(geometries_ordered) - train_geo_names
+            vessel_train_ind = []
+            vessel_val_ind = []
+            for geo in vessel_geometries:
+                s, e = vessel_geo_to_range[geo]
+                inds = list(range(s, e))
+                if geo in train_geo_names:
+                    vessel_train_ind.extend(inds)
+                elif geo in val_geo_names:
+                    vessel_val_ind.extend(inds)
+                # else: geo not in split (e.g. extra in vessel pkl), skip
+            if len(vessel_train_ind) == 0 and len(vessel_val_ind) == 0:
+                raise ValueError(
+                    "Vessel split is empty (0 train, 0 val). "
+                    "Vessel pkl geometry names in the pkl are: {}. "
+                    "Split file {} has train geos: {}, val geos: {}. "
+                    "Either the vessel pkl was built with no geometries (no geometry had vessel CSVs), "
+                    "or the geometry names in the pkl do not match the split file. "
+                    "Ensure run_data_processing was run for this set/variant and that vessel CSVs exist."
+                    .format(
+                        vessel_geometries,
+                        geometries_txt_path,
+                        sorted(train_geo_names),
+                        sorted(val_geo_names),
+                    )
+                )
+            print(f"  Vessel split: {len(vessel_train_ind)} train, {len(vessel_val_ind)} val "
+                  f"(train geos: {sorted(train_geo_names)}, val geos: {sorted(val_geo_names)})")
+            network_params = {"num_input_features": 18,
+                             "num_layers": 5,
+                             "layer_width": 100,
+                             "output_type": output_type,
+                             "set_name": set_name,
+                             "set_type": set_type,
+                             "num_geos": num_geos,
+                             "data_root": data_root,
+                             "geometry_variant": geometry_variant,
+                             "normalize": normalize,
+                             "use_leaky_relu": getattr(cli_args, "leaky_relu", False),
+                             "pred_mode": "m1",
+                             "jax_arrays_filename": f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl",
+                             "model_name_suffix": "_vessel"}
+            training_params = {"num_epochs": 500,
+                              "batch_size": 1,
+                              "train_inds": np.asarray(vessel_train_ind),
+                              "val_inds": np.asarray(vessel_val_ind),
+                              "num_offsets": 1,
+                              "print_gradients": getattr(cli_args, "print_gradients", False)}
+            out_dir = cli_args.model_dir or os.path.join("results", "models", set_name, geometry_variant + "_vessel" + norm_suffix)
+            training_params["output_dir"] = out_dir
+        else:
+            network_params = {"num_input_features": 25,
+                             "num_layers": 5,
+                             "layer_width": 100,
+                             "output_type": output_type,
+                             "set_name": set_name,
+                             "set_type": set_type,
+                             "num_geos": num_geos,
+                             "data_root": "data",
+                             "geometry_variant": geometry_variant,
+                             "normalize": normalize,
+                             "use_leaky_relu": getattr(cli_args, "leaky_relu", False),
+                             "pred_mode": "m1",
+                             "model_name_suffix": ""}
+            training_params = {"num_epochs": 500,
+                              "batch_size": 10,
+                              "train_inds": train_inds,
+                              "val_inds": val_inds,
+                              "num_offsets": num_offsets,
+                              "print_gradients": getattr(cli_args, "print_gradients", False)}
+            if cli_args.model_dir:
+                training_params["output_dir"] = cli_args.model_dir
+
+        optimizer_params = {"init": 0.02,
+                           "transition_steps": 1000,
+                           "decay_rate": 0.95}
+
         launch_training(network_params, optimizer_params, training_params)

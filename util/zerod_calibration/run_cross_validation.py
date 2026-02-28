@@ -118,6 +118,7 @@ def run_cross_validation(
     ml_inputs_root=None,
     trial_index=None,
     normalize=False,
+    nn_vessel=False,
 ):
     if ml_inputs_root is None:
         ml_inputs_root = os.path.join(data_root, "ml_inputs")
@@ -153,6 +154,15 @@ def run_cross_validation(
             + (" with normalization" if normalize else "") + ")." + hint
         )
 
+    vessel_jax_path = os.path.join(
+        data_root,
+        "jax_arrays",
+        set_name,
+        geometry_variant,
+        set_type,
+        f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl",
+    ) if normalize else None
+
     data_dict = load_dict(jax_path)
     num_pts = int(np.asarray(data_dict["input"]).shape[0])
     if total_rows != num_pts:
@@ -185,6 +195,8 @@ def run_cross_validation(
         trials_to_run = list(range(num_trials))
     if normalize:
         print("Using normalized jax arrays and z-normalization for NN training/inference")
+    if nn_vessel:
+        print("NN-vessel: will train vessel NN per trial and include vessel-predicted modality in MSE")
 
     all_trial_results = []  # list of dicts: trial_id, val_geometries, mod -> overall_mse
     seen_val_sets = set()  # frozenset of val geometry names, to ensure each trial has a different val set
@@ -311,6 +323,34 @@ def run_cross_validation(
             )
             continue
 
+        # Train vessel NN for this trial (same split) if requested
+        if nn_vessel:
+            vessel_model_dir = os.path.join(
+                model_dir_base, f"{geometry_variant}_vessel{norm_suffix}_trial_{trial}"
+            )
+            cmd_vessel = [
+                sys.executable,
+                launch_training_script,
+                set_name,
+                str(num_geos),
+                geometry_variant,
+                "--vessel",
+                "--split-path",
+                split_path,
+                "--model-dir",
+                vessel_model_dir,
+            ]
+            if normalize:
+                cmd_vessel.append("--normalize")
+            print(f"  Running vessel training: {' '.join(cmd_vessel)}")
+            result_vessel = subprocess.run(cmd_vessel, cwd=REPO_ROOT, text=True)
+            if result_vessel.returncode != 0:
+                print(f"  Vessel training failed with return code {result_vessel.returncode}")
+                all_trial_results.append(
+                    {"trial_id": trial, "val_geometries": ",".join(val_geometries), "error": "vessel_training_failed"}
+                )
+                continue
+
         # Deploy on each validation geometry (NN-only)
         trial_mse = {}  # modality -> list of overall_mse per val geo
         for val_geo in val_geometries:
@@ -329,6 +369,13 @@ def run_cross_validation(
             ]
             if normalize:
                 cmd_deploy.append("--normalize")
+                cmd_deploy.append("--norm-data-path")
+                cmd_deploy.append(jax_path)
+                if nn_vessel and vessel_jax_path and os.path.exists(vessel_jax_path):
+                    cmd_deploy.append("--vessel-norm-data-path")
+                    cmd_deploy.append(vessel_jax_path)
+            if nn_vessel:
+                cmd_deploy.append("--NN-vessel")
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
             result_deploy = subprocess.run(cmd_deploy, cwd=REPO_ROOT, text=True)
             if result_deploy.returncode != 0:
@@ -450,6 +497,12 @@ def main():
         action="store_true",
         help="Use z-normalized jax arrays for training and normalization/unnormalization at NN inference.",
     )
+    parser.add_argument(
+        "--NN-vessel",
+        action="store_true",
+        dest="nn_vessel",
+        help="Also train vessel NN per trial and run vessel NN inference on val geometries (adds BloodVesselJunction_NN_plus_Vessel_NN to MSE).",
+    )
     args = parser.parse_args()
 
     run_cross_validation(
@@ -460,6 +513,7 @@ def main():
         set_type=args.set_type,
         trial_index=args.trial,
         normalize=args.normalize,
+        nn_vessel=args.nn_vessel,
     )
 
 

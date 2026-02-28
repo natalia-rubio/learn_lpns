@@ -200,6 +200,26 @@ def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
     return header, X
 
 
+def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[List[str], np.ndarray]:
+    """Read a CSV and return (full header, array of only the requested numeric columns in order)."""
+    if not os.path.exists(csv_path):
+        raise ValueError(f"CSV not found: {csv_path}")
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            raise ValueError(f"Empty CSV: {csv_path}")
+        col_indices = [header.index(c) for c in column_names]
+        rows = []
+        for r in reader:
+            if not r:
+                continue
+            rows.append([float(r[i]) for i in col_indices])
+    if not rows:
+        raise ValueError(f"No data rows in CSV: {csv_path}")
+    return header, np.asarray(rows, dtype=float)
+
+
 def plot_feature_histograms(
     input_array: np.ndarray,
     feature_names: List[str],
@@ -451,6 +471,8 @@ def build_data_dict_from_csvs(
     output_std = np.std(output_array, axis=0)
     output_std_safe = output_std.copy()
     output_std_safe[output_std_safe == 0] = 1.0
+    output_min = np.min(output_array, axis=0)
+    output_max = np.max(output_array, axis=0)
 
     # --- Write summary CSV (always uses pre-normalization values) ---
     summary_dir = histogram_output_dir or os.path.join("data", "feature_histograms", set_name, geometry_variant)
@@ -514,6 +536,8 @@ def build_data_dict_from_csvs(
             f"output_{output_type}": jnp.asarray(output_array),
             "scaling_factors": jnp.asarray(scaling_factors),
             "normalized": normalize,
+            "output_min": jnp.asarray(output_min),
+            "output_max": jnp.asarray(output_max),
         }
         if normalize:
             data_dict["input_mean"] = jnp.asarray(input_mean)
@@ -526,6 +550,8 @@ def build_data_dict_from_csvs(
             f"output_{output_type}": output_array,
             "scaling_factors": scaling_factors,
             "normalized": normalize,
+            "output_min": output_min,
+            "output_max": output_max,
         }
         if normalize:
             data_dict["input_mean"] = input_mean
@@ -535,8 +561,113 @@ def build_data_dict_from_csvs(
     return data_dict
 
 
+def build_data_dict_from_vessel_csvs(
+    set_name: str,
+    geometries: List[str],
+    ml_inputs_root: str = "data/ml_inputs",
+    geometry_variant: str = "bifurcations",
+    normalize: bool = False,
+) -> Dict[str, "np.ndarray"]:
+    """
+    Build a data_dict for vessel NN training from per-geometry vessel CSVs.
+
+    Reads vessel_geometric_features.csv and vessel_lumped_parameters.csv for each
+    geometry and concatenates into single input and output arrays. Output columns
+    are R_poiseuille, stenosis_coefficient, L (same order as junction "rri").
+
+    Returns:
+        Dictionary with "input", "output_rri" (or "output_rri_vessel"), "scaling_factors",
+        and optionally "input_mean", "input_std", "output_mean", "output_std" if normalize.
+    """
+    all_inputs: List[np.ndarray] = []
+    all_outputs: List[np.ndarray] = []
+    output_cols = ["R_poiseuille", "stenosis_coefficient", "L"]
+    row_ranges: List[Tuple[int, int]] = []  # (start, end) per geometry in order
+    geometries_with_vessels: List[str] = []  # geometry names that contributed rows (same order as row_ranges)
+
+    for geo in geometries:
+        feat_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "vessel_geometric_features.csv")
+        tgt_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "vessel_lumped_parameters.csv")
+        if not os.path.exists(feat_csv) or not os.path.exists(tgt_csv):
+            continue
+        feat_header, feat_X = _read_csv_matrix(feat_csv)
+        # vessel_lumped_parameters has string column vessel_name; read only numeric columns
+        tgt_header, tgt_Y = _read_csv_numeric_columns(tgt_csv, output_cols)
+        if feat_X.shape[0] != tgt_Y.shape[0]:
+            raise ValueError(
+                f"Vessel row mismatch for {geo}: features has {feat_X.shape[0]} rows, "
+                f"targets has {tgt_Y.shape[0]} rows"
+            )
+        Y_part = tgt_Y
+        start = sum(x.shape[0] for x in all_inputs)
+        all_inputs.append(feat_X)
+        all_outputs.append(Y_part)
+        row_ranges.append((start, start + feat_X.shape[0]))
+        geometries_with_vessels.append(geo)
+
+    if not all_inputs:
+        # No vessel CSVs found; return empty arrays (feature count from vessel_geometric_features schema)
+        n_feat = 18  # vessel base 12 (incl. inlet/outlet/max_inscribed_radius_min/max) + poiseuille_resistance_calc, inductance_calc, stenosis_calc, R_poiseuille_geometric, L_geometric, stenosis_coefficient_geometric
+        input_array = np.zeros((0, n_feat), dtype=float)
+        output_array = np.zeros((0, 3), dtype=float)
+    else:
+        input_array = np.vstack(all_inputs)
+        output_array = np.vstack(all_outputs)
+
+    n = input_array.shape[0]
+    scaling_factors = np.ones((n, 1), dtype=float)
+
+    output_min = np.min(output_array, axis=0) if n > 0 else np.zeros(3, dtype=float)
+    output_max = np.max(output_array, axis=0) if n > 0 else np.zeros(3, dtype=float)
+
+    if normalize and n > 0:
+        input_mean = np.mean(input_array, axis=0)
+        input_std = np.std(input_array, axis=0)
+        input_std_safe = np.where(input_std == 0, 1.0, input_std)
+        output_mean = np.mean(output_array, axis=0)
+        output_std = np.std(output_array, axis=0)
+        output_std_safe = np.where(output_std == 0, 1.0, output_std)
+        input_array = (input_array - input_mean) / input_std_safe
+        output_array = (output_array - output_mean) / output_std_safe
+
+    if jnp is not None:
+        data_dict = {
+            "input": jnp.asarray(input_array),
+            "output_rri": jnp.asarray(output_array),
+            "scaling_factors": jnp.asarray(scaling_factors),
+            "normalized": normalize,
+            "row_ranges": row_ranges,
+            "geometries": geometries_with_vessels,
+            "output_min": jnp.asarray(output_min),
+            "output_max": jnp.asarray(output_max),
+        }
+        if normalize and n > 0:
+            data_dict["input_mean"] = jnp.asarray(input_mean)
+            data_dict["input_std"] = jnp.asarray(input_std_safe)
+            data_dict["output_mean"] = jnp.asarray(output_mean)
+            data_dict["output_std"] = jnp.asarray(output_std_safe)
+    else:
+        data_dict = {
+            "input": input_array,
+            "output_rri": output_array,
+            "scaling_factors": scaling_factors,
+            "normalized": normalize,
+            "row_ranges": row_ranges,
+            "geometries": geometries_with_vessels,
+            "output_min": output_min,
+            "output_max": output_max,
+        }
+        if normalize and n > 0:
+            data_dict["input_mean"] = input_mean
+            data_dict["input_std"] = input_std_safe
+            data_dict["output_mean"] = output_mean
+            data_dict["output_std"] = output_std_safe
+    return data_dict
+
+
 __all__ = [
     "build_data_dict_from_csvs",
+    "build_data_dict_from_vessel_csvs",
     "get_default_include_features",
     "get_default_include_outputs",
     "filter_features_from_array",

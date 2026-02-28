@@ -49,6 +49,73 @@ from scipy.interpolate import interp1d
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 
 
+def _resolve_norm_data_path(
+    explicit_path,
+    model_dir,
+    set_name,
+    geo_variant,
+    pkl_basename_pattern,
+    kind="junction",
+):
+    """
+    Resolve path to the normalized jax_arrays pkl that matches the model being used.
+    Priority: 1) explicit_path (--norm-data-path / --vessel-norm-data-path),
+               2) model_dir/norm_data_num_geos.txt then build path.
+    When normalization is on, model_dir is always the directory where the model was
+    loaded from (--model-dir or default). If explicit_path is not set, we require
+    norm_data_num_geos.txt in model_dir and raise if missing (no glob fallback).
+    """
+    if explicit_path:
+        if os.path.exists(explicit_path):
+            return explicit_path
+        raise FileNotFoundError(f"Norm data path not found: {explicit_path}")
+    if not model_dir or not os.path.isdir(model_dir):
+        raise FileNotFoundError(
+            f"Model directory not found: {model_dir}. "
+            f"Cannot resolve {kind} norm data without --norm-data-path or a valid model directory."
+        )
+    sidecar = os.path.join(model_dir, "norm_data_num_geos.txt")
+    if not os.path.exists(sidecar):
+        raise FileNotFoundError(
+            f"Norm data sidecar not found: {sidecar}. "
+            f"When using --normalize without --norm-data-path, the model directory must contain "
+            f"norm_data_num_geos.txt (written by launch_training). "
+            f"Either pass --norm-data-path to the exact jax_arrays *_normalized.pkl used for training, "
+            f"or re-train with the current launch_training so the sidecar is written."
+        )
+    with open(sidecar) as f:
+        num_geos = f.read().strip()
+    path = os.path.join(
+        "data", "jax_arrays", set_name, geo_variant, "test",
+        pkl_basename_pattern.format(num_geos=num_geos),
+    )
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Norm data pkl not found at {path} (from {sidecar} num_geos={num_geos})"
+        )
+    return path
+
+
+def _jax_set_type_for_data_processing(args):
+    """
+    Return the jax_arrays subfolder to use when we run data processing from generate_zerod_inputs.
+    - In cross-validation mode (--model-dir with _trial_ or --trial-id set): use "trial_{N}" so we
+      don't overwrite the "test" data used for training.
+    - Otherwise: use "forward" so we don't overwrite "test" (training/splits).
+    """
+    if getattr(args, 'model_dir', None):
+        base = os.path.basename(args.model_dir.rstrip(os.sep))
+        if '_trial_' in base:
+            try:
+                trial_part = base.split('_trial_')[-1]
+                trial_num = int(trial_part.split('_')[0])
+                return f"trial_{trial_num}"
+            except (ValueError, IndexError):
+                pass
+    if getattr(args, 'trial_id', None) is not None:
+        return f"trial_{args.trial_id}"
+    return "forward"
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -88,8 +155,16 @@ def main():
                        help='Use z-normalized NN models and apply normalization/unnormalization at inference')
     parser.add_argument('--model-dir', default=None,
                        help='Directory containing rri_{set_name}_pred_{0,1,2}_model files (default: results/models/{set_name}/{geometry_variant})')
+    parser.add_argument('--norm-data-path', default=None,
+                       help='Path to jax_arrays *_normalized.pkl used for NN training (must match the model). If not set, inferred from model-dir sidecar or largest num_geos.')
+    parser.add_argument('--vessel-norm-data-path', default=None,
+                       help='Path to jax_arrays_vessel *_normalized.pkl used for vessel NN training (must match the vessel model).')
+    parser.add_argument('--NN-vessel', action='store_true', dest='NN_vessel',
+                       help='Also run vessel NN inference: predict vessel R/S/L and write *_NN_JunctionAndVessel.json + forward sim')
     parser.add_argument('--trial-id', type=int, default=None,
                        help='If set (e.g. from cross-validation), append _trial_{id} to plot output paths and filenames')
+    parser.add_argument('--clip-predictions', action='store_true',
+                       help='Clip R_poiseuille, stenosis_coefficient, L to training set min/max')
 
     args = parser.parse_args(); verbose = args.verbose
     if args.normalize:
@@ -533,12 +608,13 @@ def main():
             print(f"\n  Processing {geo_variant_name} geometry variant for ML pipeline...")
             try:
                 import subprocess
+                jax_set_type = _jax_set_type_for_data_processing(args)
                 run_data_processing_cmd = [
                     sys.executable,
                     os.path.join(os.path.dirname(__file__), '..', 'data_processing', 'run_data_processing.py'),
                     '--set-name', args.set_name,
                     '--geometry-variant', geo_variant_name,
-                    '--set-type', 'test',
+                    '--set-type', jax_set_type,
                     '--geometries', geo_name_for_ml,
                     '--output-type', 'rri',
                     '--percent-train', '1',
@@ -671,30 +747,28 @@ def main():
                     norm_suffix = "_normalized" if args.normalize else ""
                     if args.normalize:
                         from util.tools.basic import load_dict
-                        norm_glob_pattern = os.path.join(
-                            'data', 'jax_arrays', args.set_name, geo_variant_name, 'test',
-                            'jax_arrays_num_geos_*_normalized.pkl')
-                        num_geos_glob = glob.glob(norm_glob_pattern)
-                        if not num_geos_glob:
-                            raise FileNotFoundError(
-                                f"No normalized jax_arrays pkl found for {geo_variant_name}. "
-                                f"Run data processing with --normalize first. "
-                                f"Searched: {norm_glob_pattern}"
-                            )
-                        jax_arrays_path = sorted(num_geos_glob)[-1]
+                        model_dir_for_norm = getattr(args, 'model_dir', None) or os.path.join(
+                            'results', 'models', args.set_name, geo_variant_name + norm_suffix)
+                        jax_arrays_path = _resolve_norm_data_path(
+                            getattr(args, 'norm_data_path', None),
+                            model_dir_for_norm,
+                            args.set_name,
+                            geo_variant_name,
+                            "jax_arrays_num_geos_{num_geos}_normalized.pkl",
+                            kind="junction",
+                        )
                         print(f"  Loading normalization stats from: {jax_arrays_path}")
                         norm_data = load_dict(jax_arrays_path)
-                        
                         input_mean = np.array(norm_data['input_mean'])
                         input_std = np.array(norm_data['input_std'])
                         output_mean = np.array(norm_data['output_mean'])
                         output_std = np.array(norm_data['output_std'])
                         print(f"  Normalization stats loaded: input ({len(input_mean)} features), output ({len(output_mean)} targets)")
-                        
                         X_for_nn = (X - input_mean) / input_std
                         print(f"  Inputs z-normalized for NN inference")
                     else:
                         X_for_nn = X
+                        norm_data = None
                         print(f"  Normalization: OFF (raw inputs used)")
                     
                     # Convert to JAX array
@@ -724,7 +798,8 @@ def main():
                     for i, model_path in enumerate(model_paths):
                         print(f"      Loading model {i+1}/3: {model_path}")
                         model = dill_load(model_path)
-                        pred = predict(X_jax, model.weights)
+                        use_leaky = getattr(model, "use_leaky_relu", False)
+                        pred = predict(X_jax, model.weights, use_leaky)
                         raw_predictions.append(np.array(pred).flatten())
                     
                     # Unnormalize predictions if normalization is on
@@ -746,11 +821,48 @@ def main():
                     # predictions[0] = R_poiseuille (one value per row)
                     # predictions[1] = stenosis_coefficient (one value per row)
                     # predictions[2] = L (one value per row)
-                    pred_R = predictions[0]
-                    pred_S = predictions[1]
-                    pred_L = predictions[2]
-                    
-                     # Verify prediction array sizes match input
+                    pred_R = np.array(predictions[0])
+                    pred_S = np.array(predictions[1])
+                    pred_L = np.array(predictions[2])
+
+                    if getattr(args, 'clip_predictions', False):
+                        from util.tools.basic import load_dict as _load_dict
+                        if args.normalize and norm_data is not None:
+                            out_min = np.atleast_1d(np.array(norm_data['output_min']))
+                            out_max = np.atleast_1d(np.array(norm_data['output_max']))
+                        else:
+                            _model_dir = getattr(args, 'model_dir', None) or os.path.join(
+                                'results', 'models', args.set_name, geo_variant_name)
+                            _sidecar = os.path.join(_model_dir, 'norm_data_num_geos.txt')
+                            if not os.path.exists(_sidecar):
+                                raise FileNotFoundError(
+                                    "--clip-predictions: norm_data_num_geos.txt not found in model dir. "
+                                    "Re-train with current launch_training or omit --clip-predictions."
+                                )
+                            with open(_sidecar) as _f:
+                                _num_geos = _f.read().strip()
+                            _pkl = os.path.join(
+                                'data', 'jax_arrays', args.set_name, geo_variant_name, 'test',
+                                f'jax_arrays_num_geos_{_num_geos}.pkl')
+                            if not os.path.exists(_pkl):
+                                raise FileNotFoundError(f"--clip-predictions: training pkl not found: {_pkl}")
+                            _train = _load_dict(_pkl)
+                            if 'output_min' not in _train or 'output_max' not in _train:
+                                raise ValueError(
+                                    "--clip-predictions: pkl missing output_min/output_max. "
+                                    "Re-run data processing to regenerate jax_arrays."
+                                )
+                            out_min = np.atleast_1d(np.array(_train['output_min']))
+                            out_max = np.atleast_1d(np.array(_train['output_max']))
+                        pred_R = np.clip(pred_R, out_min[0], out_max[0])
+                        pred_S = np.clip(pred_S, out_min[1], out_max[1])
+                        pred_L = np.clip(pred_L, out_min[2], out_max[2])
+                        print(f"  Predictions clipped to training range: "
+                              f"R [{out_min[0]:.4f}, {out_max[0]:.4f}], "
+                              f"S [{out_min[1]:.4f}, {out_max[1]:.4f}], "
+                              f"L [{out_min[2]:.4f}, {out_max[2]:.4f}]")
+
+                    # Verify prediction array sizes match input
                      # Note: junction_names may have duplicates (same junction appears twice for swapped rows)
                      # So we compare against the actual number of input rows
                     if len(pred_R) != len(X):
@@ -862,6 +974,24 @@ def main():
                         junc['junction_values']['stenosis_coefficient'] = S_values
                         junc['junction_values']['L'] = L_values
                     
+                    # NN junction-only: set vessel R/S/L to geometric values (so param comparison shows geometric vessels)
+                    with open(variant_geometric_input, 'r') as f:
+                        geo_config = json.load(f)
+                    geo_vessels_by_id = {v.get('vessel_id'): v for v in geo_config.get('vessels', []) if v.get('vessel_id') is not None}
+                    for v in nn_config.get('vessels', []):
+                        vid = v.get('vessel_id')
+                        if vid is None:
+                            continue
+                        geo_v = geo_vessels_by_id.get(vid)
+                        if geo_v is None:
+                            continue
+                        z_geo = geo_v.get('zero_d_element_values') or {}
+                        if 'zero_d_element_values' not in v:
+                            v['zero_d_element_values'] = {}
+                        v['zero_d_element_values']['R_poiseuille'] = z_geo.get('R_poiseuille', 0.0)
+                        v['zero_d_element_values']['stenosis_coefficient'] = z_geo.get('stenosis_coefficient', 0.0)
+                        v['zero_d_element_values']['L'] = z_geo.get('L', 0.0)
+                    
                     # Save the NN-modified config (already checked at start of block)
                     with open(nn_output_path, 'w') as f:
                         json.dump(nn_config, f, indent=4)
@@ -872,6 +1002,137 @@ def main():
                     #raise Exception(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
                     print(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
                     raise
+
+            # Step 3.7 (optional): Vessel NN inference: predict vessel R/S/L and write NN_JunctionAndVessel config
+            if getattr(args, 'NN_vessel', False):
+                from util.data_processing.inputs_from_0d_config import load_vessel_geometric_features
+                from util.neural_network.nn_model import predict as nn_predict
+                from util.neural_network.nn_util import dill_load
+                import jax.numpy as jnp
+                for geo_variant_name in ['bifurcations', 'bifurcations_EL']:
+                    if geo_variant_name not in geometry_variants:
+                        continue
+                    nn_output_path = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
+                    if not os.path.exists(nn_output_path):
+                        print(f"  ⊘ Skipping vessel NN for {geo_variant_name}: NN junction config not found")
+                        continue
+                    nn_jv_path = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
+                    if check_and_track_file(nn_jv_path, f"Vessel NN inference for {geo_variant_name}"):
+                        continue
+                    print(f"\n    Running vessel NN inference for {geo_variant_name}...")
+                    try:
+                        with open(nn_output_path, 'r') as f:
+                            jv_config = json.load(f)
+                        # Use geometric input for vessel features (same as training) so feature
+                        # distribution matches; predictions are still written into jv_config by vessel_id.
+                        variant_geometric_input = geometry_variants[geo_variant_name]['geometric_input']
+                        if not os.path.exists(variant_geometric_input):
+                            raise FileNotFoundError(
+                                f"Geometric input not found for vessel features: {variant_geometric_input}"
+                            )
+                        X_v, feat_names_v, vessel_ids, vessel_names = load_vessel_geometric_features(
+                            variant_geometric_input, verbose=args.verbose
+                        )
+                        if len(X_v) == 0:
+                            print(f"      No non-connector vessels, skipping vessel NN for {geo_variant_name}")
+                            continue
+                        norm_suffix = "_normalized" if args.normalize else ""
+                        # For CV: if --model-dir points to a trial dir (e.g. .../bifurcations_EL_trial_0), use .../bifurcations_EL_vessel_trial_0
+                        if getattr(args, 'model_dir', None) and '_trial_' in os.path.basename(args.model_dir):
+                            _base = os.path.dirname(args.model_dir)
+                            _name = os.path.basename(args.model_dir).replace('_trial_', '_vessel_trial_', 1)
+                            vessel_model_dir = os.path.join(_base, _name)
+                        else:
+                            vessel_model_dir = os.path.join(
+                                'results', 'models', args.set_name, geo_variant_name + '_vessel' + norm_suffix)
+                        if args.normalize:
+                            from util.tools.basic import load_dict
+                            vessel_jax_path = _resolve_norm_data_path(
+                                getattr(args, 'vessel_norm_data_path', None),
+                                vessel_model_dir,
+                                args.set_name,
+                                geo_variant_name,
+                                "jax_arrays_vessel_num_geos_{num_geos}_normalized.pkl",
+                                kind="vessel",
+                            )
+                            vessel_norm_data = load_dict(vessel_jax_path)
+                            input_mean_v = np.array(vessel_norm_data['input_mean'])
+                            input_std_v = np.array(vessel_norm_data['input_std'])
+                            output_mean_v = np.array(vessel_norm_data['output_mean'])
+                            output_std_v = np.array(vessel_norm_data['output_std'])
+                            X_v_nn = (X_v - input_mean_v) / input_std_v
+                        else:
+                            X_v_nn = np.array(X_v, dtype=np.float64)
+                            vessel_norm_data = None
+                        X_v_jax = jnp.array(X_v_nn, dtype=jnp.float32)
+                        model_paths = [os.path.join(vessel_model_dir, f"rri_{args.set_name}_vessel_pred_{i}_model") for i in range(3)]
+                        for mp in model_paths:
+                            if not os.path.exists(mp):
+                                raise FileNotFoundError(f"Vessel model not found: {mp}")
+                        raw_predictions_v = []
+                        for i, mp in enumerate(model_paths):
+                            model = dill_load(mp)
+                            use_leaky_v = getattr(model, "use_leaky_relu", False)
+                            pred = nn_predict(X_v_jax, model.weights, use_leaky_v)
+                            raw_predictions_v.append(np.array(pred).flatten())
+                        if args.normalize:
+                            pred_R_v = raw_predictions_v[0] * output_std_v[0] + output_mean_v[0]
+                            pred_S_v = raw_predictions_v[1] * output_std_v[1] + output_mean_v[1]
+                            pred_L_v = raw_predictions_v[2] * output_std_v[2] + output_mean_v[2]
+                        else:
+                            pred_R_v = np.array(raw_predictions_v[0])
+                            pred_S_v = np.array(raw_predictions_v[1])
+                            pred_L_v = np.array(raw_predictions_v[2])
+                        if getattr(args, 'clip_predictions', False):
+                            from util.tools.basic import load_dict as _load_dict_v
+                            if args.normalize and vessel_norm_data is not None:
+                                v_min = np.atleast_1d(np.array(vessel_norm_data['output_min']))
+                                v_max = np.atleast_1d(np.array(vessel_norm_data['output_max']))
+                            else:
+                                _sidecar_v = os.path.join(vessel_model_dir, 'norm_data_num_geos.txt')
+                                if not os.path.exists(_sidecar_v):
+                                    raise FileNotFoundError(
+                                        "--clip-predictions (vessel): norm_data_num_geos.txt not found in vessel model dir."
+                                    )
+                                with open(_sidecar_v) as _f:
+                                    _num_geos_v = _f.read().strip()
+                                _pkl_v = os.path.join(
+                                    'data', 'jax_arrays', args.set_name, geo_variant_name, 'test',
+                                    f'jax_arrays_vessel_num_geos_{_num_geos_v}.pkl')
+                                if not os.path.exists(_pkl_v):
+                                    raise FileNotFoundError(f"--clip-predictions (vessel): training pkl not found: {_pkl_v}")
+                                _train_v = _load_dict_v(_pkl_v)
+                                if 'output_min' not in _train_v or 'output_max' not in _train_v:
+                                    raise ValueError(
+                                        "--clip-predictions (vessel): pkl missing output_min/output_max. Re-run data processing."
+                                    )
+                                v_min = np.atleast_1d(np.array(_train_v['output_min']))
+                                v_max = np.atleast_1d(np.array(_train_v['output_max']))
+                            pred_R_v = np.clip(pred_R_v, v_min[0], v_max[0])
+                            pred_S_v = np.clip(pred_S_v, v_min[1], v_max[1])
+                            pred_L_v = np.clip(pred_L_v, v_min[2], v_max[2])
+                        vessel_id_to_row = {vid: i for i, vid in enumerate(vessel_ids)}
+                        for v in jv_config.get('vessels', []):
+                            vname = (v.get('vessel_name') or '').lower()
+                            if 'connector' in vname:
+                                continue
+                            vid = v.get('vessel_id')
+                            row = vessel_id_to_row.get(vid)
+                            if row is None:
+                                continue
+                            z = dict(v.get('zero_d_element_values') or {})
+                            z['R_poiseuille'] = float(pred_R_v[row])
+                            z['stenosis_coefficient'] = float(pred_S_v[row])
+                            z['L'] = float(pred_L_v[row])
+                            v['zero_d_element_values'] = z
+                        with open(nn_jv_path, 'w') as f:
+                            json.dump(jv_config, f, indent=4)
+                        generated_files.append(nn_jv_path)
+                        print(f"      ✓ Vessel NN predictions applied and saved to {nn_jv_path}")
+                    except Exception as e:
+                        print(f"      Vessel NN inference failed for {geo_variant_name}: {e}")
+                        raise
+
     # Step 4: Run forward simulations for each geometry variant
     if not args.skip_forward:
         # # Adjust refinement factor based on length of inlet flow waveform
@@ -923,6 +1184,25 @@ def main():
                                 raise Exception(f"NN-modified {geo_variant_name}/BloodVesselJunction simulation failed: {e}")
                     else:
                         print(f"      ⊘ Skipping: NN output file not found: {nn_output_path}")
+                    # Forward sim for NN junction + vessel when --NN-vessel
+                    if getattr(args, 'NN_vessel', False):
+                        nn_jv_path = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
+                        nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
+                        if os.path.exists(nn_jv_path):
+                            if check_and_track_file(nn_jv_results_csv, f"NN Junction+Vessel forward simulation for {geo_variant_name}"):
+                                pass
+                            else:
+                                print(f"\n    Running simulation with NN Junction+Vessel {geo_variant_name} input...")
+                                try:
+                                    bvj_input_path = geo_variant_paths['junction_types']['BloodVesselJunction']['calibration_input']
+                                    if not os.path.exists(bvj_input_path):
+                                        bvj_input_path = geo_variant_paths['geometric_input']
+                                    refine_inlet_bc_for_forward_simulation(nn_jv_path, calibration_input_path=bvj_input_path)
+                                    run_forward_simulation(nn_jv_path, nn_jv_results_csv)
+                                    generated_files.append(nn_jv_results_csv)
+                                    print(f"      ✓ NN Junction+Vessel {geo_variant_name} simulation completed successfully")
+                                except Exception as e:
+                                    raise Exception(f"NN Junction+Vessel {geo_variant_name} simulation failed: {e}")
         else:
             # Normal mode: run all forward simulations for each geometry variant
             for geo_variant_name, geo_variant_paths in geometry_variants.items():
@@ -997,6 +1277,25 @@ def main():
                                 print(f"      ✓ NN-modified {geo_variant_name}/BloodVesselJunction simulation completed successfully")
                             except Exception as e:
                                 raise Exception(f"NN-modified {geo_variant_name}/BloodVesselJunction simulation failed: {e}")
+                    # Forward sim for NN Junction+Vessel when --NN-vessel (normal mode)
+                    if getattr(args, 'NN_vessel', False):
+                        nn_jv_path = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
+                        nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
+                        if os.path.exists(nn_jv_path):
+                            if check_and_track_file(nn_jv_results_csv, f"NN Junction+Vessel forward simulation for {geo_variant_name}"):
+                                pass
+                            else:
+                                print(f"\n    Running simulation with NN Junction+Vessel {geo_variant_name} input...")
+                                try:
+                                    bvj_input_path = variant_junction_paths['BloodVesselJunction']['calibration_input']
+                                    if not os.path.exists(bvj_input_path):
+                                        bvj_input_path = variant_geometric_input
+                                    refine_inlet_bc_for_forward_simulation(nn_jv_path, calibration_input_path=bvj_input_path)
+                                    run_forward_simulation(nn_jv_path, nn_jv_results_csv)
+                                    generated_files.append(nn_jv_results_csv)
+                                    print(f"      ✓ NN Junction+Vessel {geo_variant_name} simulation completed successfully")
+                                except Exception as e:
+                                    raise Exception(f"NN Junction+Vessel {geo_variant_name} simulation failed: {e}")
     
     # Step 5: Calculate and print MSE between 3D and 0D solutions
     if not args.skip_mse_calculation:
@@ -1035,6 +1334,10 @@ def main():
                 nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
                 if os.path.exists(nn_results_csv):
                     csv_results_dict['BloodVesselJunction_NN'] = str(nn_results_csv)
+                if getattr(args, 'NN_vessel', False):
+                    nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
+                    if os.path.exists(nn_jv_results_csv):
+                        csv_results_dict['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
             
             if csv_results_dict and os.path.exists(variant_calibration_input):
                 # Generate CSV output path
@@ -1126,6 +1429,10 @@ def main():
                                 nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
                                 if os.path.exists(nn_results_csv):
                                     combined_csv_paths[f'{geo_variant_name}_BloodVesselJunction_NN'] = str(nn_results_csv)
+                                if getattr(args, 'NN_vessel', False):
+                                    nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
+                                    if os.path.exists(nn_jv_results_csv):
+                                        combined_csv_paths[f'{geo_variant_name}_BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
                         
                         if combined_csv_paths or geometric_csv_paths:
                             success_count = 0
@@ -1200,6 +1507,10 @@ def main():
                             nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
                             if os.path.exists(nn_results_csv):
                                 variant_csv_paths['BloodVesselJunction_NN'] = str(nn_results_csv)
+                            if getattr(args, 'NN_vessel', False):
+                                nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
+                                if os.path.exists(nn_jv_results_csv):
+                                    variant_csv_paths['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
                         
                         if variant_csv_paths or variant_geometric_csv_paths:
                             # Build vessel name mapping for EL-adjusted geometry
@@ -1317,6 +1628,10 @@ def main():
                     nn_json = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
                     if os.path.exists(nn_json):
                         modality_jsons['BloodVesselJunction_NN'] = str(nn_json)
+                    if getattr(args, 'NN_vessel', False):
+                        nn_jv_json = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
+                        if os.path.exists(nn_jv_json):
+                            modality_jsons['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_json)
 
                 if not modality_jsons:
                     print(f"    Warning: No modality JSONs found for {geo_variant_name}, skipping zero-D parameter bar chart")
