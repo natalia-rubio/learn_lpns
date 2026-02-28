@@ -18,9 +18,13 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from util.data_processing.inputs_from_0d_config import load_junction_geometric_features
+from util.data_processing.inputs_from_0d_config import (
+    load_junction_geometric_features,
+    load_vessel_geometric_features,
+    load_vessel_targets_from_config,
+)
 from util.data_processing.outputs_from_config import load_junction_lumped_parameters
-from util.data_processing.data_dict_from_csvs import build_data_dict_from_csvs
+from util.data_processing.data_dict_from_csvs import build_data_dict_from_csvs, build_data_dict_from_vessel_csvs
 from util.data_processing.generate_split_indices import (
     generate_split_indices,
     get_geometry_row_ranges,
@@ -229,6 +233,41 @@ def main():
                     writer.writerow([jname, pout])
             print(f"Saved targets meta to {targets_meta_path}")
 
+            # ---- Vessel CSVs (one row per non-connector vessel) ----
+            try:
+                X_v, feat_names_v, vessel_ids, vessel_names = load_vessel_geometric_features(
+                    geometric_input_path, verbose=args.verbose
+                )
+                vessel_ids_t, vessel_names_t, targets_v = load_vessel_targets_from_config(calib_output_path)
+            except Exception as e:
+                if args.verbose:
+                    print(f"  Skipping vessel CSVs for {geo}: {e}")
+                X_v, feat_names_v, vessel_ids, vessel_names = None, None, None, None
+                vessel_ids_t, vessel_names_t, targets_v = None, None, None
+            if X_v is not None and len(X_v) > 0:
+                # Align targets to feature order by vessel_id
+                tidx = {vid: i for i, vid in enumerate(vessel_ids_t)}
+                tgt_header = ["vessel_id", "vessel_name", "R_poiseuille", "stenosis_coefficient", "L"]
+                Y_v_rows = []
+                for i, vid in enumerate(vessel_ids):
+                    j = tidx.get(vid)
+                    if j is None:
+                        raise ValueError(f"Vessel id {vid} from features not found in targets for {geo}")
+                    Y_v_rows.append([vid, vessel_names[i], targets_v[j, 0], targets_v[j, 1], targets_v[j, 2]])
+                vessel_feat_path = os.path.join(os.path.dirname(csv_path), "vessel_geometric_features.csv")
+                vessel_tgt_path = os.path.join(os.path.dirname(csv_path), "vessel_lumped_parameters.csv")
+                with open(vessel_feat_path, "w") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(feat_names_v)
+                    for row in X_v:
+                        writer.writerow(row)
+                with open(vessel_tgt_path, "w") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(tgt_header)
+                    for row in Y_v_rows:
+                        writer.writerow(row)
+                print(f"Saved vessel features and targets to {vessel_feat_path}, {vessel_tgt_path}")
+
         # ---- Build concatenated data_dict for NN training (across all geometries) ----
         num_geos = len(geometries)
         data_dict = build_data_dict_from_csvs(
@@ -246,6 +285,19 @@ def main():
         jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl")
         save_dict(data_dict, jax_out_path)
         print(f"Wrote data_dict to {jax_out_path}")
+
+        # ---- Build and save vessel data_dict ----
+        vessel_data_dict = build_data_dict_from_vessel_csvs(
+            set_name=args.set_name,
+            geometries=geometries,
+            ml_inputs_root=os.path.join(args.data_root, "ml_inputs"),
+            geometry_variant=geometry_variant,
+            normalize=args.normalize,
+        )
+        vessel_jax_path = os.path.join(jax_out_dir, f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl")
+        save_dict(vessel_data_dict, vessel_jax_path)
+        n_vessel = vessel_data_dict["input"].shape[0]
+        print(f"Wrote vessel data_dict to {vessel_jax_path} (n_vessel_rows={n_vessel})")
 
         # ---- Generate train/val split indices (by geometry: all rows from one geometry in same set) ----
         if "input" not in data_dict:

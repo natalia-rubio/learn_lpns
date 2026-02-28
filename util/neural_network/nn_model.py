@@ -29,18 +29,23 @@ class NeuralNet():
         norm_suffix = "_normalized" if self.normalize else ""
 
         data_root = network_params.get("data_root", "data")
+        jax_filename = network_params.get(
+            "jax_arrays_filename",
+            f"jax_arrays_num_geos_{network_params['num_geos']}{norm_suffix}.pkl",
+        )
         jax_arrays_path = os.path.join(
             data_root,
             "jax_arrays",
             self.set_name,
             self.geometry_variant,
             self.set_type,
-            f"jax_arrays_num_geos_{network_params['num_geos']}{norm_suffix}.pkl",
+            jax_filename,
         )
         print(f"  Loading jax_arrays from: {jax_arrays_path}")
         self.data_dict = load_dict(jax_arrays_path)
+        self.model_name_suffix = network_params.get("model_name_suffix", "")
+        self.use_leaky_relu = network_params.get("use_leaky_relu", False)
 
-        #import pdb; pdb.set_trace()
         # scaling_dict is not used in the current loss, but keep attribute for API compatibility.
         self.scaling_dict = network_params.get("scaling_dict", {})
         self.output_type    = network_params["output_type"]
@@ -67,40 +72,42 @@ class NeuralNet():
         self.opt_state = self.optimizer.init(self.weights)
         return
     
-    def update(self, indices):
-        grads = grad(loss, argnums = -1)(self.input[indices,:],
-            self.output[indices,:],
-            self.data_dict["scaling_factors"][indices,:],
+    def get_gradients(self, indices):
+        """Compute gradients of loss w.r.t. weights for the given batch (no update)."""
+        return grad(loss, argnums=-1)(
+            self.input[indices, :],
+            self.output[indices, :],
+            self.data_dict["scaling_factors"][indices, :],
             self.scaling_dict,
             self.target_coef_ind,
+            self.use_leaky_relu,
             self.weights,
-            )
+        )
+
+    def update(self, indices):
+        grads = self.get_gradients(indices)
         updates, self.opt_state = self.optimizer.update(grads, self.opt_state)
         self.weights = optax.apply_updates(self.weights, updates)
-        #pdb.set_trace()
         return
 
 
-@jit
-def predict(input, weights):
-    output = batched_forward_pass(input, weights)
-    return output 
+@jit(static_argnums=(2,))
+def predict(input, weights, use_leaky_relu=False):
+    output = batched_forward_pass(input, weights, use_leaky_relu)
+    return output
 
-@jit
-def loss(input, outputs, scaling_factors, scaling_dict, target_coef_ind, weights):
-    coefs_pred = predict(input, weights)
-    #pdb.set_trace()
-    L2_penalty = get_L2(weights)/(len(weights) * jnp.size(weights[0][0]))
-    #return jnp.mean(jnp.square(coefs_pred[:,target_coef_ind] - outputs[:,target_coef_ind])) + L2_penalty*0 #*1#L2 regularization term
-    return jnp.mean(jnp.square(coefs_pred[:,0] - outputs[:,target_coef_ind])) + L2_penalty*0 #*1#L2 regularization term
 
-@jit
-def loss_pure(input, outputs, scaling_factors, scaling_dict, target_coef_ind, weights):
-    coefs_pred = predict(input, weights)
-    #pdb.set_trace()
-    L2_penalty = get_L2(weights)/(len(weights) * jnp.size(weights[0][0]))
-    #return jnp.sqrt(jnp.mean(jnp.square(coefs_pred[:,target_coef_ind] - outputs[:,target_coef_ind]))) #L2 regularization term
-    return jnp.sqrt(jnp.mean(jnp.square(coefs_pred[:,0] - outputs[:,target_coef_ind]))) #L2 regularization term
+@jit(static_argnums=(4, 5))  # target_coef_ind, use_leaky_relu
+def loss(input, outputs, scaling_factors, scaling_dict, target_coef_ind, use_leaky_relu, weights):
+    coefs_pred = predict(input, weights, use_leaky_relu)
+    L2_penalty = get_L2(weights) / (len(weights) * jnp.size(weights[0][0]))
+    return jnp.mean(jnp.square(coefs_pred[:, 0] - outputs[:, target_coef_ind])) + L2_penalty * 0
+
+
+@jit(static_argnums=(4, 5))  # target_coef_ind, use_leaky_relu
+def loss_pure(input, outputs, scaling_factors, scaling_dict, target_coef_ind, use_leaky_relu, weights):
+    coefs_pred = predict(input, weights, use_leaky_relu)
+    return jnp.sqrt(jnp.mean(jnp.square(coefs_pred[:, 0] - outputs[:, target_coef_ind])))
 
 
 

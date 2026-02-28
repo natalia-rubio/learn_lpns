@@ -72,6 +72,12 @@ def relu(x):
   # Rectified Linear Unit activation function
   return jnp.maximum(0, x)
 
+
+def leaky_relu(x, negative_slope=0.01):
+    """Leaky ReLU: max(negative_slope * x, x). Gradient flows when x < 0."""
+    return jnp.where(x >= 0, x, negative_slope * x)
+
+
 def sigmoid(x):
     # Sigmoid activation function
     return 1 / (1 + jnp.exp(-x))
@@ -81,24 +87,27 @@ def tanh(x):
     return jnp.tanh(x)
 
     
-def forward_pass(input,weights):
+def forward_pass(input, weights, use_leaky_relu=False):
     # Forward pass through the network
-    latent_rep = input    
+    activation = leaky_relu if use_leaky_relu else relu
+    latent_rep = input
     for w, b in weights[:-1]:
-        #jnp.concatenate((latent_rep, input), axis=-1)
         lin_comb = jnp.dot(w, latent_rep) + b
-        latent_rep = relu(lin_comb)
+        latent_rep = activation(lin_comb)
 
     final_w, final_b = weights[-1]
     output = jnp.dot(final_w, latent_rep) + final_b
-    #output = input[5:] * weights
     return output
+
+
+def batched_forward_pass(input, weights, use_leaky_relu=False):
+    """Vectorized forward pass over batch dimension (axis 0 of input)."""
+    return vmap(forward_pass, in_axes=(0, None, None))(input, weights, use_leaky_relu)
+
 
 def get_L2(weights):
     # Get the L2 norm of the weights
     return jnp.sum(jnp.array([jnp.linalg.norm(w) for w, _ in weights]))
-
-batched_forward_pass = vmap(forward_pass, in_axes=(0, None))
 
 def dill_save(di_, filename_):
     with open(filename_, 'wb') as f:

@@ -78,6 +78,7 @@ JUNCTION_COLORS = {
     'DirIndepJunction': 'dodgerblue',
     'HybridJunction': 'violet',
     'BloodVesselJunction_NN': 'dodgerblue',
+    'BloodVesselJunction_NN_plus_Vessel_NN': 'orchid',
 }
 
 # Line styles for geometry variants
@@ -226,6 +227,13 @@ LINE_STYLES = {
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D RRI Junction (NN)',
+        'alpha': 0.5,
+    },
+    'BloodVesselJunction_NN_plus_Vessel_NN': {
+        'color': 'orchid',
+        'linestyle': '--',
+        'linewidth': 4,
+        'label': '0D RRI Junction (NN + Vessel NN)',
         'alpha': 0.5,
     },
 }

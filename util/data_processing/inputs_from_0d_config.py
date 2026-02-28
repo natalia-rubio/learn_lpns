@@ -311,8 +311,178 @@ def load_junction_geometric_features(
     return X, feature_names, junction_names, outlet_primary_names
 
 
+def load_vessel_geometric_features(
+    config_path: str,
+    verbose: bool = False,
+) -> Tuple[np.ndarray, List[str], List[int], List[str]]:
+    """
+    Extract a vessel-level geometric feature matrix from a 0D config JSON.
+
+    One row per non-connector vessel. Connectors (vessel_name contains 'connector')
+    are skipped. Config must have been processed by geometric_params so each
+    vessel has geometric_params (inlet_area, outlet_area, path_length, tortuosity,
+    angle_diff) and vessel_length.
+
+    Returns:
+        X: NumPy array of shape (n_vessels, n_features).
+        feature_names: List of column names for X.
+        vessel_ids: List of vessel_id; vessel_ids[i] corresponds to row X[i, :].
+        vessel_names: List of vessel_name; vessel_names[i] corresponds to row X[i, :].
+    """
+    with open(config_path, "r") as f:
+        cfg = json.load(f)
+
+    vessels = cfg.get("vessels", [])
+    if not isinstance(vessels, list):
+        raise ValueError("Expected 'vessels' to be a list in config.")
+
+    # Feature column names (order must match row construction below)
+    # Include both calculated geometric estimates and values from zero_d_element_values (config)
+    feature_names = [
+        "vessel_id",
+        "vessel_length",
+        "inlet_area",
+        "outlet_area",
+        "path_length",
+        "tortuosity",
+        "angle_diff",
+        "area_ratio",
+        "inlet_max_inscribed_radius",
+        "outlet_max_inscribed_radius",
+        "max_inscribed_radius_min",
+        "max_inscribed_radius_max",
+        "poiseuille_resistance_calc",
+        "inductance_calc",
+        "stenosis_calc",
+        "R_poiseuille_geometric",
+        "L_geometric",
+        "stenosis_coefficient_geometric",
+    ]
+
+    rows: List[List[float]] = []
+    vessel_ids: List[int] = []
+    vessel_names_out: List[str] = []
+
+    for v in vessels:
+        vessel_name = v.get("vessel_name", "")
+        if not vessel_name:
+            continue
+        if "connector" in vessel_name.lower():
+            if verbose:
+                print(f"Skipping connector vessel: {vessel_name}")
+            continue
+
+        vessel_id = v.get("vessel_id")
+        if vessel_id is None:
+            continue
+        vessel_length = float(v.get("vessel_length", 0.0) or 0.0)
+        gp = v.get("geometric_params") or {}
+        inlet_area = float(gp.get("inlet_area", 0.0) or 0.0)
+        outlet_area = float(gp.get("outlet_area", 0.0) or 0.0)
+        path_length = float(gp.get("path_length", 0.0) or 0.0)
+        tortuosity = float(gp.get("tortuosity", 0.0) or 0.0)
+        angle_diff = float(gp.get("angle_diff", 0.0) or 0.0)
+        area_ratio = outlet_area / inlet_area if inlet_area > 0 else 0.0
+
+        # Calculated geometric estimates (inlet-based; inductance uses density 1.06 g/cm³: L = rho*L/A)
+        if inlet_area > 0:
+            r_local = np.sqrt(inlet_area / np.pi)
+            r4 = r_local ** 4
+            poiseuille_resistance_calc = (8.0 * 0.04 * path_length) / (np.pi * r4) if r4 > 0 else 0.0
+            inductance_calc = 1.06 * path_length / inlet_area  # L = rho*L/A, rho=1.06
+        else:
+            poiseuille_resistance_calc = 0.0
+            inductance_calc = 0.0
+        stenosis_calc = max(0.0, 1.0 - area_ratio) if inlet_area > 0 else 0.0
+
+        # MISR: inlet, outlet, min and max along vessel (from geometric_params; 0 if missing)
+        inlet_misr = float(gp.get("inlet_max_inscribed_radius", 0.0) or 0.0)
+        outlet_misr = float(gp.get("outlet_max_inscribed_radius", 0.0) or 0.0)
+        misr_min = float(gp.get("max_inscribed_radius_min", 0.0) or 0.0)
+        misr_max = float(gp.get("max_inscribed_radius_max", 0.0) or 0.0)
+
+        # Values from zero_d_element_values in the config (from centerline/oned_to_zerod or pipeline)
+        z = v.get("zero_d_element_values") or {}
+        R_poiseuille_geometric = float(z.get("R_poiseuille", 0.0) or 0.0)
+        L_geometric = float(z.get("L", 0.0) or 0.0)
+        stenosis_coefficient_geometric = float(z.get("stenosis_coefficient", 0.0) or 0.0)
+
+        row = [
+            float(vessel_id),
+            vessel_length,
+            inlet_area,
+            outlet_area,
+            path_length,
+            tortuosity,
+            angle_diff,
+            area_ratio,
+            inlet_misr,
+            outlet_misr,
+            misr_min,
+            misr_max,
+            poiseuille_resistance_calc,
+            inductance_calc,
+            stenosis_calc,
+            R_poiseuille_geometric,
+            L_geometric,
+            stenosis_coefficient_geometric,
+        ]
+        rows.append(row)
+        vessel_ids.append(int(vessel_id))
+        vessel_names_out.append(vessel_name)
+
+    if not rows:
+        raise ValueError("No non-connector vessels with geometric_params found in config.")
+
+    X = np.asarray(rows, dtype=float)
+    return X, feature_names, vessel_ids, vessel_names_out
+
+
+def load_vessel_targets_from_config(
+    calibrated_config_path: str,
+) -> Tuple[List[int], List[str], np.ndarray]:
+    """
+    Load vessel targets (R_poiseuille, stenosis_coefficient, L) from a calibrated
+    0D config JSON. Only non-connector vessels are included; order matches
+    config vessel order.
+
+    Returns:
+        vessel_ids: List of vessel_id.
+        vessel_names: List of vessel_name.
+        targets: Array of shape (n_vessels, 3) with columns [R_poiseuille, stenosis_coefficient, L].
+    """
+    with open(calibrated_config_path, "r") as f:
+        cfg = json.load(f)
+
+    vessels = cfg.get("vessels", [])
+    vessel_ids = []
+    vessel_names = []
+    rows = []
+
+    for v in vessels:
+        vessel_name = v.get("vessel_name", "")
+        if not vessel_name or "connector" in vessel_name.lower():
+            continue
+        vessel_id = v.get("vessel_id")
+        if vessel_id is None:
+            continue
+        z = v.get("zero_d_element_values") or {}
+        R = float(z.get("R_poiseuille", 0.0) or 0.0)
+        S = float(z.get("stenosis_coefficient", 0.0) or 0.0)
+        L = float(z.get("L", 0.0) or 0.0)
+        vessel_ids.append(int(vessel_id))
+        vessel_names.append(vessel_name)
+        rows.append([R, S, L])
+
+    if not rows:
+        return [], [], np.zeros((0, 3), dtype=float)
+    return vessel_ids, vessel_names, np.asarray(rows, dtype=float)
+
+
 __all__ = [
     "load_junction_geometric_features",
+    "load_vessel_geometric_features",
+    "load_vessel_targets_from_config",
 ]
 
 

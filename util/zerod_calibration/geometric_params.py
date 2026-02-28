@@ -159,6 +159,20 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             print(f"    Warning: Multiple centerline points found with GID {gid_value}, using first match")
         return int(matches[0])
     
+    # Helper to get inlet/outlet point indices from vessel's centerline_node_ids (GlobalNodeId) when present
+    def find_point_indices_from_node_ids(v):
+        """If vessel has centerline_node_ids with inlet and outlet, return (inlet_idx, outlet_idx) else (None, None)."""
+        node_ids = v.get("centerline_node_ids") or {}
+        inlet_gid = node_ids.get("inlet")
+        outlet_gid = node_ids.get("outlet")
+        if inlet_gid is None or outlet_gid is None:
+            return None, None
+        inlet_idx = find_point_from_gid(int(inlet_gid))
+        outlet_idx = find_point_from_gid(int(outlet_gid))
+        if inlet_idx is None or outlet_idx is None:
+            return None, None
+        return inlet_idx, outlet_idx
+
     # Helper to find a centerline point corresponding to a 0D vessel segment
     # (Same logic as in oned_to_zerod.py)
     def find_point_for_vessel_segment(vessel_name, prefer_end=True):
@@ -308,10 +322,13 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             angle_diff = 0.0
             
         else:
-            # Regular vessel processing
-            # Find inlet and outlet points for this vessel
-            inlet_point_idx = find_point_for_vessel_segment(vessel_name, prefer_end=False)
-            outlet_point_idx = find_point_for_vessel_segment(vessel_name, prefer_end=True)
+            # Regular vessel processing: prefer inlet/outlet from centerline_node_ids when present (e.g. EL geometry)
+            inlet_point_idx, outlet_point_idx = find_point_indices_from_node_ids(vessel)
+            if inlet_point_idx is None or outlet_point_idx is None:
+                import pdb; pdb.set_trace()
+                raise ValueError(f"Could not find inlet or outlet point for vessel {vessel_name}")
+                # inlet_point_idx = find_point_for_vessel_segment(vessel_name, prefer_end=False)
+                # outlet_point_idx = find_point_for_vessel_segment(vessel_name, prefer_end=True)
             
             if inlet_point_idx is None:
                 raise ValueError(f"Could not find inlet point for vessel {vessel_name}")
@@ -407,19 +424,45 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             inlet_tangent_vessel = v_in / n_in
             outlet_tangent_vessel = v_out / n_out
             angle_diff = get_angle_diff(inlet_tangent_vessel, outlet_tangent_vessel)
+
+            # Maximum inscribed sphere radius: inlet, outlet, min and max along the vessel segment
+            inlet_misr = float(max_inscribed_radius[inlet_point_idx])
+            outlet_misr = float(max_inscribed_radius[outlet_point_idx])
+            segment_indices = idx_sorted[inlet_pos:outlet_pos + 1]
+            if segment_indices.size > 0:
+                segment_radii = max_inscribed_radius[segment_indices]
+                misr_min = float(np.min(segment_radii))
+                misr_max = float(np.max(segment_radii))
+            else:
+                misr_min = min(inlet_misr, outlet_misr)
+                misr_max = max(inlet_misr, outlet_misr)
         
-        vessel_areas[vessel_name] = {
-            'inlet_area': inlet_area,
-            'outlet_area': outlet_area,
-            'path_length': path_length,
-            'tortuosity': tortuosity,
-            'angle_diff': angle_diff,
-        }
+        if is_connector:
+            vessel_areas[vessel_name] = {
+                'inlet_area': inlet_area,
+                'outlet_area': outlet_area,
+                'path_length': path_length,
+                'tortuosity': tortuosity,
+                'angle_diff': angle_diff,
+            }
+        else:
+            vessel_areas[vessel_name] = {
+                'inlet_area': inlet_area,
+                'outlet_area': outlet_area,
+                'path_length': path_length,
+                'tortuosity': tortuosity,
+                'angle_diff': angle_diff,
+                'inlet_max_inscribed_radius': inlet_misr,
+                'outlet_max_inscribed_radius': outlet_misr,
+                'max_inscribed_radius_min': misr_min,
+                'max_inscribed_radius_max': misr_max,
+            }
         
         print(
             f"  {vessel_name}: inlet_area={inlet_area:.6f}, outlet_area={outlet_area:.6f}, "
             f"path_length={path_length:.6f}, tortuosity={tortuosity:.6f}, "
             f"angle_diff={angle_diff:.6f}"
+            + (f", MISR inlet={inlet_misr:.6f} outlet={outlet_misr:.6f} min={misr_min:.6f} max={misr_max:.6f}" if not is_connector else "")
         )
     
     # Pre-compute inlet/outlet points and indices for each branch (used by junction metrics)
@@ -1485,6 +1528,10 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
             'path_length': areas.get('path_length'),
             'tortuosity': areas.get('tortuosity'),
             'angle_diff': areas.get('angle_diff'),
+            'inlet_max_inscribed_radius': areas.get('inlet_max_inscribed_radius'),
+            'outlet_max_inscribed_radius': areas.get('outlet_max_inscribed_radius'),
+            'max_inscribed_radius_min': areas.get('max_inscribed_radius_min'),
+            'max_inscribed_radius_max': areas.get('max_inscribed_radius_max'),
         }
         print(f"  Added geometric_params to vessel {vessel_name}")
     

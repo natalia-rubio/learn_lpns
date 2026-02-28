@@ -673,7 +673,8 @@ def main():
                     for i, model_path in enumerate(model_paths):
                         print(f"      Loading model {i+1}/3: {model_path}")
                         model = dill_load(model_path)
-                        pred = predict(X_jax, model.weights)
+                        use_leaky = getattr(model, "use_leaky_relu", False)
+                        pred = predict(X_jax, model.weights, use_leaky)
                         predictions.append(np.array(pred).flatten())
                 
                     # Based on outputs_from_config.py and launch_training.py:

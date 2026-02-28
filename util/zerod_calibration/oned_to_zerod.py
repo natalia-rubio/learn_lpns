@@ -742,19 +742,29 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
         
         return pressure_refined, pressure_der, flow_refined, flow_der
     
-    # Helper to find point index from centerline_node_ids
+    # Helper to find point index from centerline_node_ids (GlobalNodeId); raises if missing or not found
     def find_point_from_node_id(vessel, is_inlet=True):
-        """Find centerline point index from vessel's centerline_node_ids."""
+        """Find centerline point index from vessel's centerline_node_ids. Raises if node IDs missing or not in centerline."""
         if 'centerline_node_ids' not in vessel:
-            return None
-        
+            raise ValueError(
+                f"Vessel {vessel.get('vessel_name', '?')} has no centerline_node_ids; "
+                "observations require global node IDs for both vessels and junctions."
+            )
         node_ids = vessel['centerline_node_ids']
-        target_gid = node_ids.get('inlet' if is_inlet else 'outlet')
-        
+        key = 'inlet' if is_inlet else 'outlet'
+        target_gid = node_ids.get(key)
         if target_gid is None:
-            return None
-        
-        return gid_to_idx.get(int(target_gid))
+            raise ValueError(
+                f"Vessel {vessel.get('vessel_name', '?')} centerline_node_ids missing '{key}'; "
+                "observations require inlet and outlet GlobalNodeId for each vessel."
+            )
+        target_gid = int(target_gid)
+        if target_gid not in gid_to_idx:
+            raise ValueError(
+                f"Vessel {vessel.get('vessel_name', '?')} has {key} GlobalNodeId={target_gid} "
+                "which is not present in the centerline solution GlobalNodeId array."
+            )
+        return gid_to_idx[target_gid]
     
     # Extract observations
     observations = {"y": {}, "dy": {}}
@@ -766,15 +776,14 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
             inlet_bc = vessel['boundary_conditions']['inlet']
             vessel_name = vessel['vessel_name']
             
-            # Use inlet node ID
+            # Use inlet node ID (required; raises if centerline_node_ids missing or GID not in centerline)
             inlet_idx = find_point_from_node_id(vessel, is_inlet=True)
-            if inlet_idx is not None:
-                p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt, derivative_method, verbose=True)
-                if p_ref is not None:
-                    observations["y"][f"pressure:INFLOW:{vessel_name}"] = p_ref[start_idx:end_idx]
-                    observations["dy"][f"pressure:INFLOW:{vessel_name}"] = p_der[start_idx:end_idx]
-                    observations["y"][f"flow:INFLOW:{vessel_name}"] = f_ref[start_idx:end_idx]
-                    observations["dy"][f"flow:INFLOW:{vessel_name}"] = f_der[start_idx:end_idx]
+            p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt, derivative_method, verbose=True)
+            if p_ref is not None:
+                observations["y"][f"pressure:INFLOW:{vessel_name}"] = p_ref[start_idx:end_idx]
+                observations["dy"][f"pressure:INFLOW:{vessel_name}"] = p_der[start_idx:end_idx]
+                observations["y"][f"flow:INFLOW:{vessel_name}"] = f_ref[start_idx:end_idx]
+                observations["dy"][f"flow:INFLOW:{vessel_name}"] = f_der[start_idx:end_idx]
             break
     
     # Outlet BCs
@@ -783,15 +792,14 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
             bc_outlet = vessel['boundary_conditions'].get('outlet')
             if bc_outlet:
                 vessel_name = vessel['vessel_name']
-                # Use outlet node ID
+                # Use outlet node ID (required; raises if centerline_node_ids missing or GID not in centerline)
                 outlet_idx = find_point_from_node_id(vessel, is_inlet=False)
-                if outlet_idx is not None:
-                    p_ref, p_der, f_ref, f_der = extract_at_point(outlet_idx, times, dt, derivative_method, verbose=False)
-                    if p_ref is not None:
-                        observations["y"][f"pressure:{vessel_name}:{bc_outlet}"] = p_ref[start_idx:end_idx]
-                        observations["dy"][f"pressure:{vessel_name}:{bc_outlet}"] = p_der[start_idx:end_idx]
-                        observations["y"][f"flow:{vessel_name}:{bc_outlet}"] = f_ref[start_idx:end_idx]
-                        observations["dy"][f"flow:{vessel_name}:{bc_outlet}"] = f_der[start_idx:end_idx]
+                p_ref, p_der, f_ref, f_der = extract_at_point(outlet_idx, times, dt, derivative_method, verbose=False)
+                if p_ref is not None:
+                    observations["y"][f"pressure:{vessel_name}:{bc_outlet}"] = p_ref[start_idx:end_idx]
+                    observations["dy"][f"pressure:{vessel_name}:{bc_outlet}"] = p_der[start_idx:end_idx]
+                    observations["y"][f"flow:{vessel_name}:{bc_outlet}"] = f_ref[start_idx:end_idx]
+                    observations["dy"][f"flow:{vessel_name}:{bc_outlet}"] = f_der[start_idx:end_idx]
     
     # Extract observations at junctions
     for junc in junctions:
@@ -799,35 +807,31 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
         inlet_vessel_ids = junc.get('inlet_vessels', [])
         outlet_vessel_ids = junc.get('outlet_vessels', [])
         
-        # For inlet vessels: format is "flow:vessel_name:junction_name"
+        # For inlet vessels: format is "flow:vessel_name:junction_name" (use vessel outlet node ID at junction)
         for vessel_id in inlet_vessel_ids:
             if vessel_id < len(vessels):
                 vessel = vessels[vessel_id]
                 vessel_name = vessel['vessel_name']
-                # Use outlet node ID (where vessel connects to junction)
                 pt_idx = find_point_from_node_id(vessel, is_inlet=False)
-                if pt_idx is not None:
-                    p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
-                    if p_ref is not None:
-                        observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref[start_idx:end_idx]
-                        observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der[start_idx:end_idx]
-                        observations["y"][f"flow:{vessel_name}:{junc_name}"] = f_ref[start_idx:end_idx]
-                        observations["dy"][f"flow:{vessel_name}:{junc_name}"] = f_der[start_idx:end_idx]
+                p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
+                if p_ref is not None:
+                    observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref[start_idx:end_idx]
+                    observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der[start_idx:end_idx]
+                    observations["y"][f"flow:{vessel_name}:{junc_name}"] = f_ref[start_idx:end_idx]
+                    observations["dy"][f"flow:{vessel_name}:{junc_name}"] = f_der[start_idx:end_idx]
         
-        # For outlet vessels: format is "flow:junction_name:vessel_name"
+        # For outlet vessels: format is "flow:junction_name:vessel_name" (use vessel inlet node ID at junction)
         for vessel_id in outlet_vessel_ids:
             if vessel_id < len(vessels):
                 vessel = vessels[vessel_id]
                 vessel_name = vessel['vessel_name']
-                # Use inlet node ID (where vessel connects to junction)
                 pt_idx = find_point_from_node_id(vessel, is_inlet=True)
-                if pt_idx is not None:
-                    p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
-                    if p_ref is not None:
-                        observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref[start_idx:end_idx]
-                        observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der[start_idx:end_idx]
-                        observations["y"][f"flow:{junc_name}:{vessel_name}"] = f_ref[start_idx:end_idx]
-                        observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
+                p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
+                if p_ref is not None:
+                    observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref[start_idx:end_idx]
+                    observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der[start_idx:end_idx]
+                    observations["y"][f"flow:{junc_name}:{vessel_name}"] = f_ref[start_idx:end_idx]
+                    observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
     
     return observations
 

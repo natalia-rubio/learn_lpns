@@ -17,7 +17,7 @@ import dill
 
 def train_nn(model, training_params):
     norm_suffix = "_normalized" if getattr(model, 'normalize', False) else ""
-    model_name2 = f"{model.output_type}_{model.set_name}_pred_{model.target_coef_ind}"
+    model_name2 = f"{model.output_type}_{model.set_name}{getattr(model, 'model_name_suffix', '')}_pred_{model.target_coef_ind}"
     model_name = f"{model.output_type}_{model.set_name}_ng_{model.num_geos}_nl_{model.num_layers}_lw_{model.layer_width}_ne_{training_params['num_epochs']}_bs_{training_params['batch_size']}_dr_{model.decay_rate}_{model.set_type}_pred_{model.target_coef_ind}"
     plotting = True
     train_hist = []
@@ -36,10 +36,43 @@ def train_nn(model, training_params):
     # Print the number of training and validation points
     print("Number of training points: ", len(train_inds))
     print("Number of validation points: ", len(val_inds))
+
+    batch_size = training_params["batch_size"]
+    if len(train_inds) == 0:
+        raise ValueError(
+            "No training points. Check that the train/val split and data (e.g. vessel pkl geometry names) "
+            "match; see launch_training vessel split error message if applicable."
+        )
+    if batch_size > len(train_inds):
+        print(
+            f"  Warning: batch_size ({batch_size}) > number of training points ({len(train_inds)}). "
+            f"Setting batch_size to {len(train_inds)}."
+        )
+        batch_size = len(train_inds)
+
+    # Optionally print gradients for the first batch (before training)
+    if training_params.get("print_gradients", False):
+        inds = train_inds[:batch_size] if len(train_inds) >= batch_size else train_inds
+        if len(inds) > 0:
+            grads = model.get_gradients(inds)
+            print("\n  Gradients (first batch, before training):")
+            for layer_i, (gw, gb) in enumerate(grads):
+                
+                gw_np = np.array(gw)
+                gb_np = np.array(gb)
+                print(
+                    f"    layer {layer_i}: grad_w norm={np.linalg.norm(gw_np):.2e} "
+                    f"min={gw_np.min():.2e} max={gw_np.max():.2e}  "
+                    f"grad_b norm={np.linalg.norm(gb_np):.2e} min={gb_np.min():.2e} max={gb_np.max():.2e}"
+                )
+            print("")
+        else:
+            print("\n  print_gradients: no training indices, skipping.\n")
+    
     for epoch in range(training_params['num_epochs']): # Loop through the epochs
         start_time = time.time() # Time each epoch
         #import pdb; pdb.set_trace()
-        batch_ind_list = get_batch_indices(train_inds, training_params['batch_size']) # Split the training set into random batches
+        batch_ind_list = get_batch_indices(train_inds, batch_size)  # Split the training set into random batches
         for i, batch_inds in enumerate(batch_ind_list): # Loop through the batches
             model.update(indices = batch_inds) # Update the model based on the batch
         # with multiprocessing.Pool() as pool:
@@ -47,22 +80,24 @@ def train_nn(model, training_params):
 
         epoch_time = time.time() - start_time
  
-        train_loss = loss_pure(input = model.input[train_inds,:],
-                        outputs= model.output[train_inds,:],
-                        scaling_factors = model.data_dict["scaling_factors"][train_inds,:],
-                        scaling_dict = model.scaling_dict,
-                        target_coef_ind = model.target_coef_ind,
-                        weights = model.weights)
+        train_loss = loss_pure(input=model.input[train_inds, :],
+                        outputs=model.output[train_inds, :],
+                        scaling_factors=model.data_dict["scaling_factors"][train_inds, :],
+                        scaling_dict=model.scaling_dict,
+                        target_coef_ind=model.target_coef_ind,
+                        use_leaky_relu=getattr(model, "use_leaky_relu", False),
+                        weights=model.weights)
         train_hist.append(train_loss)
 
         # Handle empty validation set (100% train)
         if len(val_inds) > 0:
-            val_loss = loss_pure(input = model.input[val_inds,:],
-                            outputs= model.output[val_inds,:],
-                            scaling_factors = model.data_dict["scaling_factors"][val_inds,:],
-                            scaling_dict = model.scaling_dict,
-                            target_coef_ind = model.target_coef_ind,
-                            weights = model.weights)
+            val_loss = loss_pure(input=model.input[val_inds, :],
+                            outputs=model.output[val_inds, :],
+                            scaling_factors=model.data_dict["scaling_factors"][val_inds, :],
+                            scaling_dict=model.scaling_dict,
+                            target_coef_ind=model.target_coef_ind,
+                            use_leaky_relu=getattr(model, "use_leaky_relu", False),
+                            weights=model.weights)
             val_hist.append(val_loss)
             print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
                 "Training set accuracy {:e}  |  ".format(train_loss) + \
@@ -101,7 +136,8 @@ def train_nn(model, training_params):
             os.makedirs(out_dir, exist_ok=True)
             plt.savefig(os.path.join(out_dir, f"{model_name}_training_plot.png"), bbox_inches='tight')
 
-
+    # if model.target_coef_ind == 2:
+    import pdb; pdb.set_trace()
     plt.clf()
     plt.plot(np.linspace(0, epoch, epoch+1, True), np.asarray(train_hist), label = "Training Loss", color = 'cornflowerblue')
     plt.plot(np.linspace(0, epoch, epoch+1, True), np.asarray(val_hist), label = "Validation Loss", color = 'salmon')
@@ -112,6 +148,11 @@ def train_nn(model, training_params):
     plt.savefig(os.path.join(out_dir, f"{model_name}_training_plot.png"), bbox_inches='tight')
 
     os.makedirs(out_dir, exist_ok=True)
+    # So generate_zerod_inputs can resolve training data (norm stats and/or output min/max for clipping)
+    if hasattr(model, "num_geos"):
+        sidecar = os.path.join(out_dir, "norm_data_num_geos.txt")
+        with open(sidecar, "w") as f:
+            f.write(str(model.num_geos))
     dill_save(model, os.path.join(out_dir, f"{model_name}_model"))
     dill_save(model, os.path.join(out_dir, f"{model_name2}_model"))
     # Return final validation loss (or NaN if 100% train)

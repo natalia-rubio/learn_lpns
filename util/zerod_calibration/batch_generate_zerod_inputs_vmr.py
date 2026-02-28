@@ -220,9 +220,12 @@ def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, time
         cmd.append('--skip-plots')
     if args_dict.get('NN_only', False):
         cmd.append('--NN-only')
+    if args_dict.get('NN_vessel', False):
+        cmd.append('--NN-vessel')
     if args_dict.get('no_redo', False):
         cmd.append('--no-redo')
-    #cmd.append('--normalize')
+    if args_dict.get('normalize', False):
+        cmd.append('--normalize')
     # Run command
     try:
         if verbose:
@@ -288,6 +291,10 @@ Examples:
 
   # Verbose output
   python3 batch_generate_zerod_inputs_vmr.py --verbose
+
+  # Also run vessel NN inference (junction + vessel params)
+  python3 batch_generate_zerod_inputs_vmr.py --NN-vessel
+  python3 batch_generate_zerod_inputs_vmr.py --normalize
         """
     )
     parser.add_argument('--set-name', default='VMR', help='Set name (e.g., set_1)')
@@ -320,6 +327,10 @@ Examples:
                        help='Skip recreating files if they already exist (check at each step)')
     parser.add_argument('--NN-only', action='store_true',
                        help='Only run NN inference and forward simulation on NN inputs (skip calibration)')
+    parser.add_argument('--NN-vessel', action='store_true', dest='NN_vessel',
+                       help='Also run vessel NN inference and forward sim (write *_NN_JunctionAndVessel.json/results)')
+    parser.add_argument('--normalize', action='store_true',
+                       help='Use normalized NN models and unnormalize predictions (pass --normalize to generate_zerod_inputs)')
     parser.add_argument('--timeout', type=int, default=1000,
                        help='Timeout in seconds for each geometry (default: 300 = 5 minutes)')
     parser.add_argument('--max-failures', type=int, default=None,
@@ -352,7 +363,9 @@ Examples:
         'skip_mse_calculation': args.skip_mse_calculation,
         'skip_plots': args.skip_plots,
         'NN_only': args.NN_only,
+        'NN_vessel': args.NN_vessel,
         'no_redo': args.no_redo,
+        'normalize': getattr(args, 'normalize', False),
     }
     
     # Get list of geometries to process
@@ -424,6 +437,8 @@ Examples:
     print(f"  Skip existing: {args.skip_existing}")
     print(f"  No-redo mode: {args.no_redo}")
     print(f"  NN-only mode: {args.NN_only}")
+    print(f"  NN-vessel mode: {args.NN_vessel}")
+    print(f"  Normalize: {getattr(args, 'normalize', False)}")
     print(f"  Timeout per geometry: {args.timeout}s ({args.timeout/60:.1f} minutes)")
     print(f"  Max failures: {args.max_failures if args.max_failures else 'unlimited'}")
     if args.only_failed:
