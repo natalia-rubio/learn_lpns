@@ -677,12 +677,11 @@ def main():
                     from util.neural_network.nn_util import dill_load
                     import jax.numpy as jnp
                     
-                    # Load the calibrated BloodVesselJunction config
-                    bvj_output_path = variant_junction_paths['BloodVesselJunction']['calibrated_output']
-                    if not os.path.exists(bvj_output_path):
-                        raise FileNotFoundError(f"Calibrated output not found: {bvj_output_path}")
+                    # Load geometric config as base (no calibrated params); only junction R/S/L will be overwritten by NN
+                    if not os.path.exists(variant_geometric_input):
+                        raise FileNotFoundError(f"Geometric input not found: {variant_geometric_input}")
                     
-                    with open(bvj_output_path, 'r') as f:
+                    with open(variant_geometric_input, 'r') as f:
                         nn_config = json.load(f)
                     
                     # Extract geometric features using the same workflow as data processing
@@ -974,24 +973,7 @@ def main():
                         junc['junction_values']['stenosis_coefficient'] = S_values
                         junc['junction_values']['L'] = L_values
                     
-                    # NN junction-only: set vessel R/S/L to geometric values (so param comparison shows geometric vessels)
-                    with open(variant_geometric_input, 'r') as f:
-                        geo_config = json.load(f)
-                    geo_vessels_by_id = {v.get('vessel_id'): v for v in geo_config.get('vessels', []) if v.get('vessel_id') is not None}
-                    for v in nn_config.get('vessels', []):
-                        vid = v.get('vessel_id')
-                        if vid is None:
-                            continue
-                        geo_v = geo_vessels_by_id.get(vid)
-                        if geo_v is None:
-                            continue
-                        z_geo = geo_v.get('zero_d_element_values') or {}
-                        if 'zero_d_element_values' not in v:
-                            v['zero_d_element_values'] = {}
-                        v['zero_d_element_values']['R_poiseuille'] = z_geo.get('R_poiseuille', 0.0)
-                        v['zero_d_element_values']['stenosis_coefficient'] = z_geo.get('stenosis_coefficient', 0.0)
-                        v['zero_d_element_values']['L'] = z_geo.get('L', 0.0)
-                    
+                    # Vessels already geometric (nn_config was loaded from variant_geometric_input)
                     # Save the NN-modified config (already checked at start of block)
                     with open(nn_output_path, 'w') as f:
                         json.dump(nn_config, f, indent=4)
@@ -1009,15 +991,28 @@ def main():
                 from util.neural_network.nn_model import predict as nn_predict
                 from util.neural_network.nn_util import dill_load
                 import jax.numpy as jnp
+                # When model_dir is trial-specific (CV), vessel models exist only for that variant
+                model_dir_basename = os.path.basename(getattr(args, 'model_dir', '') or '')
+                if '_trial_' in model_dir_basename:
+                    _first = model_dir_basename.split('_trial_')[0]
+                    _model_variant = _first.replace('_normalized', '')
+                else:
+                    _model_variant = None
                 for geo_variant_name in ['bifurcations', 'bifurcations_EL']:
                     if geo_variant_name not in geometry_variants:
+                        continue
+                    if _model_variant is not None and geo_variant_name != _model_variant:
+                        if args.verbose:
+                            print(f"  ⊘ Skipping vessel NN for {geo_variant_name} (trial model dir is for {_model_variant})")
                         continue
                     nn_output_path = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
                     if not os.path.exists(nn_output_path):
                         print(f"  ⊘ Skipping vessel NN for {geo_variant_name}: NN junction config not found")
                         continue
                     nn_jv_path = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
-                    if check_and_track_file(nn_jv_path, f"Vessel NN inference for {geo_variant_name}"):
+                    nn_vessel_only_path = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
+                    if (check_and_track_file(nn_jv_path, f"Vessel NN inference for {geo_variant_name}") and
+                            os.path.exists(nn_vessel_only_path)):
                         continue
                     print(f"\n    Running vessel NN inference for {geo_variant_name}...")
                     try:
@@ -1129,6 +1124,26 @@ def main():
                             json.dump(jv_config, f, indent=4)
                         generated_files.append(nn_jv_path)
                         print(f"      ✓ Vessel NN predictions applied and saved to {nn_jv_path}")
+                        # NN_vessel modality: geometric junctions + NN vessel params (default when --NN-vessel)
+                        with open(variant_geometric_input, 'r') as f:
+                            vessel_only_config = json.load(f)
+                        for v in vessel_only_config.get('vessels', []):
+                            vname = (v.get('vessel_name') or '').lower()
+                            if 'connector' in vname:
+                                continue
+                            vid = v.get('vessel_id')
+                            row = vessel_id_to_row.get(vid)
+                            if row is None:
+                                continue
+                            if 'zero_d_element_values' not in v:
+                                v['zero_d_element_values'] = {}
+                            v['zero_d_element_values']['R_poiseuille'] = float(pred_R_v[row])
+                            v['zero_d_element_values']['stenosis_coefficient'] = float(pred_S_v[row])
+                            v['zero_d_element_values']['L'] = float(pred_L_v[row])
+                        with open(nn_vessel_only_path, 'w') as f:
+                            json.dump(vessel_only_config, f, indent=4)
+                        generated_files.append(nn_vessel_only_path)
+                        print(f"      ✓ NN_vessel (geometric junctions + NN vessels) saved to {nn_vessel_only_path}")
                     except Exception as e:
                         print(f"      Vessel NN inference failed for {geo_variant_name}: {e}")
                         raise
@@ -1203,6 +1218,24 @@ def main():
                                     print(f"      ✓ NN Junction+Vessel {geo_variant_name} simulation completed successfully")
                                 except Exception as e:
                                     raise Exception(f"NN Junction+Vessel {geo_variant_name} simulation failed: {e}")
+                            # Forward sim for NN_vessel (geometric junctions + NN vessels)
+                            nn_vessel_only_path = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
+                            nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
+                            if os.path.exists(nn_vessel_only_path):
+                                if check_and_track_file(nn_vessel_only_results_csv, f"NN_vessel forward simulation for {geo_variant_name}"):
+                                    pass
+                                else:
+                                    print(f"\n    Running simulation with NN_vessel {geo_variant_name} input...")
+                                    try:
+                                        bvj_input_path = geo_variant_paths['junction_types']['BloodVesselJunction']['calibration_input']
+                                        if not os.path.exists(bvj_input_path):
+                                            bvj_input_path = geo_variant_paths['geometric_input']
+                                        refine_inlet_bc_for_forward_simulation(nn_vessel_only_path, calibration_input_path=bvj_input_path)
+                                        run_forward_simulation(nn_vessel_only_path, nn_vessel_only_results_csv)
+                                        generated_files.append(nn_vessel_only_results_csv)
+                                        print(f"      ✓ NN_vessel {geo_variant_name} simulation completed successfully")
+                                    except Exception as e:
+                                        raise Exception(f"NN_vessel {geo_variant_name} simulation failed: {e}")
         else:
             # Normal mode: run all forward simulations for each geometry variant
             for geo_variant_name, geo_variant_paths in geometry_variants.items():
@@ -1296,6 +1329,24 @@ def main():
                                     print(f"      ✓ NN Junction+Vessel {geo_variant_name} simulation completed successfully")
                                 except Exception as e:
                                     raise Exception(f"NN Junction+Vessel {geo_variant_name} simulation failed: {e}")
+                            # Forward sim for NN_vessel (geometric junctions + NN vessels) in normal mode
+                            nn_vessel_only_path = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
+                            nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
+                            if os.path.exists(nn_vessel_only_path):
+                                if check_and_track_file(nn_vessel_only_results_csv, f"NN_vessel forward simulation for {geo_variant_name}"):
+                                    pass
+                                else:
+                                    print(f"\n    Running simulation with NN_vessel {geo_variant_name} input...")
+                                    try:
+                                        bvj_input_path = variant_junction_paths['BloodVesselJunction']['calibration_input']
+                                        if not os.path.exists(bvj_input_path):
+                                            bvj_input_path = variant_geometric_input
+                                        refine_inlet_bc_for_forward_simulation(nn_vessel_only_path, calibration_input_path=bvj_input_path)
+                                        run_forward_simulation(nn_vessel_only_path, nn_vessel_only_results_csv)
+                                        generated_files.append(nn_vessel_only_results_csv)
+                                        print(f"      ✓ NN_vessel {geo_variant_name} simulation completed successfully")
+                                    except Exception as e:
+                                        raise Exception(f"NN_vessel {geo_variant_name} simulation failed: {e}")
     
     # Step 5: Calculate and print MSE between 3D and 0D solutions
     if not args.skip_mse_calculation:
@@ -1338,6 +1389,9 @@ def main():
                     nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
                     if os.path.exists(nn_jv_results_csv):
                         csv_results_dict['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
+                    nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
+                    if os.path.exists(nn_vessel_only_results_csv):
+                        csv_results_dict['NN_vessel'] = str(nn_vessel_only_results_csv)
             
             if csv_results_dict and os.path.exists(variant_calibration_input):
                 # Generate CSV output path
@@ -1433,6 +1487,9 @@ def main():
                                     nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
                                     if os.path.exists(nn_jv_results_csv):
                                         combined_csv_paths[f'{geo_variant_name}_BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
+                                    nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
+                                    if os.path.exists(nn_vessel_only_results_csv):
+                                        combined_csv_paths[f'{geo_variant_name}_NN_vessel'] = str(nn_vessel_only_results_csv)
                         
                         if combined_csv_paths or geometric_csv_paths:
                             success_count = 0
@@ -1511,6 +1568,9 @@ def main():
                                 nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
                                 if os.path.exists(nn_jv_results_csv):
                                     variant_csv_paths['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
+                                nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
+                                if os.path.exists(nn_vessel_only_results_csv):
+                                    variant_csv_paths['NN_vessel'] = str(nn_vessel_only_results_csv)
                         
                         if variant_csv_paths or variant_geometric_csv_paths:
                             # Build vessel name mapping for EL-adjusted geometry
@@ -1632,6 +1692,9 @@ def main():
                         nn_jv_json = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
                         if os.path.exists(nn_jv_json):
                             modality_jsons['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_json)
+                        nn_vessel_only_json = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
+                        if os.path.exists(nn_vessel_only_json):
+                            modality_jsons['NN_vessel'] = str(nn_vessel_only_json)
 
                 if not modality_jsons:
                     print(f"    Warning: No modality JSONs found for {geo_variant_name}, skipping zero-D parameter bar chart")

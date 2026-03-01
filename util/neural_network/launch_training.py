@@ -55,9 +55,9 @@ def launch_training(network_params, optimizer_params, training_params):
 
     print(f"training model 1:  Linear Resistor")
     network_params["target_coef_ind"] = 0
-    network_params["layer_width"] = 40
+    network_params["layer_width"] = 10
     network_params["num_layers"] = 1
-    training_params["num_epochs"] = 5000
+    training_params["num_epochs"] = 1000
     optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init1
     model = NeuralNet(network_params, optimizer_params)
@@ -70,13 +70,13 @@ def launch_training(network_params, optimizer_params, training_params):
     train_nn(model, training_params)
 
     network_params["target_coef_ind"] = 0
-    network_params["layer_width"] = 5
+    network_params["layer_width"] = 10
     network_params["num_layers"] = 1
-    training_params["num_epochs"] = 5000
+    training_params["num_epochs"] = 1000
     optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init3
     if network_params["model_name_suffix"] == "_vessel":
-        network_params["layer_width"] = 40
+        network_params["layer_width"] = 5
         network_params["num_layers"] = 1
 
     network_params["target_coef_ind"] = 2
@@ -105,6 +105,10 @@ if __name__ == "__main__":
                         help="Use Leaky ReLU instead of ReLU (helps gradient flow with normalized data)")
     parser.add_argument("--print-gradients", action="store_true",
                         help="Print gradient stats for the first batch before training (for debugging)")
+    parser.add_argument("--asymmetric-loss", action="store_true",
+                        help="Use asymmetric loss: overestimates (pred > target) count twice as much as underestimates.")
+    parser.add_argument("--overestimate-weight", type=float, default=2.0,
+                        help="Weight for overestimation errors when --asymmetric-loss (default: 2.0).")
     cli_args = parser.parse_args()
 
     set_name = cli_args.set_name
@@ -127,6 +131,8 @@ if __name__ == "__main__":
         print(f"\n{'='*80}")
         print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}"
               f"{' (normalized)' if normalize else ''}")
+        if cli_args.asymmetric_loss:
+            print(f"Asymmetric loss: overestimate weight = {cli_args.overestimate_weight}")
         print(f"{'='*80}")
         
         if cli_args.split_path:
@@ -196,6 +202,7 @@ if __name__ == "__main__":
                 )
             print(f"  Vessel split: {len(vessel_train_ind)} train, {len(vessel_val_ind)} val "
                   f"(train geos: {sorted(train_geo_names)}, val geos: {sorted(val_geo_names)})")
+            _ow = cli_args.overestimate_weight if cli_args.asymmetric_loss else 1.0
             network_params = {"num_input_features": 18,
                              "num_layers": 5,
                              "layer_width": 100,
@@ -209,9 +216,10 @@ if __name__ == "__main__":
                              "use_leaky_relu": getattr(cli_args, "leaky_relu", False),
                              "pred_mode": "m1",
                              "jax_arrays_filename": f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl",
-                             "model_name_suffix": "_vessel"}
+                             "model_name_suffix": "_vessel",
+                             "asymmetric_loss_overestimate_weight": _ow}
             training_params = {"num_epochs": 500,
-                              "batch_size": 1,
+                              "batch_size": 10,
                               "train_inds": np.asarray(vessel_train_ind),
                               "val_inds": np.asarray(vessel_val_ind),
                               "num_offsets": 1,
@@ -219,6 +227,7 @@ if __name__ == "__main__":
             out_dir = cli_args.model_dir or os.path.join("results", "models", set_name, geometry_variant + "_vessel" + norm_suffix)
             training_params["output_dir"] = out_dir
         else:
+            _ow = cli_args.overestimate_weight if cli_args.asymmetric_loss else 1.0
             network_params = {"num_input_features": 25,
                              "num_layers": 5,
                              "layer_width": 100,
@@ -231,7 +240,8 @@ if __name__ == "__main__":
                              "normalize": normalize,
                              "use_leaky_relu": getattr(cli_args, "leaky_relu", False),
                              "pred_mode": "m1",
-                             "model_name_suffix": ""}
+                             "model_name_suffix": "",
+                             "asymmetric_loss_overestimate_weight": _ow}
             training_params = {"num_epochs": 500,
                               "batch_size": 10,
                               "train_inds": train_inds,

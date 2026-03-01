@@ -716,23 +716,28 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
 
         fig, axes = plt.subplots(3, 1, figsize=(max(8, n_v * 0.3 + 6), 10), sharex=True)
 
+        # Same color scheme as location comparison plots (plot_location_comparison.py LINE_STYLES)
         color_map = {
             'geometric': 'green',
             'NORMAL_JUNCTION': 'red',
-            'BloodVesselJunction': 'goldenrod'
+            'BloodVesselJunction': 'orange',
+            'BloodVesselJunction_NN': 'dodgerblue',
+            'BloodVesselJunction_NN_plus_Vessel_NN': 'orchid',
+            'NN_vessel': 'chartreuse',
         }
         style_map = {
             'geometric': {"color": "green", "label": "0D Poiseuille"},
-            'NORMAL_JUNCTION': {"color": "red", "label": "0D $\Delta P = 0$ Junction (Calibrated)"},
-            'BloodVesselJunction': {"color": "goldenrod", "label": "0D RRI Junction (Calibrated)"},
+            'NORMAL_JUNCTION': {"color": "red", "label": "0D $\\Delta P = 0$ Junction (Calibrated)"},
+            'BloodVesselJunction': {"color": "orange", "label": "0D RRI Junction (Calibrated)"},
             'BloodVesselJunction_NN': {"color": "dodgerblue", "label": "0D RRI Junction (NN)"},
+            'BloodVesselJunction_NN_plus_Vessel_NN': {"color": "orchid", "label": "0D RRI Junction (NN + Vessel NN)"},
+            'NN_vessel': {"color": "chartreuse", "label": "0D NN Vessel Only"},
         }
 
         # Prepare legend patches (one legend above the top plot)
         try:
             from matplotlib import patches as mpatches
-            #cycle_colors = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['C0', 'C1', 'C2'])
-            cycle_colors = [style_map[mod]["color"] for mod in modalities]
+            cycle_colors = [style_map.get(mod, {"color": "gray", "label": mod})["color"] for mod in modalities]
         except Exception:
             mpatches = None
             cycle_colors = ['C0', 'C1', 'C2']

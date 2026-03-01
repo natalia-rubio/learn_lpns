@@ -57,7 +57,7 @@ def train_nn(model, training_params):
             grads = model.get_gradients(inds)
             print("\n  Gradients (first batch, before training):")
             for layer_i, (gw, gb) in enumerate(grads):
-                
+
                 gw_np = np.array(gw)
                 gb_np = np.array(gb)
                 print(
@@ -137,7 +137,7 @@ def train_nn(model, training_params):
             plt.savefig(os.path.join(out_dir, f"{model_name}_training_plot.png"), bbox_inches='tight')
 
     # if model.target_coef_ind == 2:
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     plt.clf()
     plt.plot(np.linspace(0, epoch, epoch+1, True), np.asarray(train_hist), label = "Training Loss", color = 'cornflowerblue')
     plt.plot(np.linspace(0, epoch, epoch+1, True), np.asarray(val_hist), label = "Validation Loss", color = 'salmon')

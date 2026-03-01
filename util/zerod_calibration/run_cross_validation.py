@@ -118,7 +118,10 @@ def run_cross_validation(
     ml_inputs_root=None,
     trial_index=None,
     normalize=False,
-    nn_vessel=False,
+    nn_vessel=True,
+    skip_training_if_exists=False,
+    asymmetric_loss=False,
+    overestimate_weight=2.0,
 ):
     if ml_inputs_root is None:
         ml_inputs_root = os.path.join(data_root, "ml_inputs")
@@ -197,6 +200,8 @@ def run_cross_validation(
         print("Using normalized jax arrays and z-normalization for NN training/inference")
     if nn_vessel:
         print("NN-vessel: will train vessel NN per trial and include vessel-predicted modality in MSE")
+    if asymmetric_loss:
+        print(f"Asymmetric loss: overestimate weight = {overestimate_weight}")
 
     all_trial_results = []  # list of dicts: trial_id, val_geometries, mod -> overall_mse
     seen_val_sets = set()  # frozenset of val geometry names, to ensure each trial has a different val set
@@ -206,52 +211,67 @@ def run_cross_validation(
         print(f"CV Trial {trial + 1}/{num_trials}")
         print(f"{'='*60}")
 
-        # Ensure this trial's validation set is different from all previous trials
-        max_attempts = 200
-        for attempt in range(max_attempts):
-            seed = trial * 1000 + attempt
-            train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
-                num_pts=num_pts,
-                percent_train=0.9,
-                seed=seed,
-                geometry_row_ranges=row_ranges,
-            )
-            train_geometries = [geometries[i] for i in train_geo_idx]
-            val_geometries = [geometries[i] for i in val_geo_idx]
-            if not val_geometries:
-                if attempt == 0:
-                    print(f"  Skipping trial {trial}: no validation geometries (90% of {num_geos} rounded to all)")
-                break
-            val_set = frozenset(val_geometries)
-            if val_set not in seen_val_sets:
-                seen_val_sets.add(val_set)
-                break
-            if attempt == max_attempts - 1:
-                raise RuntimeError(
-                    f"Could not get a distinct validation set for trial {trial} after {max_attempts} attempts. "
-                    f"Not enough geometries for {num_trials} unique 90/10 splits."
-                )
-        if not val_geometries:
-            continue
-
         split_path = os.path.join(
             split_indices_dir,
             f"train_val_ind_{set_name}_num_geos_{num_geos}_trial_{trial}",
         )
         os.makedirs(split_indices_dir, exist_ok=True)
-        split_dict = {
-            "train_ind": np.asarray(train_ind, dtype=int),
-            "val_ind": np.asarray(val_ind, dtype=int),
-            "num_offsets": 1,
-            "percent_train": 0.9,
-            "seed": int(seed),
-            "num_pts": num_pts,
-            "split_by_geometry": True,
-            "train_geometries": train_geometries,
-            "val_geometries": val_geometries,
-        }
-        save_dict(split_dict, split_path)
-        print(f"  Split: {len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}")
+
+        # When re-running a single trial, reuse existing split if present so val set matches the summary table
+        if trial_index is not None and os.path.exists(split_path):
+            split_dict = load_dict(split_path)
+            train_ind = np.asarray(split_dict["train_ind"]).ravel()
+            val_ind = np.asarray(split_dict["val_ind"]).ravel()
+            train_geometries = split_dict.get("train_geometries")
+            val_geometries = split_dict.get("val_geometries")
+            if not train_geometries or not val_geometries:
+                train_geo_idx = np.unique([i for i, (s, e) in enumerate(row_ranges) for r in train_ind if s <= r < e])
+                val_geo_idx = np.unique([i for i, (s, e) in enumerate(row_ranges) for r in val_ind if s <= r < e])
+                train_geometries = [geometries[i] for i in train_geo_idx]
+                val_geometries = [geometries[i] for i in val_geo_idx]
+            print(f"  Split (reused from {os.path.basename(split_path)}): {len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}")
+        else:
+            # Ensure this trial's validation set is different from all previous trials
+            max_attempts = 200
+            for attempt in range(max_attempts):
+                seed = trial * 1000 + attempt
+                train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
+                    num_pts=num_pts,
+                    percent_train=0.9,
+                    seed=seed,
+                    geometry_row_ranges=row_ranges,
+                )
+                train_geometries = [geometries[i] for i in train_geo_idx]
+                val_geometries = [geometries[i] for i in val_geo_idx]
+                if not val_geometries:
+                    if attempt == 0:
+                        print(f"  Skipping trial {trial}: no validation geometries (90% of {num_geos} rounded to all)")
+                    break
+                val_set = frozenset(val_geometries)
+                if val_set not in seen_val_sets:
+                    seen_val_sets.add(val_set)
+                    break
+                if attempt == max_attempts - 1:
+                    raise RuntimeError(
+                        f"Could not get a distinct validation set for trial {trial} after {max_attempts} attempts. "
+                        f"Not enough geometries for {num_trials} unique 90/10 splits."
+                    )
+            if not val_geometries:
+                continue
+
+            split_dict = {
+                "train_ind": np.asarray(train_ind, dtype=int),
+                "val_ind": np.asarray(val_ind, dtype=int),
+                "num_offsets": 1,
+                "percent_train": 0.9,
+                "seed": int(seed),
+                "num_pts": num_pts,
+                "split_by_geometry": True,
+                "train_geometries": train_geometries,
+                "val_geometries": val_geometries,
+            }
+            save_dict(split_dict, split_path)
+            print(f"  Split: {len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}")
 
         # Check for validation features outside training set range; write CSV per split
         feature_names = get_default_include_features()
@@ -300,56 +320,88 @@ def run_cross_validation(
         )
         os.makedirs(model_dir, exist_ok=True)
 
-        # Train
-        cmd_train = [
-            sys.executable,
-            launch_training_script,
-            set_name,
-            str(num_geos),
-            geometry_variant,
-            "--split-path",
-            split_path,
-            "--model-dir",
-            model_dir,
+        # Junction model file names (must match launch_training / train_nn output)
+        junction_model_files = [
+            os.path.join(model_dir, f"rri_{set_name}_pred_{i}_model")
+            for i in range(3)
         ]
-        if normalize:
-            cmd_train.append("--normalize")
-        print(f"  Running: {' '.join(cmd_train)}")
-        result_train = subprocess.run(cmd_train, cwd=REPO_ROOT, text=True)
-        if result_train.returncode != 0:
-            print(f"  Training failed with return code {result_train.returncode}")
-            all_trial_results.append(
-                {"trial_id": trial, "val_geometries": ",".join(val_geometries), "error": "training_failed"}
-            )
-            continue
+        skip_junction = (
+            skip_training_if_exists
+            and all(os.path.exists(p) for p in junction_model_files)
+        )
+
+        # Train
+        if skip_junction:
+            print(f"  Skipping junction training (models already exist in {model_dir})")
+        else:
+            cmd_train = [
+                sys.executable,
+                launch_training_script,
+                set_name,
+                str(num_geos),
+                geometry_variant,
+                "--split-path",
+                split_path,
+                "--model-dir",
+                model_dir,
+            ]
+            if normalize:
+                cmd_train.append("--normalize")
+            if asymmetric_loss:
+                cmd_train.append("--asymmetric-loss")
+                cmd_train.append("--overestimate-weight")
+                cmd_train.append(str(overestimate_weight))
+            print(f"  Running: {' '.join(cmd_train)}")
+            result_train = subprocess.run(cmd_train, cwd=REPO_ROOT, text=True)
+            if result_train.returncode != 0:
+                print(f"  Training failed with return code {result_train.returncode}")
+                all_trial_results.append(
+                    {"trial_id": trial, "val_geometries": ",".join(val_geometries), "error": "training_failed"}
+                )
+                continue
 
         # Train vessel NN for this trial (same split) if requested
         if nn_vessel:
             vessel_model_dir = os.path.join(
                 model_dir_base, f"{geometry_variant}_vessel{norm_suffix}_trial_{trial}"
             )
-            cmd_vessel = [
-                sys.executable,
-                launch_training_script,
-                set_name,
-                str(num_geos),
-                geometry_variant,
-                "--vessel",
-                "--split-path",
-                split_path,
-                "--model-dir",
-                vessel_model_dir,
+            vessel_model_files = [
+                os.path.join(vessel_model_dir, f"rri_{set_name}_vessel_pred_{i}_model")
+                for i in range(3)
             ]
-            if normalize:
-                cmd_vessel.append("--normalize")
-            print(f"  Running vessel training: {' '.join(cmd_vessel)}")
-            result_vessel = subprocess.run(cmd_vessel, cwd=REPO_ROOT, text=True)
-            if result_vessel.returncode != 0:
-                print(f"  Vessel training failed with return code {result_vessel.returncode}")
-                all_trial_results.append(
-                    {"trial_id": trial, "val_geometries": ",".join(val_geometries), "error": "vessel_training_failed"}
-                )
-                continue
+            skip_vessel = (
+                skip_training_if_exists
+                and all(os.path.exists(p) for p in vessel_model_files)
+            )
+            if skip_vessel:
+                print(f"  Skipping vessel training (models already exist in {vessel_model_dir})")
+            else:
+                cmd_vessel = [
+                    sys.executable,
+                    launch_training_script,
+                    set_name,
+                    str(num_geos),
+                    geometry_variant,
+                    "--vessel",
+                    "--split-path",
+                    split_path,
+                    "--model-dir",
+                    vessel_model_dir,
+                ]
+                if normalize:
+                    cmd_vessel.append("--normalize")
+                if asymmetric_loss:
+                    cmd_vessel.append("--asymmetric-loss")
+                    cmd_vessel.append("--overestimate-weight")
+                    cmd_vessel.append(str(overestimate_weight))
+                print(f"  Running vessel training: {' '.join(cmd_vessel)}")
+                result_vessel = subprocess.run(cmd_vessel, cwd=REPO_ROOT, text=True)
+                if result_vessel.returncode != 0:
+                    print(f"  Vessel training failed with return code {result_vessel.returncode}")
+                    all_trial_results.append(
+                        {"trial_id": trial, "val_geometries": ",".join(val_geometries), "error": "vessel_training_failed"}
+                    )
+                    continue
 
         # Deploy on each validation geometry (NN-only)
         trial_mse = {}  # modality -> list of overall_mse per val geo
@@ -501,7 +553,30 @@ def main():
         "--NN-vessel",
         action="store_true",
         dest="nn_vessel",
-        help="Also train vessel NN per trial and run vessel NN inference on val geometries (adds BloodVesselJunction_NN_plus_Vessel_NN to MSE).",
+        default=True,
+        help="Train vessel NN per trial and run vessel NN inference (junction+vessel and vessel-only modalities in MSE). Default: True.",
+    )
+    parser.add_argument(
+        "--no-NN-vessel",
+        action="store_false",
+        dest="nn_vessel",
+        help="Disable vessel NN training and inference (junction NN only).",
+    )
+    parser.add_argument(
+        "--skip-training-if-exists",
+        action="store_true",
+        help="Skip junction and/or vessel training for a trial if the corresponding model files already exist.",
+    )
+    parser.add_argument(
+        "--asymmetric-loss",
+        action="store_true",
+        help="Use asymmetric loss in NN training: overestimates count twice as much as underestimates.",
+    )
+    parser.add_argument(
+        "--overestimate-weight",
+        type=float,
+        default=2.0,
+        help="Weight for overestimation errors when --asymmetric-loss (default: 2.0).",
     )
     args = parser.parse_args()
 
@@ -514,6 +589,9 @@ def main():
         trial_index=args.trial,
         normalize=args.normalize,
         nn_vessel=args.nn_vessel,
+        skip_training_if_exists=args.skip_training_if_exists,
+        asymmetric_loss=args.asymmetric_loss,
+        overestimate_weight=args.overestimate_weight,
     )
 
 

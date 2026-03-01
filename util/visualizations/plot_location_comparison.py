@@ -236,6 +236,13 @@ LINE_STYLES = {
         'label': '0D RRI Junction (NN + Vessel NN)',
         'alpha': 0.5,
     },
+    'NN_vessel': {
+        'color': 'chartreuse',
+        'linestyle': '-.',
+        'linewidth': 4,
+        'label': '0D NN Vessel Only',
+        'alpha': 0.5,
+    },
 }
 
 
@@ -254,6 +261,9 @@ def get_line_style(key):
     if key in LINE_STYLES:
         return LINE_STYLES[key]
     
+    # NN vessel-only (e.g. NN_vessel or bifurcations_EL_NN_vessel)
+    if 'NN_vessel' in key:
+        return LINE_STYLES['NN_vessel']
     # Special handling for NN lines: always dodger blue, dashed
     if 'BloodVesselJunction_NN' in key or key.endswith('_NN'):
         return {
