@@ -45,6 +45,8 @@ class NeuralNet():
         self.data_dict = load_dict(jax_arrays_path)
         self.model_name_suffix = network_params.get("model_name_suffix", "")
         self.use_leaky_relu = network_params.get("use_leaky_relu", False)
+        # Asymmetric loss: overestimates (pred > target) weighted more than underestimates. None or 1.0 = symmetric.
+        self.asymmetric_loss_overestimate_weight = network_params.get("asymmetric_loss_overestimate_weight", 1.0)
 
         # scaling_dict is not used in the current loss, but keep attribute for API compatibility.
         self.scaling_dict = network_params.get("scaling_dict", {})
@@ -74,7 +76,7 @@ class NeuralNet():
     
     def get_gradients(self, indices):
         """Compute gradients of loss w.r.t. weights for the given batch (no update)."""
-        return grad(loss, argnums=-1)(
+        return grad(loss, argnums=-2)(
             self.input[indices, :],
             self.output[indices, :],
             self.data_dict["scaling_factors"][indices, :],
@@ -82,6 +84,7 @@ class NeuralNet():
             self.target_coef_ind,
             self.use_leaky_relu,
             self.weights,
+            self.asymmetric_loss_overestimate_weight,
         )
 
     def update(self, indices):
@@ -98,10 +101,13 @@ def predict(input, weights, use_leaky_relu=False):
 
 
 @jit(static_argnums=(4, 5))  # target_coef_ind, use_leaky_relu
-def loss(input, outputs, scaling_factors, scaling_dict, target_coef_ind, use_leaky_relu, weights):
+def loss(input, outputs, scaling_factors, scaling_dict, target_coef_ind, use_leaky_relu, weights, overestimate_weight=1.0):
     coefs_pred = predict(input, weights, use_leaky_relu)
+    residual = coefs_pred[:, 0] - outputs[:, target_coef_ind]
+    # Overestimate (residual > 0) weighted more than underestimate (residual <= 0)
+    w = jnp.where(residual > 0, overestimate_weight, 1.0)
     L2_penalty = get_L2(weights) / (len(weights) * jnp.size(weights[0][0]))
-    return jnp.mean(jnp.square(coefs_pred[:, 0] - outputs[:, target_coef_ind])) + L2_penalty * 0
+    return jnp.mean(w * jnp.square(residual)) + L2_penalty * 0
 
 
 @jit(static_argnums=(4, 5))  # target_coef_ind, use_leaky_relu
