@@ -54,10 +54,19 @@ def launch_training(network_params, optimizer_params, training_params):
     lr_init3 = 0.01
 
     print(f"training model 1:  Linear Resistor")
+    print(f"{network_params['num_input_features']} input features")
     network_params["target_coef_ind"] = 0
-    network_params["layer_width"] = 10
-    network_params["num_layers"] = 1
-    training_params["num_epochs"] = 1000
+    
+    if network_params["model_name_suffix"] == "_vessel":
+        network_params["layer_width"] = 10
+        network_params["num_layers"] = 2
+        training_params["num_epochs"] = 1000
+        network_params["asymmetric_loss_overestimate_weight"] = 10
+    else:
+        network_params["layer_width"] = 10
+        network_params["num_layers"] = 2
+        training_params["num_epochs"] = 2000
+        network_params["asymmetric_loss_overestimate_weight"] = 10000
     optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init1
     model = NeuralNet(network_params, optimizer_params)
@@ -66,19 +75,30 @@ def launch_training(network_params, optimizer_params, training_params):
     optimizer_params["init"] = lr_init2
     print(f"training model 2:  Stenosis Resistor")
     network_params["target_coef_ind"] = 1
+    if network_params["model_name_suffix"] == "_vessel":
+        network_params["layer_width"] = 10
+        network_params["num_layers"] = 2
+        training_params["num_epochs"] = 2000
+        network_params["asymmetric_loss_overestimate_weight"] = 10
+    else:
+        network_params["layer_width"] = 10
+        network_params["num_layers"] = 2
+        training_params["num_epochs"] = 2000
+        network_params["asymmetric_loss_overestimate_weight"] = 100
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
 
-    network_params["target_coef_ind"] = 0
-    network_params["layer_width"] = 10
-    network_params["num_layers"] = 1
-    training_params["num_epochs"] = 1000
-    optimizer_params["decay_rate"] = 0.8
-    optimizer_params["init"] = lr_init3
-    if network_params["model_name_suffix"] == "_vessel":
-        network_params["layer_width"] = 5
-        network_params["num_layers"] = 1
 
+    if network_params["model_name_suffix"] == "_vessel":
+        network_params["layer_width"] = 10
+        network_params["num_layers"] = 2
+        training_params["num_epochs"] = 2000
+        network_params["asymmetric_loss_overestimate_weight"] = 1000
+    else:
+        network_params["layer_width"] = 20
+        network_params["num_layers"] = 4
+        training_params["num_epochs"] = 2000
+        network_params["asymmetric_loss_overestimate_weight"] = 10000
     network_params["target_coef_ind"] = 2
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
@@ -153,6 +173,7 @@ if __name__ == "__main__":
                 f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl"
             )
             vessel_data = load_dict(vessel_pkl)
+            num_input_features = int(vessel_data["input"].shape[1])
             vessel_row_ranges = vessel_data["row_ranges"]
             vessel_geometries = vessel_data["geometries"]
             # Map geometry name -> (start, end) for vessel rows (same order as in vessel_data)
@@ -203,7 +224,7 @@ if __name__ == "__main__":
             print(f"  Vessel split: {len(vessel_train_ind)} train, {len(vessel_val_ind)} val "
                   f"(train geos: {sorted(train_geo_names)}, val geos: {sorted(val_geo_names)})")
             _ow = cli_args.overestimate_weight if cli_args.asymmetric_loss else 1.0
-            network_params = {"num_input_features": 18,
+            network_params = {"num_input_features": num_input_features,
                              "num_layers": 5,
                              "layer_width": 100,
                              "output_type": output_type,
@@ -219,7 +240,7 @@ if __name__ == "__main__":
                              "model_name_suffix": "_vessel",
                              "asymmetric_loss_overestimate_weight": _ow}
             training_params = {"num_epochs": 500,
-                              "batch_size": 10,
+                              "batch_size": 5,
                               "train_inds": np.asarray(vessel_train_ind),
                               "val_inds": np.asarray(vessel_val_ind),
                               "num_offsets": 1,
@@ -227,8 +248,16 @@ if __name__ == "__main__":
             out_dir = cli_args.model_dir or os.path.join("results", "models", set_name, geometry_variant + "_vessel" + norm_suffix)
             training_params["output_dir"] = out_dir
         else:
+            # Junction NN: infer input dimension from jax_arrays so it matches data (e.g. after adding flow_split)
+            data_root = "data"
+            jax_filename = f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl"
+            jax_arrays_path = os.path.join(
+                data_root, "jax_arrays", set_name, geometry_variant, set_type, jax_filename
+            )
+            junction_data = load_dict(jax_arrays_path)
+            num_input_features = int(junction_data["input"].shape[1])
             _ow = cli_args.overestimate_weight if cli_args.asymmetric_loss else 1.0
-            network_params = {"num_input_features": 25,
+            network_params = {"num_input_features": num_input_features,
                              "num_layers": 5,
                              "layer_width": 100,
                              "output_type": output_type,
@@ -243,7 +272,7 @@ if __name__ == "__main__":
                              "model_name_suffix": "",
                              "asymmetric_loss_overestimate_weight": _ow}
             training_params = {"num_epochs": 500,
-                              "batch_size": 10,
+                              "batch_size": 2,
                               "train_inds": train_inds,
                               "val_inds": val_inds,
                               "num_offsets": num_offsets,

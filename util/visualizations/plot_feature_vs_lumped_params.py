@@ -48,15 +48,11 @@ FEATURES_TO_PLOT_JUNCTION = [
     "outlet0_tortuosity",
     "outlet1_tortuosity",
     "outlet0_max_inscribed_radius_ratio",
-    "outlet1_max_inscribed_radius_ratio",
     "outlet0_poiseuille_resistance_calc",
-    "outlet1_poiseuille_resistance_calc",
     "outlet0_inductance_calc",
-    "outlet1_inductance_calc",
     "outlet0_stenosis_calc",
-    "outlet1_stenosis_calc",
     "outlet0_stenosis_coefficient_calc",
-    "outlet1_stenosis_coefficient_calc",
+    "flow_split"
 ]
 LUMPED_PARAMS_JUNCTION = [
     "R_poiseuille_outlet0",

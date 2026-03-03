@@ -672,7 +672,10 @@ def main():
                 print(f"\n    Running neural network inference for {geo_variant_name}/BloodVesselJunction...")
                 try:
                     # Import NN-related modules
-                    from util.data_processing.inputs_from_0d_config import load_junction_geometric_features
+                    from util.data_processing.inputs_from_0d_config import (
+                        load_junction_geometric_features,
+                        compute_junction_flow_splits,
+                    )
                     from util.neural_network.nn_model import predict
                     from util.neural_network.nn_util import dill_load
                     import jax.numpy as jnp
@@ -724,6 +727,40 @@ def main():
                         require_two_outlets=True,
                         verbose=True
                     )
+                    # Add flow_split from geometric results when available (same as run_data_processing)
+                    geometric_results_path = variant_geometric_input.replace(
+                        "_geometric_input.json", "_geometric_results.csv"
+                    )
+                    if os.path.exists(geometric_results_path):
+                        flow_splits = compute_junction_flow_splits(
+                            variant_geometric_input, geometric_results_path
+                        )
+                        flow_split_col = []
+                        for i, jname in enumerate(junction_names):
+                            (out0_name, out1_name), (fs0, fs1) = flow_splits.get(
+                                jname, (("", ""), (float("nan"), float("nan")))
+                            )
+                            primary = outlet_primary_names[i]
+                            val = fs0 if primary == out0_name else (
+                                fs1 if primary == out1_name else float("nan")
+                            )
+                            flow_split_col.append(val)
+                        X_full = np.column_stack([X_full, flow_split_col])
+                        feature_names_full = feature_names_full + ["flow_split"]
+                        flow_split_arr = np.asarray(flow_split_col, dtype=float)
+                        with np.errstate(divide="ignore", invalid="ignore"):
+                            flow_split_inv = np.where(
+                                np.isfinite(flow_split_arr) & (flow_split_arr > 0),
+                                100.0 / flow_split_arr,
+                                np.nan,
+                            )
+                        X_full = np.column_stack([X_full, flow_split_inv])
+                        feature_names_full = feature_names_full + ["flow_split_inv"]
+                    else:
+                        # Geometric results not available; add flow_split and flow_split_inv as NaN
+                        n_rows = X_full.shape[0]
+                        X_full = np.column_stack([X_full, np.full(n_rows, np.nan), np.full(n_rows, np.nan)])
+                        feature_names_full = feature_names_full + ["flow_split", "flow_split_inv"]
                     #save X_full to a csv file
                     import pandas as pd
                     pd.DataFrame(X_full, columns=feature_names_full).to_csv(csv_path, index=False)
@@ -1032,10 +1069,14 @@ def main():
                             print(f"      No non-connector vessels, skipping vessel NN for {geo_variant_name}")
                             continue
                         norm_suffix = "_normalized" if args.normalize else ""
-                        # For CV: if --model-dir points to a trial dir (e.g. .../bifurcations_EL_trial_0), use .../bifurcations_EL_vessel_trial_0
+                        # For CV: junction dir is e.g. bifurcations_EL_normalized_trial_0, vessel dir is bifurcations_EL_vessel_normalized_trial_0
                         if getattr(args, 'model_dir', None) and '_trial_' in os.path.basename(args.model_dir):
                             _base = os.path.dirname(args.model_dir)
-                            _name = os.path.basename(args.model_dir).replace('_trial_', '_vessel_trial_', 1)
+                            _name = os.path.basename(args.model_dir)
+                            if '_normalized_trial_' in _name:
+                                _name = _name.replace('_normalized_trial_', '_vessel_normalized_trial_', 1)
+                            else:
+                                _name = _name.replace('_trial_', '_vessel_trial_', 1)
                             vessel_model_dir = os.path.join(_base, _name)
                         else:
                             vessel_model_dir = os.path.join(
