@@ -104,8 +104,11 @@ def predict(input, weights, use_leaky_relu=False):
 def loss(input, outputs, scaling_factors, scaling_dict, target_coef_ind, use_leaky_relu, weights, overestimate_weight=1.0):
     coefs_pred = predict(input, weights, use_leaky_relu)
     residual = coefs_pred[:, 0] - outputs[:, target_coef_ind]
+    av_residual = jnp.abs(coefs_pred[:, 0]) - jnp.abs(outputs[:, target_coef_ind]) 
     # Overestimate (residual > 0) weighted more than underestimate (residual <= 0)
-    w = jnp.where(residual > 0, overestimate_weight, 1.0)
+    # w = jnp.where((outputs[:, target_coef_ind] > 0) & (residual > 0), overestimate_weight, 1.0)
+    # w = jnp.where((outputs[:, target_coef_ind] < 0) & (residual <= 0), overestimate_weight, w)
+    w = jnp.where(av_residual > 0, overestimate_weight, 1.0)
     L2_penalty = get_L2(weights) / (len(weights) * jnp.size(weights[0][0]))
     return jnp.mean(w * jnp.square(residual)) + L2_penalty * 0
 

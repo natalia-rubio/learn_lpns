@@ -13,6 +13,8 @@ import os
 import sys
 import glob
 
+import numpy as np
+
 # Allow running as a script (python util/data_processing/run_data_processing.py ...)
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
@@ -20,6 +22,7 @@ if REPO_ROOT not in sys.path:
 
 from util.data_processing.inputs_from_0d_config import (
     load_junction_geometric_features,
+    compute_junction_flow_splits,
     load_vessel_geometric_features,
     load_vessel_targets_from_config,
 )
@@ -131,6 +134,35 @@ def main():
             X, feature_names, junction_names, outlet_primary_names = load_junction_geometric_features(
                 geometric_input_path, verbose=args.verbose
             )
+            # Add flow split from base geometric simulation if results CSV exists
+            geometric_results_path = geometric_input_path.replace("_geometric_input.json", "_geometric_results.csv")
+            if os.path.exists(geometric_results_path):
+                flow_splits = compute_junction_flow_splits(geometric_input_path, geometric_results_path)
+                flow_split_col = []
+                for i, jname in enumerate(junction_names):
+                    (out0_name, out1_name), (fs0, fs1) = flow_splits.get(
+                        jname, (("", ""), (float("nan"), float("nan")))
+                    )
+                    primary = outlet_primary_names[i]
+                    val = fs0 if primary == out0_name else (fs1 if primary == out1_name else float("nan"))
+                    flow_split_col.append(val)
+                X = np.column_stack([X, flow_split_col])
+                feature_names = feature_names + ["flow_split"]
+                # flow_split_inv = 1 / flow_split (NaN for zero or invalid)
+                flow_split_arr = np.asarray(flow_split_col, dtype=float)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    flow_split_inv = np.where(
+                        np.isfinite(flow_split_arr) & (flow_split_arr > 0),
+                        100.0 / flow_split_arr,  # flow_split is in %, so inv is 100/%
+                        np.nan,
+                    )
+                X = np.column_stack([X, flow_split_inv])
+                feature_names = feature_names + ["flow_split_inv"]
+                if args.verbose:
+                    print(f"  Added flow_split, flow_split_inv from {geometric_results_path}")
+            else:
+                if args.verbose:
+                    print(f"  Geometric results not found: {geometric_results_path}; skipping flow split")
             print(f"Loaded {len(X)} junctions with {len(feature_names)} features")
             # Save the features to a csv file
             os.makedirs(os.path.dirname(csv_path), exist_ok=True)

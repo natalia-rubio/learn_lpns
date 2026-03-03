@@ -122,6 +122,7 @@ def run_cross_validation(
     skip_training_if_exists=False,
     asymmetric_loss=False,
     overestimate_weight=2.0,
+    clip_predictions=False,
 ):
     if ml_inputs_root is None:
         ml_inputs_root = os.path.join(data_root, "ml_inputs")
@@ -202,6 +203,8 @@ def run_cross_validation(
         print("NN-vessel: will train vessel NN per trial and include vessel-predicted modality in MSE")
     if asymmetric_loss:
         print(f"Asymmetric loss: overestimate weight = {overestimate_weight}")
+    if clip_predictions:
+        print("Clip predictions: R/S/L will be clipped to training set min/max during deploy")
 
     all_trial_results = []  # list of dicts: trial_id, val_geometries, mod -> overall_mse
     seen_val_sets = set()  # frozenset of val geometry names, to ensure each trial has a different val set
@@ -428,6 +431,8 @@ def run_cross_validation(
                     cmd_deploy.append(vessel_jax_path)
             if nn_vessel:
                 cmd_deploy.append("--NN-vessel")
+            if clip_predictions:
+                cmd_deploy.append("--clip-predictions")
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
             result_deploy = subprocess.run(cmd_deploy, cwd=REPO_ROOT, text=True)
             if result_deploy.returncode != 0:
@@ -578,6 +583,12 @@ def main():
         default=2.0,
         help="Weight for overestimation errors when --asymmetric-loss (default: 2.0).",
     )
+    parser.add_argument(
+        "--clip-predictions",
+        action="store_true",
+        dest="clip_predictions",
+        help="Clip NN predictions (R, S, L) to training set min/max during deploy.",
+    )
     args = parser.parse_args()
 
     run_cross_validation(
@@ -592,6 +603,7 @@ def main():
         skip_training_if_exists=args.skip_training_if_exists,
         asymmetric_loss=args.asymmetric_loss,
         overestimate_weight=args.overestimate_weight,
+        clip_predictions=args.clip_predictions,
     )
 
 

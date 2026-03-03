@@ -11,9 +11,13 @@ Each column is a scalar geometric feature derived from `geometric_params`.
 """
 
 import json
+import os
+import re
 from typing import Dict, List, Tuple, Any
 
 import numpy as np
+
+from util.zerod_calibration.post_processing import read_zerod_csv
 
 
 def _safe_get(d: Dict[str, Any], *keys, default=None):
@@ -62,8 +66,13 @@ COMPUTED_OUTLET_FEATURES: List[Tuple[str, Any]] = [
      ("poiseuille_resistance_calc",
      lambda out, junc: _safe_div(8 * 0.04 * out["path_length"], np.pi * out["r_local"]**4)),
      ("inductance_calc",   
-     lambda out, junc: _safe_mult(0.06*out["path_length"], out["r_local"]**2)),
-
+     lambda out, junc: _safe_mult(1.06*out["path_length"], out["r_local"]**2)),
+     ("rneg4",
+     lambda out, junc: out["r_local"] ** -4),
+     ("rneg2",
+     lambda out, junc: out["r_local"] ** -2),
+     ("nd_length",
+     lambda out, junc: out["path_length"]/out["r_local"]),
 ]
 
 
@@ -309,6 +318,163 @@ def load_junction_geometric_features(
         for suffix in _all_outlet_suffixes:
             feature_names.append(f"{prefix}_{suffix}")
     return X, feature_names, junction_names, outlet_primary_names
+
+
+def _is_split_connector(vessel_name: str) -> bool:
+    """True if vessel is a connector created by junction splitting (_connector0, _connector1, ...)."""
+    return bool(re.search(r"_connector\d+$", vessel_name))
+
+
+def _resolve_original_inlet_per_junction(cfg: Dict[str, Any]) -> Dict[str, str]:
+    """
+    For each junction (with two outlets), resolve the original inlet vessel name:
+    the vessel that carries the total flow into the original (possibly multi-outlet) junction.
+    When a multi-outlet junction was split into multiple bifurcations, trace back through
+    connector inlets to the non-connector inlet of the first bifurcation in the chain.
+
+    Returns:
+        Dict mapping junction_name -> original_inlet_vessel_name.
+    """
+    vessels = cfg.get("vessels", [])
+    junctions = cfg.get("junctions", [])
+    vessel_id_to_name = {
+        v.get("vessel_id"): v.get("vessel_name", "")
+        for v in vessels
+        if v.get("vessel_id") is not None
+    }
+    # vessel_id -> junction that has this vessel as an outlet (for tracing back)
+    outlet_vessel_id_to_junction: Dict[int, str] = {}
+    for j in junctions:
+        j_name = j.get("junction_name", "")
+        for vid in j.get("outlet_vessels", []):
+            outlet_vessel_id_to_junction[vid] = j_name
+
+    junction_to_inlet_id: Dict[str, int] = {}
+    for j in junctions:
+        inlets = j.get("inlet_vessels", [])
+        if inlets:
+            junction_to_inlet_id[j.get("junction_name", "")] = inlets[0]
+
+    out: Dict[str, str] = {}
+    for j in junctions:
+        j_name = j.get("junction_name", "")
+        if not j_name or len(j.get("outlet_vessels", [])) != 2:
+            continue
+        current_inlet_id = junction_to_inlet_id.get(j_name)
+        if current_inlet_id is None:
+            continue
+        # Walk back while the inlet is a split connector
+        while True:
+            inlet_name = vessel_id_to_name.get(current_inlet_id, "")
+            if not inlet_name or not _is_split_connector(inlet_name):
+                break
+            # This inlet is a connector; find the junction that has it as outlet
+            prev_junction = outlet_vessel_id_to_junction.get(current_inlet_id)
+            if not prev_junction or prev_junction == j_name:
+                break
+            prev_inlet_id = junction_to_inlet_id.get(prev_junction)
+            if prev_inlet_id is None:
+                break
+            current_inlet_id = prev_inlet_id
+        out[j_name] = vessel_id_to_name.get(current_inlet_id, "")
+    return out
+
+
+def compute_junction_flow_splits(
+    config_path: str,
+    geometric_results_csv_path: str,
+    require_two_outlets: bool = True,
+) -> Dict[str, Tuple[float, float]]:
+    """
+    Compute flow split (percentage of inlet flow through each outlet) from the
+    base geometric 0D simulation results. If multiple timepoints exist, the
+    ratio is averaged over time.
+
+    For junctions that came from splitting a multi-outlet junction into multiple
+    bifurcations, the denominator is the flow through the *original* inlet (the
+    vessel that fed the original multi-outlet junction), not the direct inlet
+    of each split bifurcation.
+
+    Args:
+        config_path: Path to the 0D geometric config JSON (same as used for
+            load_junction_geometric_features).
+        geometric_results_csv_path: Path to the geometric simulation results CSV
+            (e.g. bifurcations_EL_geometric_results.csv).
+        require_two_outlets: If True, only junctions with exactly two outlets
+            are included (same convention as load_junction_geometric_features).
+
+    Returns:
+        Dict mapping junction_name -> ((outlet0_name, outlet1_name), (flow_split0_pct, flow_split1_pct)).
+        Flow splits are in [0, 100]. Missing/invalid data yields (( "", ""), (nan, nan)).
+    """
+    out: Dict[str, Tuple[Tuple[str, str], Tuple[float, float]]] = {}
+    if not os.path.exists(geometric_results_csv_path):
+        return out
+
+    with open(config_path, "r") as f:
+        cfg = json.load(f)
+
+    vessels = cfg.get("vessels", [])
+    vessel_id_to_name = {
+        v.get("vessel_id"): v.get("vessel_name", "")
+        for v in vessels
+        if v.get("vessel_id") is not None
+    }
+    original_inlet_by_junction = _resolve_original_inlet_per_junction(cfg)
+
+    results, times = read_zerod_csv(geometric_results_csv_path)
+    if not times:
+        return out
+
+    for j in cfg.get("junctions", []):
+        j_name = j.get("junction_name", "")
+        outlet_vessels = j.get("outlet_vessels", [])
+        inlet_vessels = j.get("inlet_vessels", [])
+
+        if require_two_outlets and len(outlet_vessels) != 2:
+            continue
+        if not inlet_vessels:
+            out[j_name] = (("", ""), (np.nan, np.nan))
+            continue
+
+        # Use original inlet (trace back through connectors) for denominator
+        original_inlet_name = original_inlet_by_junction.get(j_name, "")
+        if not original_inlet_name:
+            inlet_vid = inlet_vessels[0]
+            original_inlet_name = vessel_id_to_name.get(inlet_vid, "")
+        out0_name = vessel_id_to_name.get(outlet_vessels[0], "")
+        out1_name = vessel_id_to_name.get(outlet_vessels[1], "")
+
+        if not original_inlet_name or not out0_name or not out1_name:
+            out[j_name] = ((out0_name or "", out1_name or ""), (np.nan, np.nan))
+            continue
+        if original_inlet_name not in results or out0_name not in results or out1_name not in results:
+            out[j_name] = ((out0_name, out1_name), (np.nan, np.nan))
+            continue
+
+        ratios0: List[float] = []
+        ratios1: List[float] = []
+        for t in times:
+            # Denominator: flow through original inlet (flow_out of that vessel at junction)
+            inlet_data = results[original_inlet_name].get(t, {})
+            out0_data = results[out0_name].get(t, {})
+            out1_data = results[out1_name].get(t, {})
+            q_in = inlet_data.get("flow_out")
+            q0 = out0_data.get("flow_in")
+            q1 = out1_data.get("flow_in")
+            # Skip timesteps where inlet flow is missing, zero, or below threshold (avoids ratio blow-up)
+            if q_in is None or q_in < 20.0:
+                continue
+            if q0 is not None:
+                ratios0.append(float(q0) / float(q_in))
+            if q1 is not None:
+                ratios1.append(float(q1) / float(q_in))
+
+        fs0 = float(np.mean(ratios0)) * 100.0 if ratios0 else np.nan
+        fs1 = float(np.mean(ratios1)) * 100.0 if ratios1 else np.nan
+        out[j_name] = ((out0_name, out1_name), (fs0, fs1))
+
+    return out
 
 
 def load_vessel_geometric_features(

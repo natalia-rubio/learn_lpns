@@ -44,35 +44,53 @@ def get_default_include_features() -> List[str]:
     Get the default list of features to include in the neural network input.
     
     Returns:
-        List of feature names to include (13 features total)
+        List of feature names to include ( features total)
     """
     return [
         "inlet_max_inscribed_radius",
         "outlet0_max_inscribed_radius_local",
-        "outlet1_max_inscribed_radius_local",
-        "outlet0_max_inscribed_radius_min_on_path",
-        "outlet1_max_inscribed_radius_min_on_path",
-        "outlet0_max_inscribed_radius_max_on_path",
-        "outlet1_max_inscribed_radius_max_on_path",
         "outlet0_path_length",
-        "outlet1_path_length",
         "outlet0_tortuosity",
-        "outlet1_tortuosity",
         "outlet0_angle_diff",
-        "outlet1_angle_diff",
         "outlet0_max_inscribed_radius_ratio",
-        "outlet1_max_inscribed_radius_ratio",
         "outlet0_poiseuille_resistance_calc",
-        "outlet1_poiseuille_resistance_calc",
         "outlet0_inductance_calc",
-        "outlet1_inductance_calc",
         "outlet0_absorbed_R_poiseuille",
-        "outlet1_absorbed_R_poiseuille",
         "outlet0_absorbed_L",
-        "outlet1_absorbed_L",
         "outlet0_absorbed_stenosis_coefficient",
-        "outlet1_absorbed_stenosis_coefficient",
+        "flow_split_inv",
+        "outlet0_rneg4",
+        "outlet0_rneg2",
+        "outlet0_nd_length",
     ]
+    # return [
+    #     "inlet_max_inscribed_radius",
+    #     "outlet0_max_inscribed_radius_local",
+    #     "outlet1_max_inscribed_radius_local",
+    #     "outlet0_max_inscribed_radius_min_on_path",
+    #     "outlet1_max_inscribed_radius_min_on_path",
+    #     "outlet0_max_inscribed_radius_max_on_path",
+    #     "outlet1_max_inscribed_radius_max_on_path",
+    #     "outlet0_path_length",
+    #     "outlet1_path_length",
+    #     "outlet0_tortuosity",
+    #     "outlet1_tortuosity",
+    #     "outlet0_angle_diff",
+    #     "outlet1_angle_diff",
+    #     "outlet0_max_inscribed_radius_ratio",
+    #     "outlet1_max_inscribed_radius_ratio",
+    #     "outlet0_poiseuille_resistance_calc",
+    #     "outlet1_poiseuille_resistance_calc",
+    #     "outlet0_inductance_calc",
+    #     "outlet1_inductance_calc",
+    #     "outlet0_absorbed_R_poiseuille",
+    #     "outlet1_absorbed_R_poiseuille",
+    #     "outlet0_absorbed_L",
+    #     "outlet1_absorbed_L",
+    #     "outlet0_absorbed_stenosis_coefficient",
+    #     "outlet1_absorbed_stenosis_coefficient",
+    #     "flow_split"
+    # ]
 
 def get_default_include_outputs() -> List[str]:
     """
