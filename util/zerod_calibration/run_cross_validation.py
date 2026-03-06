@@ -123,6 +123,8 @@ def run_cross_validation(
     asymmetric_loss=False,
     overestimate_weight=2.0,
     clip_predictions=False,
+    stenosis_off=False,
+    percent_train=0.9,
 ):
     if ml_inputs_root is None:
         ml_inputs_root = os.path.join(data_root, "ml_inputs")
@@ -205,6 +207,8 @@ def run_cross_validation(
         print(f"Asymmetric loss: overestimate weight = {overestimate_weight}")
     if clip_predictions:
         print("Clip predictions: R/S/L will be clipped to training set min/max during deploy")
+    if stenosis_off:
+        print("Stenosis-off: calibrate_stenosis_coefficient=False, all stenosis set to 0, NN will not predict stenosis")
 
     all_trial_results = []  # list of dicts: trial_id, val_geometries, mod -> overall_mse
     seen_val_sets = set()  # frozenset of val geometry names, to ensure each trial has a different val set
@@ -240,7 +244,7 @@ def run_cross_validation(
                 seed = trial * 1000 + attempt
                 train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
                     num_pts=num_pts,
-                    percent_train=0.9,
+                    percent_train=percent_train,
                     seed=seed,
                     geometry_row_ranges=row_ranges,
                 )
@@ -248,16 +252,19 @@ def run_cross_validation(
                 val_geometries = [geometries[i] for i in val_geo_idx]
                 if not val_geometries:
                     if attempt == 0:
-                        print(f"  Skipping trial {trial}: no validation geometries (90% of {num_geos} rounded to all)")
+                        pct = int(round(percent_train * 100))
+                        print(f"  Skipping trial {trial}: no validation geometries ({pct}% of {num_geos} rounded to all)")
                     break
                 val_set = frozenset(val_geometries)
                 if val_set not in seen_val_sets:
                     seen_val_sets.add(val_set)
                     break
                 if attempt == max_attempts - 1:
+                    pct_val = int(round((1 - percent_train) * 100))
+                    pct_train = int(round(percent_train * 100))
                     raise RuntimeError(
                         f"Could not get a distinct validation set for trial {trial} after {max_attempts} attempts. "
-                        f"Not enough geometries for {num_trials} unique 90/10 splits."
+                        f"Not enough geometries for {num_trials} unique {pct_train}/{pct_val} splits."
                     )
             if not val_geometries:
                 continue
@@ -266,7 +273,7 @@ def run_cross_validation(
                 "train_ind": np.asarray(train_ind, dtype=int),
                 "val_ind": np.asarray(val_ind, dtype=int),
                 "num_offsets": 1,
-                "percent_train": 0.9,
+                "percent_train": percent_train,
                 "seed": int(seed),
                 "num_pts": num_pts,
                 "split_by_geometry": True,
@@ -433,6 +440,8 @@ def run_cross_validation(
                 cmd_deploy.append("--NN-vessel")
             if clip_predictions:
                 cmd_deploy.append("--clip-predictions")
+            if stenosis_off:
+                cmd_deploy.append("--stenosis-off")
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
             result_deploy = subprocess.run(cmd_deploy, cwd=REPO_ROOT, text=True)
             if result_deploy.returncode != 0:
@@ -589,6 +598,19 @@ def main():
         dest="clip_predictions",
         help="Clip NN predictions (R, S, L) to training set min/max during deploy.",
     )
+    parser.add_argument(
+        "--stenosis-off",
+        action="store_true",
+        dest="stenosis_off",
+        help="Turn off stenosis: calibrate_stenosis_coefficient=False, set all stenosis to 0, do not use NN to predict stenosis.",
+    )
+    parser.add_argument(
+        "--percent-train",
+        type=float,
+        default=0.9,
+        metavar="P",
+        help="Fraction of geometries for training (0–1); remainder used for validation (default: 0.9).",
+    )
     args = parser.parse_args()
 
     run_cross_validation(
@@ -604,6 +626,8 @@ def main():
         asymmetric_loss=args.asymmetric_loss,
         overestimate_weight=args.overestimate_weight,
         clip_predictions=args.clip_predictions,
+        stenosis_off=args.stenosis_off,
+        percent_train=args.percent_train,
     )
 
 

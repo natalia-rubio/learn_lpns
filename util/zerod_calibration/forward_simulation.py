@@ -135,9 +135,7 @@ def run_forward_simulation(input_json_path, output_csv_path):
                 del input_data_sim['dy']
             
             # Write temporary input file for svzerodsolver (use original input path if it's already clean)
-            # Check if we need to create a temp file or can use the original
             use_temp = ('calibration_parameters' in input_data or 'y' in input_data or 'dy' in input_data)
-            
             if use_temp:
                 temp_input_path = input_json_path_str + '.temp'
                 with open(temp_input_path, 'w') as f:

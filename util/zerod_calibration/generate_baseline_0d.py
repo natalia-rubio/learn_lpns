@@ -3,8 +3,9 @@ import json
 import numpy as np
 import subprocess
 import tempfile
-from util.zerod_calibration.file_io import find_inlet_outlet_caps_from_centerline
-from util.zerod_calibration.file_io import find_inlet_outlet_caps
+
+from util.zerod_calibration.oned_to_zerod import find_inlet_outlet_caps_from_centerline
+from util.zerod_calibration.oned_to_zerod import find_inlet_outlet_caps
 
 # Constants
 RHO = 1.06  # Blood density (g/cm^3)
@@ -55,7 +56,7 @@ def update_simulation_parameters(geo_dir, json_path, inlet_cap_name, capacitance
             print(f"  Warning: No boundary conditions found, using default cardiac_cycle_period = 1.0 s")
     
     # Set all capacitance (C) values to 10^-10
-    capacitance_value = 1e-10
+    capacitance_value = 1e-10#1e-10
     vessels_updated = 0
     for vessel in zerod_input.get('vessels', []):
         if 'zero_d_element_values' in vessel and 'C' in vessel['zero_d_element_values']:

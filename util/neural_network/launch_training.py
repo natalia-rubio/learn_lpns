@@ -65,8 +65,8 @@ def launch_training(network_params, optimizer_params, training_params):
     else:
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
-        training_params["num_epochs"] = 2000
-        network_params["asymmetric_loss_overestimate_weight"] = 10000
+        training_params["num_epochs"] = 10000#5000
+        network_params["asymmetric_loss_overestimate_weight"] = 2000
     optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init1
     model = NeuralNet(network_params, optimizer_params)
@@ -97,7 +97,7 @@ def launch_training(network_params, optimizer_params, training_params):
     else:
         network_params["layer_width"] = 20
         network_params["num_layers"] = 4
-        training_params["num_epochs"] = 2000
+        training_params["num_epochs"] = 2000#5000
         network_params["asymmetric_loss_overestimate_weight"] = 10000
     network_params["target_coef_ind"] = 2
     model = NeuralNet(network_params, optimizer_params)
@@ -240,7 +240,7 @@ if __name__ == "__main__":
                              "model_name_suffix": "_vessel",
                              "asymmetric_loss_overestimate_weight": _ow}
             training_params = {"num_epochs": 500,
-                              "batch_size": 5,
+                              "batch_size": 10,
                               "train_inds": np.asarray(vessel_train_ind),
                               "val_inds": np.asarray(vessel_val_ind),
                               "num_offsets": 1,
@@ -272,7 +272,7 @@ if __name__ == "__main__":
                              "model_name_suffix": "",
                              "asymmetric_loss_overestimate_weight": _ow}
             training_params = {"num_epochs": 500,
-                              "batch_size": 2,
+                              "batch_size": 10,
                               "train_inds": train_inds,
                               "val_inds": val_inds,
                               "num_offsets": num_offsets,

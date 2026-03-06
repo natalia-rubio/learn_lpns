@@ -209,6 +209,60 @@ def update_outlet_bcs_in_file(file_path, outlet_params, file_type="calibration i
         print(f"  Warning: Could not update {file_type} file {file_path}: {e}")
         return False
 
+
+def sync_nn_config_bcs_from_calibration(nn_config_paths, source_bc_path, verbose=True):
+    """
+    Update boundary conditions in NN config JSONs to match the calibrated output
+    (or calibration input) so that RCR and other outlet BCs are consistent.
+
+    Args:
+        nn_config_paths: List of paths to NN config JSON files to update
+            (e.g. *_NN_BloodVesselJunction.json, *_NN_JunctionAndVessel.json, *_NN_VesselOnly.json)
+        source_bc_path: Path to the JSON file to copy boundary_conditions from
+            (typically the BloodVesselJunction calibrated output or its calibration input)
+        verbose: If True, print which files were updated
+
+    Returns:
+        Number of NN config files that were updated (0 if source missing or no paths)
+    """
+    import copy
+    if not nn_config_paths:
+        return 0
+    if not os.path.exists(source_bc_path):
+        if verbose:
+            print(f"  ⊘ Skipping NN BC sync: source not found: {source_bc_path}")
+        return 0
+    try:
+        with open(source_bc_path, 'r') as f:
+            source_config = json.load(f)
+    except Exception as e:
+        if verbose:
+            print(f"  Warning: Could not load source for NN BC sync from {source_bc_path}: {e}")
+        return 0
+    bcs = source_config.get('boundary_conditions', [])
+    if not bcs:
+        if verbose:
+            print(f"  Warning: No boundary_conditions in source {source_bc_path}, skipping NN BC sync")
+        return 0
+    updated = 0
+    for path in nn_config_paths:
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, 'r') as f:
+                nn_config = json.load(f)
+            nn_config['boundary_conditions'] = copy.deepcopy(bcs)
+            with open(path, 'w') as f:
+                json.dump(nn_config, f, indent=4)
+            updated += 1
+            if verbose:
+                print(f"  ✓ Synced BCs from calibration into {os.path.basename(path)}")
+        except Exception as e:
+            if verbose:
+                print(f"  Warning: Could not update NN config {path}: {e}")
+    return updated
+
+
 def refine_inlet_bc_for_forward_simulation(output_path, max_reasonable_points=10000, calibration_input_path=None):
     """
     Refine the inlet boundary condition for forward simulation.

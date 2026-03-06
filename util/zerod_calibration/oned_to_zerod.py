@@ -114,6 +114,9 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
             print(f"  Found XML time_step_size: {time_step_size:.6f} s")
             print(f"  Timestep increment in solution: {timestep_increment}")
     # If we are using a VMR type geometry, get the dt from dictionary
+    elif "priya" in centerline_soln_path:
+        time_step_size = 0.001
+        print(f"Assume Priya always uses a time step size of 0.001 s")
     elif 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
         VMR_time_step_dict = {
@@ -570,6 +573,9 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
         if sim_params and 'time_step_size' in sim_params:
             time_step_size = sim_params['time_step_size']
             print(f"  Found XML time_step_size: {time_step_size:.6f} s")
+    elif "priya" in centerline_soln_path:
+        time_step_size = 0.001
+        print(f"Assume Priya always uses a time step size of 0.001 s")
     elif 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
         # Use the same VMR time step dictionary as in the original function

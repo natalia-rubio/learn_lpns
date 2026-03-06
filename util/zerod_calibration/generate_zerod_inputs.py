@@ -35,6 +35,7 @@ from util.zerod_calibration.calibration import *
 from util.zerod_calibration.forward_simulation import *
 from util.zerod_calibration.geometric_params import *
 from util.zerod_calibration.centerline_path_extraction import *
+from util.zerod_calibration.generate_baseline_0d import *
 try:
     from scipy.interpolate import CubicSpline, interp1d
     HAS_SCIPY_INTERP = True
@@ -124,9 +125,9 @@ def main():
     parser.add_argument('--set-name', required=True, help='Set name (e.g., set_1)')
     parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., tree_000)')
 
-    parser.add_argument('--junction-types', nargs='+', 
-                       default=['BloodVesselJunction', 'NORMAL_JUNCTION', 'DirIndepJunction', 'HybridJunction'],
-                       help='Junction types to generate calibration files for (default: all four types)')
+    parser.add_argument('--junction-types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
+                       default='BloodVesselJunction,NORMAL_JUNCTION,DirIndepJunction,HybridJunction',
+                       help='Comma-separated junction types for calibration (default: all four types)')
     parser.add_argument('--zoom-start', type=int, default=None,
                        help='Start index for zoom window (shaded region in plots). Default: 599')
     parser.add_argument('--zoom-end', type=int, default=None,
@@ -165,6 +166,8 @@ def main():
                        help='If set (e.g. from cross-validation), append _trial_{id} to plot output paths and filenames')
     parser.add_argument('--clip-predictions', action='store_true',
                        help='Clip R_poiseuille, stenosis_coefficient, L to training set min/max')
+    parser.add_argument('--stenosis-off', action='store_true', dest='stenosis_off',
+                       help='Turn off stenosis: calibrate_stenosis_coefficient=False, set all stenosis to 0, do not use NN to predict stenosis')
 
     args = parser.parse_args(); verbose = args.verbose
     if args.normalize:
@@ -503,16 +506,22 @@ def main():
                                     derivative_method='central'
                                 )
 
-                            create_calibration_input(
-                                variant_geometric_input, augmented_observations, variant_calibration_input,
-                                centerline_soln_path=soln_path, geo_dir=geo_dir
-                            )
+                            obs_for_calib = augmented_observations
                         else:
                             # Original geometry: use original observations
-                            create_calibration_input(
-                                variant_geometric_input, observations, variant_calibration_input,
-                                centerline_soln_path=soln_path, geo_dir=geo_dir
-                            )
+                            obs_for_calib = observations
+
+                        # For set names including "priya", 1D solution is short: repeat flow/pressure 5x with time increasing
+                        if 'priya' in args.set_name:
+                            from util.zerod_calibration.calibration import repeat_observations_in_time
+                            obs_for_calib = repeat_observations_in_time(obs_for_calib, num_repeats=5)
+                            print(f"    Repeated observation series 5x for extended time (set_name contains 'priya')")
+
+                        create_calibration_input(
+                            variant_geometric_input, obs_for_calib, variant_calibration_input,
+                            centerline_soln_path=soln_path, geo_dir=geo_dir,
+                            stenosis_off=getattr(args, 'stenosis_off', False)
+                        )
                         generated_files.append(variant_calibration_input)
                         print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
                         
@@ -825,8 +834,7 @@ def main():
                     
                     for i, model_path in enumerate(model_paths):
                         if not os.path.exists(model_path):
-                            print(f"NN found not found")
-                            continue
+                            print(f"  NN model not found: {model_path}")
                             raise FileNotFoundError(f"Model not found: {model_path}")
                     
                     # Load models and get predictions
@@ -858,7 +866,7 @@ def main():
                     # predictions[1] = stenosis_coefficient (one value per row)
                     # predictions[2] = L (one value per row)
                     pred_R = np.array(predictions[0])
-                    pred_S = np.array(predictions[1])
+                    pred_S = np.zeros_like(pred_R) if getattr(args, 'stenosis_off', False) else np.array(predictions[1])
                     pred_L = np.array(predictions[2])
 
                     if getattr(args, 'clip_predictions', False):
@@ -1018,9 +1026,8 @@ def main():
                     print(f"      ✓ Neural network predictions applied and saved to {nn_output_path}")
                 
                 except Exception as e:
-                    #raise Exception(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
-                    print(f"Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
-                    raise
+                    print(f"  Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
+                    print(f"  Skipping NN junction predictions and forward simulation for this variant (models may be missing).")
 
             # Step 3.7 (optional): Vessel NN inference: predict vessel R/S/L and write NN_JunctionAndVessel config
             if getattr(args, 'NN_vessel', False):
@@ -1119,6 +1126,8 @@ def main():
                             pred_R_v = np.array(raw_predictions_v[0])
                             pred_S_v = np.array(raw_predictions_v[1])
                             pred_L_v = np.array(raw_predictions_v[2])
+                        if getattr(args, 'stenosis_off', False):
+                            pred_S_v = np.zeros_like(pred_R_v)
                         if getattr(args, 'clip_predictions', False):
                             from util.tools.basic import load_dict as _load_dict_v
                             if args.normalize and vessel_norm_data is not None:
@@ -1187,7 +1196,26 @@ def main():
                         print(f"      ✓ NN_vessel (geometric junctions + NN vessels) saved to {nn_vessel_only_path}")
                     except Exception as e:
                         print(f"      Vessel NN inference failed for {geo_variant_name}: {e}")
-                        raise
+                        print(f"      Skipping vessel NN predictions and related forward simulations for this variant.")
+
+    # Sync BCs from calibrated output into NN configs so RCR (and other outlet BCs) match
+    # Run even if calibration was skipped, so we can use a preexisting calibrated output file
+    if 'BloodVesselJunction' in args.junction_types:
+        for geo_variant_name in ['bifurcations', 'bifurcations_EL']:
+            if geo_variant_name not in geometry_variants:
+                continue
+            variant_junction_paths = geometry_variants[geo_variant_name]['junction_types']
+            calib_output_path = variant_junction_paths.get('BloodVesselJunction', {}).get('calibrated_output')
+            if not calib_output_path or not os.path.exists(calib_output_path):
+                continue
+            nn_output_path = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
+            nn_jv_path = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
+            nn_vessel_only_path = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
+            nn_paths = [p for p in [nn_output_path, nn_jv_path, nn_vessel_only_path] if os.path.exists(p)]
+            if nn_paths:
+                n_updated = sync_nn_config_bcs_from_calibration(nn_paths, calib_output_path, verbose=args.verbose)
+                if n_updated and args.verbose:
+                    print(f"  Synced boundary conditions from calibrated output into {n_updated} NN config(s) for {geo_variant_name}")
 
     # Step 4: Run forward simulations for each geometry variant
     if not args.skip_forward:
@@ -1502,8 +1530,6 @@ def main():
                             continue
                         
                         all_locations = get_all_locations_from_calibration_input(str(original_calibration_input))
-                        # Filter to only INFLOW locations by default
-                        all_locations = [loc for loc in all_locations if loc.startswith('INFLOW:')]
                         
                         # Build combined CSV paths dict: keys are "original_jtype" and "bifurcations_jtype"
                         combined_csv_paths = {}
@@ -1579,7 +1605,7 @@ def main():
                             print(f"    Skipping {geo_variant_name} plots (missing files)")
                             continue
                         
-                        # Extract locations from this variant's calibration input
+                        # Extract locations from this variant's calibration input (all locations, not just INFLOW)
                         variant_locations = get_all_locations_from_calibration_input(str(variant_calibration_input))
                         # Filter to only INFLOW locations by default
                         variant_locations = [loc for loc in variant_locations if loc.startswith('INFLOW:')]

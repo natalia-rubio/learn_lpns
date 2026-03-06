@@ -883,7 +883,6 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         
         # Plot geometric 0D results (can be multiple: original, bifurcations)
         for geo_key, geo_data in geometric_data_dict.items():
-            print(f"geo_key: {geo_key}")
             if geo_data.get('pressures') is not None:
                 style = get_line_style(geo_key)
                 ax.plot(geo_data['times'], geo_data['pressures'], 
@@ -1007,7 +1006,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     ax.tick_params(axis='x', labelbottom=True, bottom=True, labelsize=20)
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
-    # Create legend
+    # Create legend (exclude spurious entries like "-location INFLOW:branch0_seg0")
     handles, labels = axes[2].get_legend_handles_labels()
     seen = set()
     unique_handles, unique_labels = [], []
@@ -1052,10 +1051,9 @@ def main():
     parser.add_argument('--location', help='Specific location to plot (e.g., "INFLOW:branch0_seg0" or "branch0_seg0:J0")')
     parser.add_argument('--calibration-input', help='Path to calibration input JSON (default: auto-detect)')
     parser.add_argument('--geometric-csv', help='Path to geometric 0D results CSV (default: auto-detect)')
-    parser.add_argument('--junction-types', nargs='+', 
-                       default=['original_NORMAL_JUNCTION', 'bifurcations_NORMAL_JUNCTION',
-                                'original_BloodVesselJunction', 'bifurcations_BloodVesselJunction'],
-                       help='Junction types to plot (e.g., original_NORMAL_JUNCTION, bifurcations_NORMAL_JUNCTION)')
+    parser.add_argument('--junction-types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
+                       default='original_NORMAL_JUNCTION,bifurcations_NORMAL_JUNCTION,original_BloodVesselJunction,bifurcations_BloodVesselJunction',
+                       help='Comma-separated junction types to plot (e.g., original_NORMAL_JUNCTION,bifurcations_BloodVesselJunction)')
     parser.add_argument('--output-dir', default='results/location_comparison', 
                         help='Output directory for plots')
     parser.add_argument('--data-dir', default='data/zeroD', 
@@ -1073,6 +1071,10 @@ def main():
     
     if not HAS_MATPLOTLIB:
         print("Error: matplotlib is required but not available.")
+        sys.exit(1)
+    
+    if not args.junction_types:
+        print("Error: No valid junction types (--junction-types must be a non-empty comma-separated list).")
         sys.exit(1)
     
     # Auto-detect file paths
@@ -1100,9 +1102,7 @@ def main():
         locations = [args.location]
     else:
         locations = get_all_locations_from_calibration_input(calibration_input_path)
-        # Filter to only INFLOW locations by default
-        locations = [loc for loc in locations if loc.startswith('INFLOW:')]
-        print(f"\nFound {len(locations)} locations (filtered to INFLOW only)")
+        print(f"\nFound {len(locations)} locations")
         # Build ordered list of unique vessels as they appear in locations
         vessel_order = []
         for loc in locations:
