@@ -586,8 +586,9 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             best_distance = float('inf')
             # Debug: print segment info
             try:
-                print(f"    Debug: segment {seg_start}-{seg_end}, segment_path_length={segment_path_length:.6f}")
-                print(f"      startpoint={startpoint}, endpoint={endpoint}")
+                if verbose:
+                    print(f"    Debug: segment {seg_start}-{seg_end}, segment_path_length={segment_path_length:.6f}")
+                    print(f"      startpoint={startpoint}, endpoint={endpoint}")
             except Exception:
                 pass
             for outlet_branch_id in outlet_branch_ids:
@@ -601,18 +602,23 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     best_outlet = outlet_branch_id
 
             if best_outlet is None:
-                print(f"    Debug: Could not match segment to any outlet branch (best_distance={best_distance:.6f})")
-                print(f"    Debug: Available outlet branch IDs: {outlet_branch_ids}")
-                print(f"    Debug: Segment endpoint: {endpoint}")
+                if verbose:
+                    print(f"    Debug: Could not match segment to any outlet branch (best_distance={best_distance:.6f})")
+                    print(f"    Debug: Available outlet branch IDs: {outlet_branch_ids}")
+                    print(f"    Debug: Segment endpoint: {endpoint}")
                 continue  # Skip this segment instead of raising error
             threshold = 10
             if best_distance >= threshold:
-                print(f"    Debug: Best outlet match distance {best_distance:.6f} exceeds threshold of {threshold} for outlet {best_outlet}")
+                if verbose:
+                    print(f"    Debug: Best outlet match distance {best_distance:.6f} exceeds threshold of {threshold} for outlet {best_outlet}")
                 if best_outlet is not None and best_outlet in branch_inlet_point:
-                    print(f"    Debug: Segment endpoint: {endpoint}, outlet inlet: {branch_inlet_point[best_outlet]}")
+                    if verbose:
+                        print(f"    Debug: Segment endpoint: {endpoint}, outlet inlet: {branch_inlet_point[best_outlet]}")
                 else:
-                    print(f"    Debug: Segment endpoint: {endpoint}, no valid best_outlet to show inlet coords")
-                print(f"    Debug: Skipping segment {seg_start}-{seg_end} (no reliable match)")
+                    if verbose:
+                        print(f"    Debug: Segment endpoint: {endpoint}, no valid best_outlet to show inlet coords")
+                if verbose:
+                    print(f"    Debug: Skipping segment {seg_start}-{seg_end} (no reliable match)")
                 continue  # Skip this segment instead of raising error
 
             # Collect radius extrema for this segment (we'll add inlet/outlet points below)
@@ -964,13 +970,16 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
         junction_bif_id = int(junction_id_part)
 
         if outlet_branch_ids:
-            print(f"  Computing in-junction metrics for {junc_name} "
+            if verbose:
+                print(f"  Computing in-junction metrics for {junc_name} "
                   f"(inlet branch {inlet_branch_id}, outlets {outlet_branch_ids})")
+
             outlet_metrics = compute_junction_outlet_metrics(inlet_branch_id, outlet_branch_ids, junction_bif_id)
             # Debug: show computed outlet_metrics keys and a short summary
             try:
                 keys = list(outlet_metrics.keys())
-                print(f"    Debug: outlet_metrics keys: {keys}")
+                if verbose:
+                    print(f"    Debug: outlet_metrics keys: {keys}")
                 for k in keys:
                     v = outlet_metrics.get(k, {})
                     pl = v.get('path_length', None)
@@ -978,9 +987,10 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             except Exception:
                 print(f"    Debug: outlet_metrics (raw): {outlet_metrics}")
         else:
-            print(f"  Warning: {junc_name} has no outlet branch IDs (all outlets may be connectors or invalid)")
-            print(f"    Outlet vessel IDs: {outlet_vessel_ids}")
-            print(f"    Outlet vessel names: {[vessels[vid].get('vessel_name', 'unknown') for vid in outlet_vessel_ids if vid < len(vessels)]}")
+            if verbose:
+                print(f"  Warning: {junc_name} has no outlet branch IDs (all outlets may be connectors or invalid)")
+                print(f"    Outlet vessel IDs: {outlet_vessel_ids}")
+                print(f"    Outlet vessel names: {[vessels[vid].get('vessel_name', 'unknown') for vid in outlet_vessel_ids if vid < len(vessels)]}")
             outlet_metrics = {}  # Initialize to empty dict when no outlet branch IDs
             
             # If no metrics were computed (e.g., no BifurcationId region in centerline),
@@ -1200,7 +1210,8 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                                 if branch_inlet_path_val <= pt_path <= conn_path_val:
                                     r_bi = float(max_inscribed_radius[bi])
                                     path_radii.append(r_bi)
-                                    print(f"      branch pt idx={bi}, GID={int(gid[bi]) if gid is not None else '?'}, "
+                                    if verbose:
+                                        print(f"      branch pt idx={bi}, GID={int(gid[bi]) if gid is not None else '?'}, "
                                           f"Path={pt_path:.4f}, MIR={r_bi:.6f}")
                     if path_radii:
                         outlet_max_inscribed_radius_min_on_path[vessel_name] = min(path_radii)
@@ -1216,7 +1227,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                         outlet_angle_diffs[vessel_name] = get_angle_diff(inlet_tangent, out_tan)
                     else:
                         outlet_angle_diffs[vessel_name] = 0.0
-                    print(f"Got outlet angle diff for connector: {vessel_name}: {outlet_angle_diffs[vessel_name]}")
+                    #print(f"Got outlet angle diff for connector: {vessel_name}: {outlet_angle_diffs[vessel_name]}")
 
                     # Build ordered list of GIDs on the path from inlet to connector
                     if gid is not None:
@@ -1257,15 +1268,20 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             #import pdb; pdb.set_trace()
             if b_id not in outlet_metrics:
                 # If outlet_metrics is empty or this branch wasn't matched, emit debug info
-                print(f"    Warning: Branch {b_id} (vessel {vessel_name}) not found in outlet_metrics for {junc_name}, setting default path length to 0.0")
+                if verbose:
+                    print(f"    Warning: Branch {b_id} (vessel {vessel_name}) not found in outlet_metrics for {junc_name}, setting default path length to 0.0")
 
-                print(f"      Debug: outlet_metrics keys: {list(outlet_metrics.keys())}")
-                print(f"      Debug: branch_inlet_idx contains b_id? {b_id in branch_inlet_idx}")
+                if verbose:
+                    print(f"      Debug: outlet_metrics keys: {list(outlet_metrics.keys())}")
+                if verbose:
+                    print(f"      Debug: branch_inlet_idx contains b_id? {b_id in branch_inlet_idx}")
                 if b_id in branch_inlet_idx:
                     bi = branch_inlet_idx[b_id]
-                    print(f"      Debug: branch_inlet_idx[{b_id}] = {bi}")
+                    if verbose:
+                        print(f"      Debug: branch_inlet_idx[{b_id}] = {bi}")
                     if b_id in branch_inlet_point:
-                        print(f"      Debug: branch_inlet_point[{b_id}] = {branch_inlet_point[b_id]}")
+                        if verbose:
+                            print(f"      Debug: branch_inlet_point[{b_id}] = {branch_inlet_point[b_id]}")
 
                 outlet_path_lengths[vessel_name] = 0.0
                 outlet_tortuosities[vessel_name] = 0.0
@@ -1522,16 +1538,19 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
             raise ValueError(f"No geometric data found for vessel {vessel_name}")
         
         areas = vessel_areas[vessel_name]
+        # Use 0.0 for missing scalar numerics so the 0D solver never sees null (nlohmann throws type_error.305 otherwise)
+        def _num(v, default=0.0):
+            return default if v is None else v
         vessel['geometric_params'] = {
-            'inlet_area': areas.get('inlet_area'),
-            'outlet_area': areas.get('outlet_area'),
-            'path_length': areas.get('path_length'),
-            'tortuosity': areas.get('tortuosity'),
-            'angle_diff': areas.get('angle_diff'),
-            'inlet_max_inscribed_radius': areas.get('inlet_max_inscribed_radius'),
-            'outlet_max_inscribed_radius': areas.get('outlet_max_inscribed_radius'),
-            'max_inscribed_radius_min': areas.get('max_inscribed_radius_min'),
-            'max_inscribed_radius_max': areas.get('max_inscribed_radius_max'),
+            'inlet_area': _num(areas.get('inlet_area')),
+            'outlet_area': _num(areas.get('outlet_area')),
+            'path_length': _num(areas.get('path_length')),
+            'tortuosity': _num(areas.get('tortuosity')),
+            'angle_diff': _num(areas.get('angle_diff')),
+            'inlet_max_inscribed_radius': _num(areas.get('inlet_max_inscribed_radius')),
+            'outlet_max_inscribed_radius': _num(areas.get('outlet_max_inscribed_radius')),
+            'max_inscribed_radius_min': _num(areas.get('max_inscribed_radius_min')),
+            'max_inscribed_radius_max': _num(areas.get('max_inscribed_radius_max')),
         }
         print(f"  Added geometric_params to vessel {vessel_name}")
     
@@ -1546,31 +1565,52 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
         
         areas = junction_areas[junc_name]
         existing_gp = junc.get('geometric_params', {})
+        # Avoid null for scalars/dicts so the 0D solver never does operator[] on null (nlohmann type_error.305)
+        def _num(v, default=0.0):
+            return default if v is None else v
+        def _obj(v, default=None):
+            if default is None:
+                default = {}
+            return default if v is None else v
+        def _tangent(v):
+            if v is None or not isinstance(v, (list, tuple)) or len(v) != 3:
+                return [0.0, 0.0, 0.0]
+            return list(v)
         new_gp = {
-            'inlet_vessel_areas': areas.get('inlet_vessel_areas', {}),
-            'outlet_vessel_areas': areas.get('outlet_vessel_areas', {}),
-            'outlet_path_lengths': areas.get('outlet_path_lengths', {}),
-            'inlet_tangent': areas.get('inlet_tangent'),
-            'outlet_tangents': areas.get('outlet_tangents', {}),
-            'outlet_tortuosities': areas.get('outlet_tortuosities', {}),
-            'inlet_max_inscribed_radius': areas.get('inlet_max_inscribed_radius'),
-            'outlet_max_inscribed_radius': areas.get('outlet_max_inscribed_radius', {}),
-            'max_inscribed_radius_min_on_path': areas.get('max_inscribed_radius_min_on_path', {}),
-            'max_inscribed_radius_max_on_path': areas.get('max_inscribed_radius_max_on_path', {}),
-            'outlet_angle_diffs': areas.get('outlet_angle_diffs', {}),
-            'outlet_path_gids': areas.get('outlet_path_gids', {}),
+            'inlet_vessel_areas': _obj(areas.get('inlet_vessel_areas')),
+            'outlet_vessel_areas': _obj(areas.get('outlet_vessel_areas')),
+            'outlet_path_lengths': _obj(areas.get('outlet_path_lengths')),
+            'inlet_tangent': _tangent(areas.get('inlet_tangent')),
+            'outlet_tangents': _obj(areas.get('outlet_tangents')),
+            'outlet_tortuosities': _obj(areas.get('outlet_tortuosities')),
+            'inlet_max_inscribed_radius': _num(areas.get('inlet_max_inscribed_radius')),
+            'outlet_max_inscribed_radius': _obj(areas.get('outlet_max_inscribed_radius')),
+            'max_inscribed_radius_min_on_path': _obj(areas.get('max_inscribed_radius_min_on_path')),
+            'max_inscribed_radius_max_on_path': _obj(areas.get('max_inscribed_radius_max_on_path')),
+            'outlet_angle_diffs': _obj(areas.get('outlet_angle_diffs')),
+            'outlet_path_gids': _obj(areas.get('outlet_path_gids')),
         }
         existing_gp.update(new_gp)
         junc['geometric_params'] = existing_gp
         print(f"  Added geometric_params to junction {junc_name}")
     
-    # Write output
+    # Write output: ensure no JSON null so the 0D solver (nlohmann) never sees type_error.305
     if output_path is None:
         output_path = zerod_config_path
     
+    def _no_none(obj):
+        if obj is None:
+            return 0.0
+        if isinstance(obj, dict):
+            return {k: _no_none(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_no_none(v) for v in obj]
+        return obj
+    
+    config_clean = _no_none(config)
     print(f"Writing updated config to: {output_path}")
     with open(output_path, 'w') as f:
-        json.dump(config, f, indent=2)
+        json.dump(config_clean, f, indent=2)
     
     return config
 

@@ -317,7 +317,10 @@ def timestep_from_1D(centerline_soln_path, geo_dir):
                 threeD_time_step_size = float(time_step_size_elem.text)
 
     # if we are using a VMR type geometry, get the dt from dictionary
-    if 'VMR' in centerline_soln_path:
+    if "priya" in centerline_soln_path:
+        threeD_time_step_size = 0.001
+        print(f"Assume Priya always uses a time step size of 0.001 s")
+    elif 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
         VMR_time_step_dict = {
             '0002_0001': 0.01,
@@ -481,15 +484,11 @@ def get_paths(base_dir, args):
         oneD_soln_paths = []
         if centerline_path is None:
             oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
-            oneD_soln_paths = [
-                os.path.join(oneD_dir, 'unsteady_soln.vtp'),
-            ]
+            oneD_soln_paths.append(os.path.join(oneD_dir, 'unsteady_soln.vtp'))
             # if this is a VMR set type, try to find the centerline in the VMR oneD directory
             if 'VMR' in args.set_name:
                 oneD_dir = os.path.join('data', 'oneD', "VMR", args.geo_name)
-                oneD_soln_paths = [
-                    os.path.join(oneD_dir, 'unsteady_soln.vtp'),
-                ]
+                oneD_soln_paths.append(os.path.join(oneD_dir, 'unsteady_soln.vtp'))
             for path in oneD_soln_paths:
                 if os.path.exists(path):
                     centerline_path = path

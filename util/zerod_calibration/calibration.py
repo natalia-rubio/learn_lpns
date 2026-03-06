@@ -4,7 +4,7 @@ import numpy as np
 from util.zerod_calibration.file_io import timestep_from_1D, convert_numpy_to_list
 
 
-def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None):
+def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, stenosis_off=False):
     """
     Create calibration input file from geometric input and observations.
     Computes BC times from 1D solution timesteps multiplied by timestep size from XML.
@@ -15,7 +15,7 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         output_path: Path to save calibration input JSON
         centerline_soln_path: Path to 1D centerline solution VTP (to extract timestep count)
         geo_dir: Geometry directory (to find XML file for timestep size)
-        num_cardiac_cycles: Number of cardiac cycles (default: 1)
+        stenosis_off: If True, set calibrate_stenosis_coefficient False and set all stenosis to 0
     """
     print(f"Reading geometric input from: {geometric_input_path}")
     with open(geometric_input_path, 'r') as f:
@@ -61,16 +61,31 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         
     # Keep geometric parameters (R_poiseuille, C, L, stenosis_coefficient) from geometric input
     # These will serve as initial values for calibration
+
+    # Stenosis-off mode: do not calibrate stenosis and set all stenosis coefficients to 0
+    if stenosis_off:
+        for v in inp.get("vessels", []):
+            if "zero_d_element_values" in v and "stenosis_coefficient" in v["zero_d_element_values"]:
+                v["zero_d_element_values"]["stenosis_coefficient"] = 0.0
+        for j in inp.get("junctions", []):
+            if "junction_values" in j and "stenosis_coefficient" in j["junction_values"]:
+                sv = j["junction_values"]["stenosis_coefficient"]
+                n_out = len(sv) if isinstance(sv, list) else 1
+                j["junction_values"]["stenosis_coefficient"] = [0.0] * n_out
+        print("  Stenosis-off: all stenosis coefficients set to 0, calibrate_stenosis_coefficient=False, L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
     
-    # Add calibration parameters
+    # Add calibration parameters (when stenosis_off, zero the R and stenosis L2 penalties)
+    l2_R = 0.0 if stenosis_off else 10**5
+    l2_stenosis = 0.0 if stenosis_off else 10**10
     inp["calibration_parameters"] = {
         "tolerance_gradient": 1e-4,
         "tolerance_increment": 1e-4,
         "maximum_iterations": 100,
-        "calibrate_stenosis_coefficient":True,
+        "calibrate_stenosis_coefficient": not stenosis_off,
+        "calibrate_capacitance": False,
         "set_capacitance_to_zero": False,
-        "L2_penalty_R_poiseuille": 10**5,
-        "L2_penalty_stenosis_coefficient": 10**10,
+        "L2_penalty_R_poiseuille": l2_R,
+        "L2_penalty_stenosis_coefficient": l2_stenosis,
         "L2_penalty_L": 0
     }
     

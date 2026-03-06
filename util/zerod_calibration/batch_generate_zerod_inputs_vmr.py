@@ -199,7 +199,7 @@ def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, time
     
     # Add optional arguments
     if args_dict.get('junction_types'):
-        cmd.extend(['--junction-types'] + args_dict['junction_types'])
+        cmd.extend(['--junction-types', ','.join(args_dict['junction_types'])])
     if args_dict.get('zoom_start') is not None:
         cmd.extend(['--zoom-start', str(args_dict['zoom_start'])])
     if args_dict.get('zoom_end') is not None:
@@ -226,6 +226,8 @@ def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, time
         cmd.append('--no-redo')
     if args_dict.get('normalize', False):
         cmd.append('--normalize')
+    if args_dict.get('stenosis_off', False):
+        cmd.append('--stenosis-off')
     # Run command
     try:
         if verbose:
@@ -300,9 +302,9 @@ Examples:
     parser.add_argument('--set-name', default='VMR', help='Set name (e.g., set_1)')
     parser.add_argument('--geometries', nargs='+', default=None,
                        help='Specific geometry names to process (default: all)')
-    parser.add_argument('--junction-types', nargs='+',
-                       default=['NORMAL_JUNCTION', 'BloodVesselJunction'],
-                       help='Junction types to process (default: NORMAL_JUNCTION, BloodVesselJunction)')
+    parser.add_argument('--junction-types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
+                       default='NORMAL_JUNCTION,BloodVesselJunction',
+                       help='Comma-separated junction types to process (default: NORMAL_JUNCTION,BloodVesselJunction)')
     parser.add_argument('--zoom-start', type=int, default=None,
                        help='Start index for zoom window (default: 599)')
     parser.add_argument('--zoom-end', type=int, default=None,
@@ -329,6 +331,8 @@ Examples:
                        help='Only run NN inference and forward simulation on NN inputs (skip calibration)')
     parser.add_argument('--NN-vessel', action='store_true', dest='NN_vessel',
                        help='Also run vessel NN inference and forward sim (write *_NN_JunctionAndVessel.json/results)')
+    parser.add_argument('--stenosis-off', action='store_true', dest='stenosis_off',
+                       help='Turn off stenosis: calibrate_stenosis_coefficient=False, set all stenosis to 0, do not use NN to predict stenosis')
     parser.add_argument('--normalize', action='store_true',
                        help='Use normalized NN models and unnormalize predictions (pass --normalize to generate_zerod_inputs)')
     parser.add_argument('--timeout', type=int, default=1000,
@@ -366,6 +370,7 @@ Examples:
         'NN_vessel': args.NN_vessel,
         'no_redo': args.no_redo,
         'normalize': getattr(args, 'normalize', False),
+        'stenosis_off': getattr(args, 'stenosis_off', False),
     }
     
     # Get list of geometries to process

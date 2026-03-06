@@ -463,7 +463,7 @@ def compute_junction_flow_splits(
             q0 = out0_data.get("flow_in")
             q1 = out1_data.get("flow_in")
             # Skip timesteps where inlet flow is missing, zero, or below threshold (avoids ratio blow-up)
-            if q_in is None or q_in < 20.0:
+            if q_in is None or q_in < 5.0:
                 continue
             if q0 is not None:
                 ratios0.append(float(q0) / float(q_in))

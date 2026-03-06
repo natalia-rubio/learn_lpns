@@ -594,6 +594,7 @@ def split_junctions(geometric_input, centerline_data):
                     "vessel_name": connector_name,
                     "zero_d_element_type": "BloodVessel",
                     "zero_d_element_values": {
+                        #"C":inlet_vessel['zero_d_element_values'].get('C', 1e-),
                         "C": inlet_vessel['zero_d_element_values'].get('C', 1e-10) * 0.01,
                         "L": 0.0,  # No inductance for artificial connector
                         "R_poiseuille": 0.0,  # No resistance for artificial connector
@@ -775,10 +776,12 @@ def convert_el_normal_junctions_to_blood_vessel_junction(config):
     vessel_id_to_name = {v["vessel_id"]: v["vessel_name"] for v in vessels}
 
     for junc in config.get("junctions", []):
-        if junc.get("junction_type") != "NORMAL_JUNCTION":
-            continue
+        # if junc.get("junction_type") != "NORMAL_JUNCTION":
+        #     continue
         outlet_vessels = junc.get("outlet_vessels", [])
         if len(outlet_vessels) < 2:
+            if junc.get("junction_type") == "internal_junction":
+                junc["junction_type"] = "NORMAL_JUNCTION"
             continue
 
         gp = junc.get("geometric_params", {})
@@ -837,6 +840,7 @@ def adjust_junction_boundaries_by_entrance_length_from_files(geometric_input_pat
     result = adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_data, verbose=verbose)
 
     # Convert NORMAL_JUNCTIONs to BloodVesselJunction and set junction_values from geometric_params
+    #import pdb; pdb.set_trace()
     convert_el_normal_junctions_to_blood_vessel_junction(result)
     
     # Save result
@@ -1685,6 +1689,8 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                         fraction_consumed = consumed_length / merged_length if merged_length > 0 else 0.0
                                         _absorb_vessel_params(junc, outlet_vessel_name, merged_vessel, fraction=fraction_consumed)
                                         _reduce_vessel_params(merged_vessel, 1.0 - fraction_consumed)
+                                        if merged_vessel_name != outlet_vessel_name:
+                                            _rename_outlet_in_gp(junc, outlet_vessel_name, merged_vessel_name)
 
                                         merged_vessel['vessel_length'] = float(new_merged_length)
 
@@ -1860,6 +1866,8 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                     fraction_consumed = new_merged_length / merged_length if merged_length > 0 else 0.0
                                     _absorb_vessel_params(junc, outlet_vessel_name, merged_vessel, fraction=fraction_consumed)
                                     _reduce_vessel_params(merged_vessel, 1.0 - fraction_consumed)
+                                    if merged_vessel_name != outlet_vessel_name:
+                                        _rename_outlet_in_gp(junc, outlet_vessel_name, merged_vessel_name)
 
                                     merged_vessel['vessel_length'] = float(new_merged_length)
                                     
@@ -1878,6 +1886,8 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                             # Merged vessel length exactly equals EL — absorb everything
                             _absorb_vessel_params(junc, outlet_vessel_name, merged_vessel, fraction=1.0)
                             _reduce_vessel_params(merged_vessel, 0.0)
+                            if merged_vessel_name != outlet_vessel_name:
+                                _rename_outlet_in_gp(junc, outlet_vessel_name, merged_vessel_name)
 
                             if verbose:
                                 print(f"      → Merged vessel length exactly equals EL: {merged_length:.6f} cm")
@@ -2039,7 +2049,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # Calculate new vessel length: from new boundary to original outlet
                     # The part from vessel start to new boundary is now part of the junction
                     new_vessel_length = outlet_vessel_path_end - new_junction_boundary_path
-                    length_epsilon = 1e-6  # Treat as zero if within floating-point noise
+                    length_epsilon = 1e-10  # Treat as zero if within floating-point noise
                     
                     if verbose:
                         print(f"      → Original vessel length: {outlet_vessel_length:.6f} cm")

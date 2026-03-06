@@ -301,78 +301,84 @@ def main():
                 print(f"Saved vessel features and targets to {vessel_feat_path}, {vessel_tgt_path}")
 
         # ---- Build concatenated data_dict for NN training (across all geometries) ----
-        num_geos = len(geometries)
-        data_dict = build_data_dict_from_csvs(
-            set_name=args.set_name,
-            geometries=geometries,
-            output_type=args.output_type,
-            ml_inputs_root=os.path.join(args.data_root, "ml_inputs"),
-            geometry_variant=geometry_variant,
-            normalize=args.normalize,
-        )
+        try:
+            num_geos = len(geometries)
+            data_dict = build_data_dict_from_csvs(
+                set_name=args.set_name,
+                geometries=geometries,
+                output_type=args.output_type,
+                ml_inputs_root=os.path.join(args.data_root, "ml_inputs"),
+                geometry_variant=geometry_variant,
+                normalize=args.normalize,
+            )
 
-        norm_suffix = "_normalized" if args.normalize else ""
-        jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, geometry_variant, args.set_type)
-        os.makedirs(jax_out_dir, exist_ok=True)
-        jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl")
-        save_dict(data_dict, jax_out_path)
-        print(f"Wrote data_dict to {jax_out_path}")
+            norm_suffix = "_normalized" if args.normalize else ""
+            jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, geometry_variant, args.set_type)
+            os.makedirs(jax_out_dir, exist_ok=True)
+            jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl")
+            save_dict(data_dict, jax_out_path)
+            print(f"Wrote data_dict to {jax_out_path}")
 
-        # ---- Build and save vessel data_dict ----
-        vessel_data_dict = build_data_dict_from_vessel_csvs(
-            set_name=args.set_name,
-            geometries=geometries,
-            ml_inputs_root=os.path.join(args.data_root, "ml_inputs"),
-            geometry_variant=geometry_variant,
-            normalize=args.normalize,
-        )
-        vessel_jax_path = os.path.join(jax_out_dir, f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl")
-        save_dict(vessel_data_dict, vessel_jax_path)
-        n_vessel = vessel_data_dict["input"].shape[0]
-        print(f"Wrote vessel data_dict to {vessel_jax_path} (n_vessel_rows={n_vessel})")
+            # ---- Build and save vessel data_dict ----
+            vessel_data_dict = build_data_dict_from_vessel_csvs(
+                set_name=args.set_name,
+                geometries=geometries,
+                ml_inputs_root=os.path.join(args.data_root, "ml_inputs"),
+                geometry_variant=geometry_variant,
+                normalize=args.normalize,
+            )
+            vessel_jax_path = os.path.join(jax_out_dir, f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl")
+            save_dict(vessel_data_dict, vessel_jax_path)
+            n_vessel = vessel_data_dict["input"].shape[0]
+            print(f"Wrote vessel data_dict to {vessel_jax_path} (n_vessel_rows={n_vessel})")
 
-        # ---- Generate train/val split indices (by geometry: all rows from one geometry in same set) ----
-        if "input" not in data_dict:
-            raise ValueError("Expected 'input' in data_dict")
-        num_pts = int(getattr(data_dict["input"], "shape")[0])
-        ml_inputs_root = os.path.join(args.data_root, "ml_inputs")
-        row_ranges, _, geometries_ordered = get_geometry_row_ranges(
-            ml_inputs_root, args.set_name, geometry_variant, geometries=geometries
-        )
-        train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
-            num_pts=num_pts,
-            percent_train=args.percent_train,
-            seed=args.seed,
-            geometry_row_ranges=row_ranges,
-        )
+            # ---- Generate train/val split indices (by geometry: all rows from one geometry in same set) ----
+            if "input" not in data_dict:
+                raise ValueError("Expected 'input' in data_dict")
+            num_pts = int(getattr(data_dict["input"], "shape")[0])
+            ml_inputs_root = os.path.join(args.data_root, "ml_inputs")
+            row_ranges, _, geometries_ordered = get_geometry_row_ranges(
+                ml_inputs_root, args.set_name, geometry_variant, geometries=geometries
+            )
+            train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
+                num_pts=num_pts,
+                percent_train=args.percent_train,
+                seed=args.seed,
+                geometry_row_ranges=row_ranges,
+            )
 
-        train_geometries = [geometries_ordered[i] for i in train_geo_idx]
-        val_geometries = [geometries_ordered[i] for i in val_geo_idx]
+            train_geometries = [geometries_ordered[i] for i in train_geo_idx]
+            val_geometries = [geometries_ordered[i] for i in val_geo_idx]
 
-        split_dict = {
-            "train_ind": train_ind,
-            "val_ind": val_ind,
-            "num_offsets": 1,
-        }
+            split_dict = {
+                "train_ind": train_ind,
+                "val_ind": val_ind,
+                "num_offsets": 1,
+            }
 
-        split_out_dir = os.path.join(args.data_root, "split_indices", args.set_name, geometry_variant, args.set_type)
-        os.makedirs(split_out_dir, exist_ok=True)
-        split_out_path = os.path.join(split_out_dir, f"train_val_ind_{args.set_name}_num_geos_{num_geos}")
-        save_dict(split_dict, split_out_path)
+            split_out_dir = os.path.join(args.data_root, "split_indices", args.set_name, geometry_variant, args.set_type)
+            os.makedirs(split_out_dir, exist_ok=True)
+            split_out_path = os.path.join(split_out_dir, f"train_val_ind_{args.set_name}_num_geos_{num_geos}")
+            save_dict(split_dict, split_out_path)
 
-        geometries_txt_path = split_out_path + "_geometries.txt"
-        with open(geometries_txt_path, "w") as f:
-            f.write("Train geometries:\n")
-            for g in train_geometries:
-                f.write(f"  {g}\n")
-            f.write("Validation geometries:\n")
-            for g in val_geometries:
-                f.write(f"  {g}\n")
+            geometries_txt_path = split_out_path + "_geometries.txt"
+            with open(geometries_txt_path, "w") as f:
+                f.write("Train geometries:\n")
+                for g in train_geometries:
+                    f.write(f"  {g}\n")
+                f.write("Validation geometries:\n")
+                for g in val_geometries:
+                    f.write(f"  {g}\n")
 
-        print(f"Wrote split indices to {split_out_path} (n_train={len(train_ind)}, n_val={len(val_ind)})")
-        print(f"Wrote geometry set assignment to {geometries_txt_path}")
-        print("Train geometries:", train_geometries)
-        print("Validation geometries:", val_geometries)
+            print(f"Wrote split indices to {split_out_path} (n_train={len(train_ind)}, n_val={len(val_ind)})")
+            print(f"Wrote geometry set assignment to {geometries_txt_path}")
+            print("Train geometries:", train_geometries)
+            print("Validation geometries:", val_geometries)
+        except Exception as e:
+            print(f"  Skipping data_dict / jax_arrays / split for {geometry_variant}: {e}")
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
 
 if __name__ == "__main__":
     main()
