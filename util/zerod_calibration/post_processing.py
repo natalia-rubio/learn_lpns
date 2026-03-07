@@ -1009,10 +1009,14 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 if len(available_vessels) > 20:
                     print(f"      ... and {len(available_vessels) - 20} more")
         
-        # Calculate MSE for each observation
+        # Calculate MSE and max error for each observation
         modality_mse = {}
         total_mse_pressure = []
         total_mse_flow = []
+        total_max_pressure = []
+        total_max_flow = []
+        total_max_pressure_rel = []
+        total_max_flow_rel = []
         
         # Track which locations are being processed
         locations_processed = []
@@ -1183,7 +1187,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             obs_values_0d_clean = obs_values_0d_clean[:min_len]
             obs_values_3d_clean = obs_values_3d_clean[:min_len]
             
-            # Calculate MSE
+            # Calculate MSE and max error over the cycle
             diff = obs_values_0d_clean - obs_values_3d_clean
             
             # if we are looking at pressure, convert to mmHg by dividing by 1333.322
@@ -1191,12 +1195,17 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 diff = diff / 1333.322
             mse = np.mean(diff**2)
             mae = np.mean(np.abs(diff))
+            max_abs_err = np.max(np.abs(diff))
+            # Relative error at the timestep where absolute error is max: |(X_3D - X_0D) / X_3D|
+            idx_max = np.argmax(np.abs(diff))
+            x3d_at_max = obs_values_3d_clean[idx_max]
+            rel_err_at_max = np.abs((x3d_at_max - obs_values_0d_clean[idx_max]) / x3d_at_max) if x3d_at_max != 0 else np.nan
             
             # Track this location as successfully processed
             locations_processed.append(obs_key)
             
             if verbose:
-                print(f"      ✓ Processed {obs_key}: MSE={mse:.3E}, MAE={mae:.3E}, n={min_len}")
+                print(f"      ✓ Processed {obs_key}: MSE={mse:.3E}, MAE={mae:.3E}, max_err={max_abs_err:.3E}, n={min_len}")
             
             # Save comparison plot for debugging
             try:
@@ -1278,6 +1287,8 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             
             modality_mse[obs_key] = {
                 'mse': mse,
+                'max_error': max_abs_err,
+                'rel_error_at_max': rel_err_at_max,
                 'type': obs_type,
                 'vessel': vessel_name,
                 'n_points': min_len
@@ -1285,15 +1296,25 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             
             if obs_type == 'pressure':
                 total_mse_pressure.append(mse)
+                total_max_pressure.append(max_abs_err)
+                total_max_pressure_rel.append(rel_err_at_max if np.isfinite(rel_err_at_max) else np.nan)
             else:
                 total_mse_flow.append(mse)
+                total_max_flow.append(max_abs_err)
+                total_max_flow_rel.append(rel_err_at_max if np.isfinite(rel_err_at_max) else np.nan)
         
-        # Store results
+        # Store results (max error: mean of per-location max errors over the cycle)
         mse_results[modality_name] = {
             'individual': modality_mse,
             'mean_pressure_mse': np.mean(total_mse_pressure) if total_mse_pressure else np.nan,
             'mean_flow_mse': np.mean(total_mse_flow) if total_mse_flow else np.nan,
-            'overall_mse': np.mean(total_mse_pressure + total_mse_flow) if (total_mse_pressure or total_mse_flow) else np.nan
+            'overall_mse': np.mean(total_mse_pressure + total_mse_flow) if (total_mse_pressure or total_mse_flow) else np.nan,
+            'mean_pressure_max_error': np.mean(total_max_pressure) if total_max_pressure else np.nan,
+            'mean_flow_max_error': np.mean(total_max_flow) if total_max_flow else np.nan,
+            'overall_max_error': np.mean(total_max_pressure + total_max_flow) if (total_max_pressure or total_max_flow) else np.nan,
+            'mean_pressure_max_rel_error': np.nanmean(total_max_pressure_rel) if total_max_pressure_rel else np.nan,
+            'mean_flow_max_rel_error': np.nanmean(total_max_flow_rel) if total_max_flow_rel else np.nan,
+            'overall_max_rel_error': np.nanmean(total_max_pressure_rel + total_max_flow_rel) if (total_max_pressure_rel or total_max_flow_rel) else np.nan,
         }
         
         # Print summary of locations used
@@ -1543,6 +1564,79 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                     mse_f = mse_results[mod]['mean_flow_mse']
                     if not np.isnan(mse_f):
                         row.append(f'{mse_f:.3E}')
+                    else:
+                        row.append('N/A')
+                else:
+                    row.append('N/A')
+            writer.writerow(row)
+            
+            # Overall Max Error (mean of per-location max absolute errors over the cycle)
+            row = ['Overall Max Error']
+            for mod in modalities:
+                if mod in mse_results:
+                    val = mse_results[mod].get('overall_max_error', np.nan)
+                    if not np.isnan(val):
+                        row.append(f'{val:.3E}')
+                    else:
+                        row.append('N/A')
+                else:
+                    row.append('N/A')
+            writer.writerow(row)
+            # Mean Pressure Max Error
+            row = ['Mean Pressure Max Error']
+            for mod in modalities:
+                if mod in mse_results:
+                    val = mse_results[mod].get('mean_pressure_max_error', np.nan)
+                    if not np.isnan(val):
+                        row.append(f'{val:.3E}')
+                    else:
+                        row.append('N/A')
+                else:
+                    row.append('N/A')
+            writer.writerow(row)
+            # Mean Flow Max Error
+            row = ['Mean Flow Max Error']
+            for mod in modalities:
+                if mod in mse_results:
+                    val = mse_results[mod].get('mean_flow_max_error', np.nan)
+                    if not np.isnan(val):
+                        row.append(f'{val:.3E}')
+                    else:
+                        row.append('N/A')
+                else:
+                    row.append('N/A')
+            writer.writerow(row)
+            # Overall Max Rel Error (relative error at max-error timestep: |(X_3D - X_0D)/X_3D|)
+            row = ['Overall Max Rel Error']
+            for mod in modalities:
+                if mod in mse_results:
+                    val = mse_results[mod].get('overall_max_rel_error', np.nan)
+                    if not np.isnan(val):
+                        row.append(f'{val:.4f}')
+                    else:
+                        row.append('N/A')
+                else:
+                    row.append('N/A')
+            writer.writerow(row)
+            # Mean Pressure Max Rel Error
+            row = ['Mean Pressure Max Rel Error']
+            for mod in modalities:
+                if mod in mse_results:
+                    val = mse_results[mod].get('mean_pressure_max_rel_error', np.nan)
+                    if not np.isnan(val):
+                        row.append(f'{val:.4f}')
+                    else:
+                        row.append('N/A')
+                else:
+                    row.append('N/A')
+            writer.writerow(row)
+            # Mean Flow Max Rel Error
+            row = ['Mean Flow Max Rel Error']
+            for mod in modalities:
+                if mod in mse_results:
+                    val = mse_results[mod].get('mean_flow_max_rel_error', np.nan)
+                    if not np.isnan(val):
+                        row.append(f'{val:.4f}')
                     else:
                         row.append('N/A')
                 else:
