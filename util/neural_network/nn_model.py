@@ -29,18 +29,16 @@ class NeuralNet():
         norm_suffix = "_normalized" if self.normalize else ""
 
         data_root = network_params.get("data_root", "data")
+        run_config_suffix = network_params.get("run_config_suffix")
         jax_filename = network_params.get(
             "jax_arrays_filename",
             f"jax_arrays_num_geos_{network_params['num_geos']}{norm_suffix}.pkl",
         )
-        jax_arrays_path = os.path.join(
-            data_root,
-            "jax_arrays",
-            self.set_name,
-            self.geometry_variant,
-            self.set_type,
-            jax_filename,
-        )
+        path_parts = [data_root, "jax_arrays", self.set_name]
+        if run_config_suffix:
+            path_parts.append(run_config_suffix)
+        path_parts.extend([self.geometry_variant, self.set_type, jax_filename])
+        jax_arrays_path = os.path.join(*path_parts)
         print(f"  Loading jax_arrays from: {jax_arrays_path}")
         self.data_dict = load_dict(jax_arrays_path)
         self.model_name_suffix = network_params.get("model_name_suffix", "")
@@ -76,6 +74,7 @@ class NeuralNet():
     
     def get_gradients(self, indices):
         """Compute gradients of loss w.r.t. weights for the given batch (no update)."""
+        print(f" Overestimate weight: {self.asymmetric_loss_overestimate_weight}")
         return grad(loss, argnums=-2)(
             self.input[indices, :],
             self.output[indices, :],

@@ -8,7 +8,7 @@ Usage:
 
 It searches for calibrated JSON outputs and the geometric input JSON under
 <data_root>/<set_name>/<geo_name>/ and writes a PNG to
-results/param_comparison/<set_name>/<geo_name>/zero_d_parameter_bars.png
+results/param_comparison/<run_config>/<set_name>/<geo_name>/zero_d_parameter_bars.png
 """
 import os
 import argparse
@@ -80,6 +80,7 @@ def main():
     parser.add_argument('--set-name', required=True, help='Dataset set name (e.g., VMR)')
     parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., 0063_1001)')
     parser.add_argument('--data-root', default=None, help='Root data/zeroD directory (default: ../../data/zeroD relative to script)')
+    parser.add_argument('--run-config', default='base', help='Run config name for output subfolder (e.g., base, stenosis_off)')
     parser.add_argument('--output-root', default=None, help='Output results root (default: results/param_comparison)')
     parser.add_argument('--modalities', nargs='*', help='Optional list of modalities to include (e.g., NORMAL_JUNCTION BloodVesselJunction). If omitted, all detected modalities are used.')
     parser.add_argument('--verbose', action='store_true')
@@ -118,13 +119,13 @@ def main():
             print("Error: No valid modalities found after filtering")
             return 2
 
-    # Output directory
+    # Output directory: <output_root>/<run_config>/<set_name>/<geo_name>
     if args.output_root:
         output_root = os.path.abspath(args.output_root)
     else:
         output_root = os.path.abspath(os.path.join('results', 'param_comparison'))
 
-    out_dir = os.path.join(output_root, args.set_name, args.geo_name)
+    out_dir = os.path.join(output_root, args.run_config, args.set_name, args.geo_name)
     os.makedirs(out_dir, exist_ok=True)
 
     if args.verbose:

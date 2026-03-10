@@ -34,7 +34,7 @@ from util.data_processing.generate_split_indices import (
 )
 from util.tools.basic import save_dict
 
-def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", data_root="data"):
+def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", data_root="data", run_config_suffix=None):
     """
     Discover all geometries that have both geometric_features.csv and junction_lumped_parameters.csv.
     
@@ -42,11 +42,15 @@ def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", dat
         set_name: Set name (e.g., VMR)
         geometry_variant: Geometry variant name (e.g., "bifurcations" or "bifurcations_EL")
         data_root: Repo data root (default: data)
+        run_config_suffix: If set, ml_inputs path is .../set_name/run_config_suffix/geometry_variant/
         
     Returns:
         List of geometry names sorted alphabetically
     """
-    ml_inputs_dir = os.path.join(data_root, "ml_inputs", set_name, geometry_variant)
+    if run_config_suffix:
+        ml_inputs_dir = os.path.join(data_root, "ml_inputs", set_name, run_config_suffix, geometry_variant)
+    else:
+        ml_inputs_dir = os.path.join(data_root, "ml_inputs", set_name, geometry_variant)
     if not os.path.exists(ml_inputs_dir):
         return []
     
@@ -81,9 +85,11 @@ def main():
     parser.add_argument("--percent-train", type=float, default=0.8, help="Fraction of points used for training (default: 0.8)")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for train/val split (default: 0)")
     parser.add_argument("--data-root", default="data", help="Repo data root (default: data)")
+    parser.add_argument("--run-config", default="base", help="Run config suffix for path separation (default: base). E.g. normalized_clip, stenosis_off. ml_inputs/jax_arrays/zeroD use .../set_name/run_config/...)")
     parser.add_argument("--normalize", action="store_true", help="Apply z-normalization to inputs/outputs (saves to separate _normalized pkl)")
     parser.add_argument("--verbose", action="store_true", help="Verbose printing")
     args = parser.parse_args()
+    run_config_suffix = (args.run_config or "base").strip()
 
     # Determine which geometry variants to process
     if args.geometry_variant == "all":
@@ -103,10 +109,15 @@ def main():
             print(f"Using {len(geometries)} specified geometries: {geometries}")
         else:
             print(f"Auto-discovering geometries with both CSV files for {args.set_name}/{geometry_variant}...")
-            geometries = discover_geometries_with_csvs(args.set_name, geometry_variant, args.data_root)
+            geometries = discover_geometries_with_csvs(args.set_name, geometry_variant, args.data_root, run_config_suffix)
             if len(geometries) == 0:
+                _search_parts = [args.data_root, "ml_inputs", args.set_name]
+                if run_config_suffix:
+                    _search_parts.append(run_config_suffix)
+                _search_parts.append(geometry_variant)
+                _search_dir = os.path.join(*_search_parts)
                 print(f"  No geometries found with both geometric_features.csv and junction_lumped_parameters.csv")
-                print(f"  Searched in: {os.path.join(args.data_root, 'ml_inputs', args.set_name, geometry_variant)}")
+                print(f"  Searched in: {_search_dir}")
                 continue
             print(f"  Found {len(geometries)} geometries: {geometries}")
 
@@ -115,8 +126,14 @@ def main():
             print(f"Processing geometry {geo}")
 
         # Check if both CSV files already exist
-            csv_path = os.path.join(args.data_root, "ml_inputs", args.set_name, geometry_variant, geo, "geometric_features.csv")
-            targets_csv_path = os.path.join(args.data_root, "ml_inputs", args.set_name, geometry_variant, geo, "junction_lumped_parameters.csv")
+            if run_config_suffix:
+                _ml_base = os.path.join(args.data_root, "ml_inputs", args.set_name, run_config_suffix)
+                _zero_d_base = os.path.join(args.data_root, "zeroD", args.set_name, run_config_suffix)
+            else:
+                _ml_base = os.path.join(args.data_root, "ml_inputs", args.set_name)
+                _zero_d_base = os.path.join(args.data_root, "zeroD", args.set_name)
+            csv_path = os.path.join(_ml_base, geometry_variant, geo, "geometric_features.csv")
+            targets_csv_path = os.path.join(_ml_base, geometry_variant, geo, "junction_lumped_parameters.csv")
             
             # if os.path.exists(csv_path) and os.path.exists(targets_csv_path):
             #     print(f"  Both CSV files already exist, skipping extraction for {geo}")
@@ -129,7 +146,7 @@ def main():
                 geometric_input_filename = "bifurcations_geometric_input.json"
             
             geometric_input_path = os.path.join(
-                args.data_root, "zeroD", args.set_name, geo, geometric_input_filename
+                _zero_d_base, geo, geometric_input_filename
             )
             X, feature_names, junction_names, outlet_primary_names = load_junction_geometric_features(
                 geometric_input_path, verbose=args.verbose
@@ -190,9 +207,7 @@ def main():
                 calib_output_filename = "bifurcations_calibrated_output_BloodVesselJunction.json"
             
             calib_output_path = os.path.join(
-                args.data_root,
-                "zeroD",
-                args.set_name,
+                _zero_d_base,
                 geo,
                 calib_output_filename,
             )
@@ -303,17 +318,26 @@ def main():
         # ---- Build concatenated data_dict for NN training (across all geometries) ----
         try:
             num_geos = len(geometries)
+            if run_config_suffix:
+                _ml_root_build = os.path.join(args.data_root, "ml_inputs", args.set_name, run_config_suffix)
+                _set_name_build = ""
+            else:
+                _ml_root_build = os.path.join(args.data_root, "ml_inputs")
+                _set_name_build = args.set_name
             data_dict = build_data_dict_from_csvs(
-                set_name=args.set_name,
+                set_name=_set_name_build,
                 geometries=geometries,
                 output_type=args.output_type,
-                ml_inputs_root=os.path.join(args.data_root, "ml_inputs"),
+                ml_inputs_root=_ml_root_build,
                 geometry_variant=geometry_variant,
                 normalize=args.normalize,
             )
 
             norm_suffix = "_normalized" if args.normalize else ""
-            jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, geometry_variant, args.set_type)
+            if run_config_suffix:
+                jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, run_config_suffix, geometry_variant, args.set_type)
+            else:
+                jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, geometry_variant, args.set_type)
             os.makedirs(jax_out_dir, exist_ok=True)
             jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl")
             save_dict(data_dict, jax_out_path)
@@ -321,9 +345,9 @@ def main():
 
             # ---- Build and save vessel data_dict ----
             vessel_data_dict = build_data_dict_from_vessel_csvs(
-                set_name=args.set_name,
+                set_name=_set_name_build,
                 geometries=geometries,
-                ml_inputs_root=os.path.join(args.data_root, "ml_inputs"),
+                ml_inputs_root=_ml_root_build,
                 geometry_variant=geometry_variant,
                 normalize=args.normalize,
             )
@@ -336,9 +360,12 @@ def main():
             if "input" not in data_dict:
                 raise ValueError("Expected 'input' in data_dict")
             num_pts = int(getattr(data_dict["input"], "shape")[0])
-            ml_inputs_root = os.path.join(args.data_root, "ml_inputs")
             row_ranges, _, geometries_ordered = get_geometry_row_ranges(
-                ml_inputs_root, args.set_name, geometry_variant, geometries=geometries
+                os.path.join(args.data_root, "ml_inputs"),
+                args.set_name,
+                geometry_variant,
+                geometries=geometries,
+                run_config_suffix=run_config_suffix,
             )
             train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
                 num_pts=num_pts,
@@ -356,7 +383,10 @@ def main():
                 "num_offsets": 1,
             }
 
-            split_out_dir = os.path.join(args.data_root, "split_indices", args.set_name, geometry_variant, args.set_type)
+            if run_config_suffix:
+                split_out_dir = os.path.join(args.data_root, "split_indices", args.set_name, run_config_suffix, geometry_variant, args.set_type)
+            else:
+                split_out_dir = os.path.join(args.data_root, "split_indices", args.set_name, geometry_variant, args.set_type)
             os.makedirs(split_out_dir, exist_ok=True)
             split_out_path = os.path.join(split_out_dir, f"train_val_ind_{args.set_name}_num_geos_{num_geos}")
             save_dict(split_dict, split_out_path)

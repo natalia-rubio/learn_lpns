@@ -40,6 +40,7 @@ def parse_split_geometries_txt(txt_path: str):
 
 def launch_training(network_params, optimizer_params, training_params):
     network_params["output_type"] = "rri"
+    symmetric_loss = network_params.pop("symmetric_loss", False)
     
     print("Training RRI model...")
     # lr_init1 = 0.1
@@ -61,12 +62,12 @@ def launch_training(network_params, optimizer_params, training_params):
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
         training_params["num_epochs"] = 1000
-        network_params["asymmetric_loss_overestimate_weight"] = 10
+        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10
     else:
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
         training_params["num_epochs"] = 10000#5000
-        network_params["asymmetric_loss_overestimate_weight"] = 2000
+        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 2000
     optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init1
     model = NeuralNet(network_params, optimizer_params)
@@ -79,12 +80,12 @@ def launch_training(network_params, optimizer_params, training_params):
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
         training_params["num_epochs"] = 2000
-        network_params["asymmetric_loss_overestimate_weight"] = 10
+        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10
     else:
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
         training_params["num_epochs"] = 2000
-        network_params["asymmetric_loss_overestimate_weight"] = 100
+        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 100
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
 
@@ -93,12 +94,12 @@ def launch_training(network_params, optimizer_params, training_params):
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
         training_params["num_epochs"] = 2000
-        network_params["asymmetric_loss_overestimate_weight"] = 1000
+        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 1000
     else:
         network_params["layer_width"] = 20
         network_params["num_layers"] = 4
         training_params["num_epochs"] = 2000#5000
-        network_params["asymmetric_loss_overestimate_weight"] = 10000
+        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10000
     network_params["target_coef_ind"] = 2
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
@@ -125,10 +126,10 @@ if __name__ == "__main__":
                         help="Use Leaky ReLU instead of ReLU (helps gradient flow with normalized data)")
     parser.add_argument("--print-gradients", action="store_true",
                         help="Print gradient stats for the first batch before training (for debugging)")
-    parser.add_argument("--asymmetric-loss", action="store_true",
-                        help="Use asymmetric loss: overestimates (pred > target) count twice as much as underestimates.")
-    parser.add_argument("--overestimate-weight", type=float, default=2.0,
-                        help="Weight for overestimation errors when --asymmetric-loss (default: 2.0).")
+    parser.add_argument("--symmetric-loss", action="store_true", dest="symmetric_loss",
+                        help="Use symmetric loss (overestimate weight 1.0 for all models). When off, per-model asymmetric weights are used (e.g. 2000, 100, 10000 for junction).")
+    parser.add_argument("--run-config", default="",
+                        help="Run config suffix for path separation (e.g. normalized_clip). When set, jax_arrays and split_indices use .../set_name/run_config/...)")
     cli_args = parser.parse_args()
 
     set_name = cli_args.set_name
@@ -137,6 +138,7 @@ if __name__ == "__main__":
     geometry_variant_arg = getattr(cli_args, "geometry_variant_flag", None) or cli_args.geometry_variant or "all"
     normalize = cli_args.normalize
     norm_suffix = "_normalized" if normalize else ""
+    run_config_suffix = (cli_args.run_config or "").strip() or None
     output_type = "rri"
     set_type = "test"
 
@@ -151,14 +153,17 @@ if __name__ == "__main__":
         print(f"\n{'='*80}")
         print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}"
               f"{' (normalized)' if normalize else ''}")
-        if cli_args.asymmetric_loss:
-            print(f"Asymmetric loss: overestimate weight = {cli_args.overestimate_weight}")
+        if getattr(cli_args, "symmetric_loss", False):
+            print("Symmetric loss: overestimate weight = 1.0 for all models")
         print(f"{'='*80}")
         
         if cli_args.split_path:
             split_path = cli_args.split_path
         else:
-            split_path = f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
+            if run_config_suffix:
+                split_path = f"data/split_indices/{set_name}/{run_config_suffix}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
+            else:
+                split_path = f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
         split_ind_dict = load_dict(split_path)
 
         train_inds = split_ind_dict["train_ind"]
@@ -168,10 +173,16 @@ if __name__ == "__main__":
         if cli_args.vessel:
             # Vessel NN: load vessel jax to get row_ranges and geometries; map junction split to vessel indices
             data_root = "data"
-            vessel_pkl = os.path.join(
-                data_root, "jax_arrays", set_name, geometry_variant, set_type,
-                f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl"
-            )
+            if run_config_suffix:
+                vessel_pkl = os.path.join(
+                    data_root, "jax_arrays", set_name, run_config_suffix, geometry_variant, set_type,
+                    f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl"
+                )
+            else:
+                vessel_pkl = os.path.join(
+                    data_root, "jax_arrays", set_name, geometry_variant, set_type,
+                    f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl"
+                )
             vessel_data = load_dict(vessel_pkl)
             num_input_features = int(vessel_data["input"].shape[1])
             vessel_row_ranges = vessel_data["row_ranges"]
@@ -189,6 +200,7 @@ if __name__ == "__main__":
                 junction_row_ranges, _, geometries_ordered = get_geometry_row_ranges(
                     os.path.join(data_root, "ml_inputs"), set_name, geometry_variant,
                     geometries=vessel_geometries,
+                    run_config_suffix=run_config_suffix,
                 )
                 train_ind_set = set(np.asarray(train_inds).ravel())
                 train_geo_names = set()
@@ -223,7 +235,6 @@ if __name__ == "__main__":
                 )
             print(f"  Vessel split: {len(vessel_train_ind)} train, {len(vessel_val_ind)} val "
                   f"(train geos: {sorted(train_geo_names)}, val geos: {sorted(val_geo_names)})")
-            _ow = cli_args.overestimate_weight if cli_args.asymmetric_loss else 1.0
             network_params = {"num_input_features": num_input_features,
                              "num_layers": 5,
                              "layer_width": 100,
@@ -233,12 +244,14 @@ if __name__ == "__main__":
                              "num_geos": num_geos,
                              "data_root": data_root,
                              "geometry_variant": geometry_variant,
+                             "run_config_suffix": run_config_suffix,
                              "normalize": normalize,
                              "use_leaky_relu": getattr(cli_args, "leaky_relu", False),
                              "pred_mode": "m1",
                              "jax_arrays_filename": f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl",
                              "model_name_suffix": "_vessel",
-                             "asymmetric_loss_overestimate_weight": _ow}
+                             "asymmetric_loss_overestimate_weight": 1.0,
+                             "symmetric_loss": getattr(cli_args, "symmetric_loss", False)}
             training_params = {"num_epochs": 500,
                               "batch_size": 10,
                               "train_inds": np.asarray(vessel_train_ind),
@@ -251,12 +264,16 @@ if __name__ == "__main__":
             # Junction NN: infer input dimension from jax_arrays so it matches data (e.g. after adding flow_split)
             data_root = "data"
             jax_filename = f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl"
-            jax_arrays_path = os.path.join(
-                data_root, "jax_arrays", set_name, geometry_variant, set_type, jax_filename
-            )
+            if run_config_suffix:
+                jax_arrays_path = os.path.join(
+                    data_root, "jax_arrays", set_name, run_config_suffix, geometry_variant, set_type, jax_filename
+                )
+            else:
+                jax_arrays_path = os.path.join(
+                    data_root, "jax_arrays", set_name, geometry_variant, set_type, jax_filename
+                )
             junction_data = load_dict(jax_arrays_path)
             num_input_features = int(junction_data["input"].shape[1])
-            _ow = cli_args.overestimate_weight if cli_args.asymmetric_loss else 1.0
             network_params = {"num_input_features": num_input_features,
                              "num_layers": 5,
                              "layer_width": 100,
@@ -266,11 +283,13 @@ if __name__ == "__main__":
                              "num_geos": num_geos,
                              "data_root": "data",
                              "geometry_variant": geometry_variant,
+                             "run_config_suffix": run_config_suffix,
                              "normalize": normalize,
                              "use_leaky_relu": getattr(cli_args, "leaky_relu", False),
                              "pred_mode": "m1",
                              "model_name_suffix": "",
-                             "asymmetric_loss_overestimate_weight": _ow}
+                             "asymmetric_loss_overestimate_weight": 1.0,
+                             "symmetric_loss": getattr(cli_args, "symmetric_loss", False)}
             training_params = {"num_epochs": 500,
                               "batch_size": 10,
                               "train_inds": train_inds,
