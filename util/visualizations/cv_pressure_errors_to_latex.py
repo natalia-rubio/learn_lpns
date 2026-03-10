@@ -135,12 +135,15 @@ def main():
         default="results",
         help="Root for results/cross_validation (default: results)",
     )
+    parser.add_argument(
+        "--run-config",
+        default="base",
+        help="Run-config subfolder (default: base). Use e.g. stenosis_off or normalized_clip when CV was run with that config.",
+    )
     args = parser.parse_args()
 
-    base = os.path.join(
-        args.data_root, "cross_validation", args.set_name,
-        f"{args.geometry_variant}_cv_summary"
-    )
+    out_dir = os.path.join(args.data_root, "cross_validation", args.set_name, (args.run_config or "base").strip())
+    base = os.path.join(out_dir, f"{args.geometry_variant}_cv_summary")
     path_rel = base + "_pressure_max_rel_error.csv"
     path_max = base + "_pressure_max_error.csv"
     path_mse = base + "_pressure_mse.csv"

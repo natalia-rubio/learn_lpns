@@ -74,11 +74,11 @@ except ImportError:
 # Colors for each junction type (same color for original and bifurcations variants)
 JUNCTION_COLORS = {
     'NORMAL_JUNCTION': 'red',
-    'BloodVesselJunction': 'orange',
+    'BloodVesselJunction': 'mediumpurple',
     'DirIndepJunction': 'dodgerblue',
     'HybridJunction': 'violet',
     'BloodVesselJunction_NN': 'dodgerblue',
-    'BloodVesselJunction_NN_plus_Vessel_NN': 'orchid',
+    'BloodVesselJunction_NN_plus_Vessel_NN': 'limegreen',
 }
 
 # Line styles for geometry variants
@@ -98,7 +98,7 @@ LINE_STYLES = {
     },
     # Geometric 0D (uncalibrated) - original geometry
     'geometric_0d': {
-        'color': 'green',
+        'color': 'indianred',
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D Poiseuille',
@@ -106,7 +106,7 @@ LINE_STYLES = {
     },
     # Geometric 0D (uncalibrated) - bifurcations geometry
     'bifurcations_geometric_0d': {
-        'color': 'green',
+        'color': 'indianred',
         'linestyle': ':',
         'linewidth': 4,
         'label': '0D Poiseuille',
@@ -114,7 +114,7 @@ LINE_STYLES = {
     },
     # Geometric 0D (uncalibrated) - bifurcations geometry
     'bifurcations_EL_geometric_0d': {
-        'color': 'green',
+        'color': 'indianred',
         'linestyle': ':',
         'linewidth': 4,
         'label': '0D Poiseuille',
@@ -129,7 +129,7 @@ LINE_STYLES = {
         'alpha': 0.5,
     },
     'original_BloodVesselJunction': {
-        'color': 'orange',
+        'color': 'mediumpurple',
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D RRI Junction (Calibrated) (orig)',
@@ -158,7 +158,7 @@ LINE_STYLES = {
         'alpha': 0.5,
     },
     'bifurcations_BloodVesselJunction': {
-        'color': 'orange',
+        'color': 'mediumpurple',
         'linestyle': ':',
         'linewidth': 4,
         'label': '0D RRI Junction (Calibrated) (bif)',
@@ -187,7 +187,7 @@ LINE_STYLES = {
         'alpha': 0.5,
     },
     'BloodVesselJunction': {
-        'color': 'orange',
+        'color': 'mediumpurple',
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D RRI Junction (Calibrated)',
@@ -230,14 +230,14 @@ LINE_STYLES = {
         'alpha': 0.5,
     },
     'BloodVesselJunction_NN_plus_Vessel_NN': {
-        'color': 'orchid',
+        'color': 'limegreen',
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D RRI Junction (NN + Vessel NN)',
         'alpha': 0.5,
     },
     'NN_vessel': {
-        'color': 'chartreuse',
+        'color': 'gold',
         'linestyle': '-.',
         'linewidth': 4,
         'label': '0D NN Vessel Only',
@@ -1054,8 +1054,10 @@ def main():
     parser.add_argument('--junction-types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
                        default='original_NORMAL_JUNCTION,bifurcations_NORMAL_JUNCTION,original_BloodVesselJunction,bifurcations_BloodVesselJunction',
                        help='Comma-separated junction types to plot (e.g., original_NORMAL_JUNCTION,bifurcations_BloodVesselJunction)')
+    parser.add_argument('--run-config', default='base',
+                        help='Run config name for output subfolder (e.g., base, stenosis_off)')
     parser.add_argument('--output-dir', default='results/location_comparison', 
-                        help='Output directory for plots')
+                        help='Output directory for plots (run-config subfolder is appended)')
     parser.add_argument('--data-dir', default='data/zeroD', 
                         help='Data directory for input files')
     parser.add_argument('--time-period', type=float, default=None,
@@ -1131,8 +1133,8 @@ def main():
             if args.verbose:
                 print(f"  Using {len(locations)} locations after filtering to first 10 vessels")
     
-    # Create output directory
-    output_dir = os.path.join(args.output_dir, args.set_name, args.geo_name)
+    # Create output directory: <output_dir>/<run_config>/<set_name>/<geo_name>
+    output_dir = os.path.join(args.output_dir, args.run_config, args.set_name, args.geo_name)
     os.makedirs(output_dir, exist_ok=True)
     
     # Find geometric input path

@@ -76,7 +76,9 @@ def find_1d_solution(set_name, geo_name):
     return None
 
 
-def process_geometry(set_name, geo_name, skip_calibration=False, output_dir='data/zeroD'):
+def process_geometry(set_name, geo_name, skip_calibration=False, output_dir='data/zeroD',
+                     normalize=False, stenosis_off=False, symmetric_loss=False,
+                     clip_predictions=False, penalty_off=False):
     """
     Process a single geometry to generate 0D input files.
     
@@ -85,6 +87,7 @@ def process_geometry(set_name, geo_name, skip_calibration=False, output_dir='dat
         geo_name: Geometry name
         skip_calibration: Whether to skip calibration step
         output_dir: Output directory for 0D files
+        normalize, stenosis_off, symmetric_loss, clip_predictions, penalty_off: run-config flags for path separation
     """
     print(f"\n{'='*80}")
     print(f"Processing: {set_name}/{geo_name}")
@@ -116,6 +119,16 @@ def process_geometry(set_name, geo_name, skip_calibration=False, output_dir='dat
     else:
         print(f"  WARNING: No 1D solution found. Skipping calibration for {geo_name}")
         cmd.append('--skip-calibration')
+    if normalize:
+        cmd.append('--normalize')
+    if stenosis_off:
+        cmd.append('--stenosis-off')
+    if penalty_off:
+        cmd.append('--penalty-off')
+    if symmetric_loss:
+        cmd.append('--symmetric-loss')
+    if clip_predictions:
+        cmd.append('--clip-predictions')
     
     # Run command
     try:
@@ -147,6 +160,11 @@ def main():
                        help='Output directory for 0D files (default: data/zeroD)')
     parser.add_argument('--data-dir', default='data',
                        help='Base data directory (default: data)')
+    parser.add_argument('--normalize', action='store_true', help='Use normalized paths (run-config)')
+    parser.add_argument('--stenosis-off', action='store_true', dest='stenosis_off', help='Stenosis-off run-config')
+    parser.add_argument('--penalty-off', action='store_true', dest='penalty_off', help='Zero L2 penalties on R and stenosis (incompatible with --stenosis-off)')
+    parser.add_argument('--symmetric-loss', action='store_true', dest='symmetric_loss', help='Symmetric loss run-config (overestimate weight 1.0 for all models)')
+    parser.add_argument('--clip-predictions', action='store_true', dest='clip_predictions', help='Clip predictions run-config')
     
     args = parser.parse_args()
     
@@ -159,6 +177,9 @@ def main():
     if not geometries:
         print(f"No geometries found in {args.set_name}")
         return
+
+    if getattr(args, 'stenosis_off', False) and getattr(args, 'penalty_off', False):
+        parser.error("Cannot use both --stenosis-off and --penalty-off.")
     
     print(f"Found {len(geometries)} geometries in {args.set_name}")
     
@@ -169,7 +190,12 @@ def main():
     for geo_name in geometries:
         success = process_geometry(args.set_name, geo_name, 
                                   skip_calibration=args.skip_calibration,
-                                  output_dir=args.output_dir)
+                                  output_dir=args.output_dir,
+                                  normalize=getattr(args, 'normalize', False),
+                                  stenosis_off=getattr(args, 'stenosis_off', False),
+                                  symmetric_loss=getattr(args, 'symmetric_loss', False),
+                                  clip_predictions=getattr(args, 'clip_predictions', False),
+                                  penalty_off=getattr(args, 'penalty_off', False))
         if success:
             success_count += 1
         else:

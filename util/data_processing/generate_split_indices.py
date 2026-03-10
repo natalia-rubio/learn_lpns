@@ -36,14 +36,21 @@ def get_geometry_row_ranges(
     set_name: str,
     geometry_variant: str,
     geometries: Optional[List[str]] = None,
+    run_config_suffix: Optional[str] = None,
 ) -> Tuple[List[Tuple[int, int]], int, List[str]]:
     """
     Return (row_ranges, total_rows, geometries) for each geometry in order.
     row_ranges[i] = (start, end) so geometry i has row indices [start, end).
     Geometries are in sorted order if discovered from disk.
+    When run_config_suffix is set, ml_inputs path is .../set_name/run_config_suffix/geometry_variant/...
     """
-    if geometries is None:
+    if run_config_suffix:
+        ml_inputs_dir = os.path.join(ml_inputs_root, set_name, run_config_suffix, geometry_variant)
+        geom_csv_template = os.path.join(ml_inputs_root, set_name, run_config_suffix, geometry_variant, "%s", "geometric_features.csv")
+    else:
         ml_inputs_dir = os.path.join(ml_inputs_root, set_name, geometry_variant)
+        geom_csv_template = os.path.join(ml_inputs_root, set_name, geometry_variant, "%s", "geometric_features.csv")
+    if geometries is None:
         if not os.path.exists(ml_inputs_dir):
             raise FileNotFoundError(f"ML inputs dir not found: {ml_inputs_dir}")
         geometries = []
@@ -59,9 +66,7 @@ def get_geometry_row_ranges(
     row_ranges = []
     start = 0
     for geo in geometries:
-        geom_csv = os.path.join(
-            ml_inputs_root, set_name, geometry_variant, geo, "geometric_features.csv"
-        )
+        geom_csv = geom_csv_template % geo
         if not os.path.exists(geom_csv):
             raise FileNotFoundError(f"Expected CSV: {geom_csv}")
         with open(geom_csv) as f:

@@ -4,7 +4,7 @@ import numpy as np
 from util.zerod_calibration.file_io import timestep_from_1D, convert_numpy_to_list
 
 
-def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, stenosis_off=False):
+def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False):
     """
     Create calibration input file from geometric input and observations.
     Computes BC times from 1D solution timesteps multiplied by timestep size from XML.
@@ -16,7 +16,10 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         centerline_soln_path: Path to 1D centerline solution VTP (to extract timestep count)
         geo_dir: Geometry directory (to find XML file for timestep size)
         stenosis_off: If True, set calibrate_stenosis_coefficient False and set all stenosis to 0
+        penalty_off: If True (and stenosis_off is False), set L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient to 0. Incompatible with stenosis_off.
     """
+    if stenosis_off and penalty_off:
+        raise ValueError("Cannot use both --stenosis-off and --penalty-off.")
     print(f"Reading geometric input from: {geometric_input_path}")
     with open(geometric_input_path, 'r') as f:
         inp = json.load(f)
@@ -74,9 +77,11 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
                 j["junction_values"]["stenosis_coefficient"] = [0.0] * n_out
         print("  Stenosis-off: all stenosis coefficients set to 0, calibrate_stenosis_coefficient=False, L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
     
-    # Add calibration parameters (when stenosis_off, zero the R and stenosis L2 penalties)
-    l2_R = 0.0 if stenosis_off else 10**5
-    l2_stenosis = 0.0 if stenosis_off else 10**10
+    # Add calibration parameters (when stenosis_off or penalty_off, zero the R and stenosis L2 penalties)
+    l2_R = 0.0 if (stenosis_off or penalty_off) else 10**5
+    l2_stenosis = 0.0 if (stenosis_off or penalty_off) else 10**10
+    if penalty_off and not stenosis_off:
+        print("  Penalty-off: L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
     inp["calibration_parameters"] = {
         "tolerance_gradient": 1e-4,
         "tolerance_increment": 1e-4,

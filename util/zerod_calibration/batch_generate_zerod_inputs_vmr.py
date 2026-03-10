@@ -228,6 +228,12 @@ def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, time
         cmd.append('--normalize')
     if args_dict.get('stenosis_off', False):
         cmd.append('--stenosis-off')
+    if args_dict.get('penalty_off', False):
+        cmd.append('--penalty-off')
+    if args_dict.get('symmetric_loss', False):
+        cmd.append('--symmetric-loss')
+    if args_dict.get('clip_predictions', False):
+        cmd.append('--clip-predictions')
     # Run command
     try:
         if verbose:
@@ -333,8 +339,14 @@ Examples:
                        help='Also run vessel NN inference and forward sim (write *_NN_JunctionAndVessel.json/results)')
     parser.add_argument('--stenosis-off', action='store_true', dest='stenosis_off',
                        help='Turn off stenosis: calibrate_stenosis_coefficient=False, set all stenosis to 0, do not use NN to predict stenosis')
+    parser.add_argument('--penalty-off', action='store_true', dest='penalty_off',
+                       help='Zero L2 penalties on R and stenosis when stenosis is included (incompatible with --stenosis-off)')
     parser.add_argument('--normalize', action='store_true',
                        help='Use normalized NN models and unnormalize predictions (pass --normalize to generate_zerod_inputs)')
+    parser.add_argument('--symmetric-loss', action='store_true', dest='symmetric_loss',
+                       help='Symmetric loss run-config: overestimate weight 1.0 for all models (for path naming)')
+    parser.add_argument('--clip-predictions', action='store_true', dest='clip_predictions',
+                       help='Clip R/S/L to training set min/max (run-config)')
     parser.add_argument('--timeout', type=int, default=1000,
                        help='Timeout in seconds for each geometry (default: 300 = 5 minutes)')
     parser.add_argument('--max-failures', type=int, default=None,
@@ -371,8 +383,13 @@ Examples:
         'no_redo': args.no_redo,
         'normalize': getattr(args, 'normalize', False),
         'stenosis_off': getattr(args, 'stenosis_off', False),
+        'penalty_off': getattr(args, 'penalty_off', False),
+        'symmetric_loss': getattr(args, 'symmetric_loss', False),
+        'clip_predictions': getattr(args, 'clip_predictions', False),
     }
     
+    if getattr(args, 'stenosis_off', False) and getattr(args, 'penalty_off', False):
+        parser.error("Cannot use both --stenosis-off and --penalty-off.")
     # Get list of geometries to process
     if args.geometries:
         geo_names = args.geometries
@@ -444,6 +461,9 @@ Examples:
     print(f"  NN-only mode: {args.NN_only}")
     print(f"  NN-vessel mode: {args.NN_vessel}")
     print(f"  Normalize: {getattr(args, 'normalize', False)}")
+    print(f"  Stenosis-off: {getattr(args, 'stenosis_off', False)}")
+    print(f"  Symmetric-loss: {getattr(args, 'symmetric_loss', False)}")
+    print(f"  Clip-predictions: {getattr(args, 'clip_predictions', False)}")
     print(f"  Timeout per geometry: {args.timeout}s ({args.timeout/60:.1f} minutes)")
     print(f"  Max failures: {args.max_failures if args.max_failures else 'unlimited'}")
     if args.only_failed:

@@ -57,6 +57,7 @@ def _resolve_norm_data_path(
     geo_variant,
     pkl_basename_pattern,
     kind="junction",
+    run_config_suffix=None,
 ):
     """
     Resolve path to the normalized jax_arrays pkl that matches the model being used.
@@ -65,6 +66,7 @@ def _resolve_norm_data_path(
     When normalization is on, model_dir is always the directory where the model was
     loaded from (--model-dir or default). If explicit_path is not set, we require
     norm_data_num_geos.txt in model_dir and raise if missing (no glob fallback).
+    When run_config_suffix is set, jax_arrays path includes it for config-specific data.
     """
     if explicit_path:
         if os.path.exists(explicit_path):
@@ -86,10 +88,11 @@ def _resolve_norm_data_path(
         )
     with open(sidecar) as f:
         num_geos = f.read().strip()
-    path = os.path.join(
-        "data", "jax_arrays", set_name, geo_variant, "test",
-        pkl_basename_pattern.format(num_geos=num_geos),
-    )
+    path_parts = ["data", "jax_arrays", set_name]
+    if run_config_suffix:
+        path_parts.append(run_config_suffix)
+    path_parts.extend([geo_variant, "test", pkl_basename_pattern.format(num_geos=num_geos)])
+    path = os.path.join(*path_parts)
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"Norm data pkl not found at {path} (from {sidecar} num_geos={num_geos})"
@@ -116,6 +119,25 @@ def _jax_set_type_for_data_processing(args):
     if getattr(args, 'trial_id', None) is not None:
         return f"trial_{args.trial_id}"
     return "forward"
+
+
+def get_run_config_suffix(normalize=False, stenosis_off=False, symmetric_loss=False, clip_predictions=False, penalty_off=False):
+    """
+    Build a suffix for paths so different CV runs (normalize, stenosis-off, symmetric-loss, clip-predictions, penalty-off)
+    are stored separately. Returns "base" when no flags are set so there is always a config subfolder.
+    """
+    parts = []
+    if normalize:
+        parts.append("normalized")
+    if stenosis_off:
+        parts.append("stenosis_off")
+    if symmetric_loss:
+        parts.append("symmetric")
+    if clip_predictions:
+        parts.append("clip")
+    if penalty_off:
+        parts.append("penalty_off")
+    return "_".join(parts) if parts else "base"
 
 
 def main():
@@ -168,6 +190,10 @@ def main():
                        help='Clip R_poiseuille, stenosis_coefficient, L to training set min/max')
     parser.add_argument('--stenosis-off', action='store_true', dest='stenosis_off',
                        help='Turn off stenosis: calibrate_stenosis_coefficient=False, set all stenosis to 0, do not use NN to predict stenosis')
+    parser.add_argument('--penalty-off', action='store_true', dest='penalty_off',
+                       help='Zero L2 penalties on R and stenosis when stenosis is included. Incompatible with --stenosis-off.')
+    parser.add_argument('--symmetric-loss', action='store_true', dest='symmetric_loss',
+                       help='Record that NN was trained with symmetric loss (for path naming; does not change inference)')
 
     args = parser.parse_args(); verbose = args.verbose
     if args.normalize:
@@ -185,9 +211,29 @@ def main():
         # Force BloodVesselJunction to be in junction_types if not already
         if 'BloodVesselJunction' not in args.junction_types:
             args.junction_types = ['BloodVesselJunction']
-    # Construct paths
+    # Run-config suffix: record normalize, stenosis-off, symmetric-loss for path separation
+    run_config_suffix = get_run_config_suffix(
+        normalize=getattr(args, 'normalize', False),
+        stenosis_off=getattr(args, 'stenosis_off', False),
+        symmetric_loss=getattr(args, 'symmetric_loss', False),
+        clip_predictions=getattr(args, 'clip_predictions', False),
+        penalty_off=getattr(args, 'penalty_off', False),
+    )
+    if run_config_suffix:
+        print(f"  Run config: {run_config_suffix}")
+    if getattr(args, 'stenosis_off', False) and getattr(args, 'penalty_off', False):
+        parser.error("Cannot use both --stenosis-off and --penalty-off.")
+    # Construct paths: when run_config_suffix is set, use subfolder so different settings don't overwrite
     output_dir = 'data/zeroD'
-    base_dir = os.path.join(output_dir, args.set_name, args.geo_name)
+    if run_config_suffix:
+        base_dir = os.path.join(output_dir, args.set_name, run_config_suffix, args.geo_name)
+    else:
+        base_dir = os.path.join(output_dir, args.set_name, args.geo_name)
+    # ML inputs base: separate subfolder per run config so configs don't share CSVs/jax
+    if run_config_suffix:
+        ml_inputs_base = os.path.join('data', 'ml_inputs', args.set_name, run_config_suffix)
+    else:
+        ml_inputs_base = os.path.join('data', 'ml_inputs', args.set_name)
     
     geometry_variants, geometric_input_path, geometric_results_csv, calibration_input_path, calibrated_output_path, junction_type_paths, centerline_path, geo_dir = get_paths(base_dir, args)
     print(f"junction_types: {args.junction_types}")
@@ -520,7 +566,8 @@ def main():
                         create_calibration_input(
                             variant_geometric_input, obs_for_calib, variant_calibration_input,
                             centerline_soln_path=soln_path, geo_dir=geo_dir,
-                            stenosis_off=getattr(args, 'stenosis_off', False)
+                            stenosis_off=getattr(args, 'stenosis_off', False),
+                            penalty_off=getattr(args, 'penalty_off', False)
                         )
                         generated_files.append(variant_calibration_input)
                         print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
@@ -703,8 +750,8 @@ def main():
                         filter_features_from_array,
                     )
                     
-                    # Check if CSV file exists (from data processing)
-                    csv_path = os.path.join('data', 'ml_inputs', args.set_name, geo_variant_name, args.geo_name, 'geometric_features.csv')
+                    # Check if CSV file exists (from data processing); use run-config-specific path when set
+                    csv_path = os.path.join(ml_inputs_base, geo_variant_name, args.geo_name, 'geometric_features.csv')
                     
                     # if os.path.exists(csv_path):
                     #     # Read from CSV and apply same feature selection as in data processing
@@ -772,6 +819,7 @@ def main():
                         feature_names_full = feature_names_full + ["flow_split", "flow_split_inv"]
                     #save X_full to a csv file
                     import pandas as pd
+                    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
                     pd.DataFrame(X_full, columns=feature_names_full).to_csv(csv_path, index=False)
                     
                     # Apply the same feature selection using the reusable function
@@ -801,6 +849,7 @@ def main():
                             geo_variant_name,
                             "jax_arrays_num_geos_{num_geos}_normalized.pkl",
                             kind="junction",
+                            run_config_suffix=run_config_suffix,
                         )
                         print(f"  Loading normalization stats from: {jax_arrays_path}")
                         norm_data = load_dict(jax_arrays_path)
@@ -885,9 +934,11 @@ def main():
                                 )
                             with open(_sidecar) as _f:
                                 _num_geos = _f.read().strip()
-                            _pkl = os.path.join(
-                                'data', 'jax_arrays', args.set_name, geo_variant_name, 'test',
-                                f'jax_arrays_num_geos_{_num_geos}.pkl')
+                            _jax_parts = ['data', 'jax_arrays', args.set_name]
+                            if run_config_suffix:
+                                _jax_parts.append(run_config_suffix)
+                            _jax_parts.extend([geo_variant_name, 'test', f'jax_arrays_num_geos_{_num_geos}.pkl'])
+                            _pkl = os.path.join(*_jax_parts)
                             if not os.path.exists(_pkl):
                                 raise FileNotFoundError(f"--clip-predictions: training pkl not found: {_pkl}")
                             _train = _load_dict(_pkl)
@@ -1097,6 +1148,7 @@ def main():
                                 geo_variant_name,
                                 "jax_arrays_vessel_num_geos_{num_geos}_normalized.pkl",
                                 kind="vessel",
+                                run_config_suffix=run_config_suffix,
                             )
                             vessel_norm_data = load_dict(vessel_jax_path)
                             input_mean_v = np.array(vessel_norm_data['input_mean'])
@@ -1141,9 +1193,11 @@ def main():
                                     )
                                 with open(_sidecar_v) as _f:
                                     _num_geos_v = _f.read().strip()
-                                _pkl_v = os.path.join(
-                                    'data', 'jax_arrays', args.set_name, geo_variant_name, 'test',
-                                    f'jax_arrays_vessel_num_geos_{_num_geos_v}.pkl')
+                                _jax_parts_v = ['data', 'jax_arrays', args.set_name]
+                                if run_config_suffix:
+                                    _jax_parts_v.append(run_config_suffix)
+                                _jax_parts_v.extend([geo_variant_name, 'test', f'jax_arrays_vessel_num_geos_{_num_geos_v}.pkl'])
+                                _pkl_v = os.path.join(*_jax_parts_v)
                                 if not os.path.exists(_pkl_v):
                                     raise FileNotFoundError(f"--clip-predictions (vessel): training pkl not found: {_pkl_v}")
                                 _train_v = _load_dict_v(_pkl_v)
@@ -1493,6 +1547,7 @@ def main():
         print("Step 6: Generating comparison plots")
         print("="*60)
         trial_suffix = f"_trial_{args.trial_id}" if args.trial_id is not None else ""
+        plot_config = run_config_suffix or 'base'
         
         # Specify which plot types to generate: 'original', 'bifurcations', 'combined'
         plot_types = ["bifurcations","bifurcations_EL"]
@@ -1513,12 +1568,12 @@ def main():
             except Exception:
                 pass
             
-            # Generate plots for each requested plot type
+            # Generate plots for each requested plot type (outputs under config-specific subfolder)
             for plot_type in plot_types:
                     if plot_type == 'combined':
                         # Generate combined comparison plots (original vs bifurcations for each junction type)
                         print(f"\n  Creating combined geometry variant comparison plots...")
-                        combined_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, f'combined{trial_suffix}')
+                        combined_output_dir = os.path.join('results', 'location_comparison', plot_config, args.set_name, args.geo_name, f'combined{trial_suffix}')
                         os.makedirs(combined_output_dir, exist_ok=True)
                         
                         # Use original geometry calibration input for location list (for combined plots)
@@ -1593,7 +1648,7 @@ def main():
                         # Generate plots for individual geometry variant
                         geo_variant_name = plot_type
                         print(f"\n  Creating {geo_variant_name} geometry variant comparison plots...")
-                        variant_output_dir = os.path.join('results', 'location_comparison', args.set_name, args.geo_name, f'{geo_variant_name}{trial_suffix}')
+                        variant_output_dir = os.path.join('results', 'location_comparison', plot_config, args.set_name, args.geo_name, f'{geo_variant_name}{trial_suffix}')
                         os.makedirs(variant_output_dir, exist_ok=True)
                         
                         geo_variant_paths = geometry_variants[geo_variant_name]
@@ -1733,8 +1788,8 @@ def main():
                 print(f"\n  Creating zero-D parameter bar charts for {geo_variant_name}...")
                 prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
                 trial_suffix_param = f"_trial_{args.trial_id}" if args.trial_id is not None else ""
-                # Save parameter comparison plots under results/param_comparison/<set>/<geo>/<variant>
-                output_subdir = os.path.join('results', 'param_comparison', args.set_name, args.geo_name, f'{geo_variant_name}{trial_suffix_param}')
+                # Save parameter comparison plots under results/param_comparison/<run_config>/<set>/<geo>/<variant>
+                output_subdir = os.path.join('results', 'param_comparison', plot_config, args.set_name, args.geo_name, f'{geo_variant_name}{trial_suffix_param}')
                 os.makedirs(output_subdir, exist_ok=True)
 
                 # Build modality -> calibrated JSON path mapping
