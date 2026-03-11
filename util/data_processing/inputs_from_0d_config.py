@@ -61,7 +61,7 @@ def _safe_mult(a, b):
 # To add a new computed feature, just append a tuple here.
 # ---------------------------------------------------------------------------
 COMPUTED_OUTLET_FEATURES: List[Tuple[str, Any]] = [
-    ("radius_ratio",
+    ("max_inscribed_radius_ratio",
      lambda out, junc: _safe_div(out["r_local"], junc["inlet_max_r"])),
      ("poiseuille_resistance_calc",
      lambda out, junc: _safe_div(8 * 0.04 * out["path_length"], np.pi * out["r_local"]**4)),
@@ -71,31 +71,8 @@ COMPUTED_OUTLET_FEATURES: List[Tuple[str, Any]] = [
      lambda out, junc: out["r_local"] ** -4),
      ("rneg2",
      lambda out, junc: out["r_local"] ** -2),
-     ("rmin_rat",
-     lambda out, junc: _safe_div(out["r_min_path"], out["r_local"])),
-     ("rmax_rat",
-     lambda out, junc: _safe_div(out["r_max_path"], out["r_local"])),
      ("nd_length",
      lambda out, junc: out["path_length"]/out["r_local"]),
-]
-
-# ---------------------------------------------------------------------------
-# Computed per-vessel features (for vessel NN input)
-# ---------------------------------------------------------------------------
-# Each entry is (name, func) where func(vessel_raw) returns a float or None.
-# vessel_raw has: inlet_area, outlet_area, path_length, area_ratio, r_local (sqrt(inlet_area/pi)), inlet_max_r (inlet_max_inscribed_radius).
-# To add a new computed vessel feature, append a tuple here.
-# ---------------------------------------------------------------------------
-COMPUTED_VESSEL_FEATURES: List[Tuple[str, Any]] = [
-    ("radius_ratio", lambda d: _safe_div(d["outlet_max_r"], d["inlet_max_r"])),
-    ("rmin_rat", lambda d: _safe_div(d["max_inscribed_radius_min"], d["outlet_max_r"])),
-    ("rmax_rat", lambda d: _safe_div(d["max_inscribed_radius_max"], d["outlet_max_r"])),
-    ("nd_length", lambda d: _safe_div(d["path_length"], d["outlet_max_r"])),
-    ("poiseuille_resistance_calc", lambda d: _safe_div(8.0 * 0.04 * d["path_length"], np.pi * (d["r_local"] ** 4))),
-    ("inductance_calc", lambda d: _safe_div(1.06 * d["path_length"], d["inlet_area"])),
-    ("stenosis_calc", lambda d: max(0.0, 1.0 - d["area_ratio"]) if d.get("inlet_area", 0) > 0 else 0.0),
-    ("rneg4", lambda d: d["outlet_max_r"] ** -4),
-    ("rneg2", lambda d: d["outlet_max_r"] ** -2),
 ]
 
 
@@ -526,11 +503,9 @@ def load_vessel_geometric_features(
         raise ValueError("Expected 'vessels' to be a list in config.")
 
     # Feature column names (order must match row construction below)
-    # vessel_id, is_inlet, base geometric params + all COMPUTED_VESSEL_FEATURES + zero_d_element_values from config
-    _computed_vessel_suffixes = [name for name, _ in COMPUTED_VESSEL_FEATURES]
+    # Include both calculated geometric estimates and values from zero_d_element_values (config)
     feature_names = [
-        #"vessel_id",
-        "is_inlet",
+        "vessel_id",
         "vessel_length",
         "inlet_area",
         "outlet_area",
@@ -542,7 +517,9 @@ def load_vessel_geometric_features(
         "outlet_max_inscribed_radius",
         "max_inscribed_radius_min",
         "max_inscribed_radius_max",
-    ] + _computed_vessel_suffixes + [
+        "poiseuille_resistance_calc",
+        "inductance_calc",
+        "stenosis_calc",
         "R_poiseuille_geometric",
         "L_geometric",
         "stenosis_coefficient_geometric",
@@ -564,7 +541,6 @@ def load_vessel_geometric_features(
         vessel_id = v.get("vessel_id")
         if vessel_id is None:
             continue
-        is_inlet = 1.0 if "branch0" in vessel_name else 0.0
         vessel_length = float(v.get("vessel_length", 0.0) or 0.0)
         gp = v.get("geometric_params") or {}
         inlet_area = float(gp.get("inlet_area", 0.0) or 0.0)
@@ -573,7 +549,17 @@ def load_vessel_geometric_features(
         tortuosity = float(gp.get("tortuosity", 0.0) or 0.0)
         angle_diff = float(gp.get("angle_diff", 0.0) or 0.0)
         area_ratio = outlet_area / inlet_area if inlet_area > 0 else 0.0
-        r_local = np.sqrt(inlet_area / np.pi) if inlet_area > 0 else 0.0
+
+        # Calculated geometric estimates (inlet-based; inductance uses density 1.06 g/cm³: L = rho*L/A)
+        if inlet_area > 0:
+            r_local = np.sqrt(inlet_area / np.pi)
+            r4 = r_local ** 4
+            poiseuille_resistance_calc = (8.0 * 0.04 * path_length) / (np.pi * r4) if r4 > 0 else 0.0
+            inductance_calc = 1.06 * path_length / inlet_area  # L = rho*L/A, rho=1.06
+        else:
+            poiseuille_resistance_calc = 0.0
+            inductance_calc = 0.0
+        stenosis_calc = max(0.0, 1.0 - area_ratio) if inlet_area > 0 else 0.0
 
         # MISR: inlet, outlet, min and max along vessel (from geometric_params; 0 if missing)
         inlet_misr = float(gp.get("inlet_max_inscribed_radius", 0.0) or 0.0)
@@ -587,25 +573,8 @@ def load_vessel_geometric_features(
         L_geometric = float(z.get("L", 0.0) or 0.0)
         stenosis_coefficient_geometric = float(z.get("stenosis_coefficient", 0.0) or 0.0)
 
-        vessel_raw = {
-            "inlet_area": inlet_area,
-            "outlet_area": outlet_area,
-            "path_length": path_length,
-            "area_ratio": area_ratio,
-            "r_local": r_local,
-            "inlet_max_r": inlet_misr,
-            "outlet_max_r": outlet_misr,
-            "max_inscribed_radius_min": misr_min,
-            "max_inscribed_radius_max": misr_max,
-        }
-        computed_vals = []
-        for _name, func in COMPUTED_VESSEL_FEATURES:
-            val = func(vessel_raw)
-            computed_vals.append(float(val) if val is not None else 0.0)
-
         row = [
             float(vessel_id),
-            is_inlet,
             vessel_length,
             inlet_area,
             outlet_area,
@@ -617,7 +586,9 @@ def load_vessel_geometric_features(
             outlet_misr,
             misr_min,
             misr_max,
-        ] + computed_vals + [
+            poiseuille_resistance_calc,
+            inductance_calc,
+            stenosis_calc,
             R_poiseuille_geometric,
             L_geometric,
             stenosis_coefficient_geometric,
@@ -675,7 +646,6 @@ def load_vessel_targets_from_config(
 
 
 __all__ = [
-    "COMPUTED_VESSEL_FEATURES",
     "load_junction_geometric_features",
     "load_vessel_geometric_features",
     "load_vessel_targets_from_config",

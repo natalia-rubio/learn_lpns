@@ -49,14 +49,10 @@ def get_default_include_features() -> List[str]:
     return [
         "inlet_max_inscribed_radius",
         "outlet0_max_inscribed_radius_local",
-        "outlet0_max_inscribed_radius_min_on_path",
-        "outlet0_max_inscribed_radius_max_on_path",
-        "outlet0_rmin_rat",
-        "outlet0_rmax_rat",
         "outlet0_path_length",
         "outlet0_tortuosity",
         "outlet0_angle_diff",
-        "outlet0_radius_ratio",
+        "outlet0_max_inscribed_radius_ratio",
         "outlet0_poiseuille_resistance_calc",
         "outlet0_inductance_calc",
         "outlet0_absorbed_R_poiseuille",
@@ -81,8 +77,8 @@ def get_default_include_features() -> List[str]:
     #     "outlet1_tortuosity",
     #     "outlet0_angle_diff",
     #     "outlet1_angle_diff",
-    #     "outlet0_radius_ratio",
-    #     "outlet1_radius_ratio",
+    #     "outlet0_max_inscribed_radius_ratio",
+    #     "outlet1_max_inscribed_radius_ratio",
     #     "outlet0_poiseuille_resistance_calc",
     #     "outlet1_poiseuille_resistance_calc",
     #     "outlet0_inductance_calc",
@@ -107,51 +103,6 @@ def get_default_include_outputs() -> List[str]:
         "R_poiseuille_outlet0",
         "stenosis_coefficient_outlet0",
         "L_outlet0"
-    ]
-
-
-def get_default_include_features_vessel() -> List[str]:
-    """
-    Get the default list of vessel features to include in the vessel NN input.
-    Order must match the columns written by inputs_from_0d_config.load_vessel_geometric_features().
-    """
-    return [
-        "vessel_id",
-        "is_inlet",
-        "vessel_length",
-        "inlet_area",
-        "outlet_area",
-        "path_length",
-        "tortuosity",
-        "angle_diff",
-        "area_ratio",
-        "inlet_max_inscribed_radius",
-        "outlet_max_inscribed_radius",
-        "max_inscribed_radius_min",
-        "max_inscribed_radius_max",
-        "radius_ratio",
-        "rmin_rat",
-        "rmax_rat",
-        "nd_length",
-        "poiseuille_resistance_calc",
-        "inductance_calc",
-        "stenosis_calc",
-        "rneg4",
-        "rneg2",
-        "R_poiseuille_geometric",
-        "L_geometric",
-        "stenosis_coefficient_geometric",
-    ]
-
-
-def get_default_include_outputs_vessel() -> List[str]:
-    """
-    Get the default list of vessel outputs to include in the vessel NN output (R, S, L).
-    """
-    return [
-        "R_poiseuille",
-        "stenosis_coefficient",
-        "L",
     ]
 
 
@@ -639,19 +590,16 @@ def build_data_dict_from_vessel_csvs(
     Build a data_dict for vessel NN training from per-geometry vessel CSVs.
 
     Reads vessel_geometric_features.csv and vessel_lumped_parameters.csv for each
-    geometry, filters by get_default_include_features_vessel() and
-    get_default_include_outputs_vessel(), and concatenates into single input and
-    output arrays. Output columns are R_poiseuille, stenosis_coefficient, L (same
-    order as junction "rri").
+    geometry and concatenates into single input and output arrays. Output columns
+    are R_poiseuille, stenosis_coefficient, L (same order as junction "rri").
 
     Returns:
         Dictionary with "input", "output_rri" (or "output_rri_vessel"), "scaling_factors",
         and optionally "input_mean", "input_std", "output_mean", "output_std" if normalize.
     """
-    include_features = get_default_include_features_vessel()
-    output_cols = get_default_include_outputs_vessel()
     all_inputs: List[np.ndarray] = []
     all_outputs: List[np.ndarray] = []
+    output_cols = ["R_poiseuille", "stenosis_coefficient", "L"]
     row_ranges: List[Tuple[int, int]] = []  # (start, end) per geometry in order
     geometries_with_vessels: List[str] = []  # geometry names that contributed rows (same order as row_ranges)
 
@@ -661,25 +609,23 @@ def build_data_dict_from_vessel_csvs(
         if not os.path.exists(feat_csv) or not os.path.exists(tgt_csv):
             continue
         feat_header, feat_X = _read_csv_matrix(feat_csv)
-        feat_X_filtered, _ = filter_features_from_array(
-            feat_X, feat_header, include_features=include_features, remap_tortuosity=False
-        )
         # vessel_lumped_parameters has string column vessel_name; read only numeric columns
         tgt_header, tgt_Y = _read_csv_numeric_columns(tgt_csv, output_cols)
-        if feat_X_filtered.shape[0] != tgt_Y.shape[0]:
+        if feat_X.shape[0] != tgt_Y.shape[0]:
             raise ValueError(
-                f"Vessel row mismatch for {geo}: features has {feat_X_filtered.shape[0]} rows, "
+                f"Vessel row mismatch for {geo}: features has {feat_X.shape[0]} rows, "
                 f"targets has {tgt_Y.shape[0]} rows"
             )
+        Y_part = tgt_Y
         start = sum(x.shape[0] for x in all_inputs)
-        all_inputs.append(feat_X_filtered)
-        all_outputs.append(tgt_Y)
-        row_ranges.append((start, start + feat_X_filtered.shape[0]))
+        all_inputs.append(feat_X)
+        all_outputs.append(Y_part)
+        row_ranges.append((start, start + feat_X.shape[0]))
         geometries_with_vessels.append(geo)
 
     if not all_inputs:
-        # No vessel CSVs found; return empty arrays (feature count from default vessel include list)
-        n_feat = len(get_default_include_features_vessel())
+        # No vessel CSVs found; return empty arrays (feature count from vessel_geometric_features schema)
+        n_feat = 18  # vessel base 12 (incl. inlet/outlet/max_inscribed_radius_min/max) + poiseuille_resistance_calc, inductance_calc, stenosis_calc, R_poiseuille_geometric, L_geometric, stenosis_coefficient_geometric
         input_array = np.zeros((0, n_feat), dtype=float)
         output_array = np.zeros((0, 3), dtype=float)
     else:
@@ -741,9 +687,7 @@ __all__ = [
     "build_data_dict_from_csvs",
     "build_data_dict_from_vessel_csvs",
     "get_default_include_features",
-    "get_default_include_features_vessel",
     "get_default_include_outputs",
-    "get_default_include_outputs_vessel",
     "filter_features_from_array",
     "filter_outputs_from_array",
     "_read_csv_matrix",
