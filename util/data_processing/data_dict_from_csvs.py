@@ -116,15 +116,14 @@ def get_default_include_features_vessel() -> List[str]:
     Order must match the columns written by inputs_from_0d_config.load_vessel_geometric_features().
     """
     return [
-        "vessel_id",
         "is_inlet",
         "vessel_length",
-        "inlet_area",
-        "outlet_area",
+        # "inlet_area",
+        # "outlet_area",
         "path_length",
         "tortuosity",
         "angle_diff",
-        "area_ratio",
+        #"area_ratio",
         "inlet_max_inscribed_radius",
         "outlet_max_inscribed_radius",
         "max_inscribed_radius_min",

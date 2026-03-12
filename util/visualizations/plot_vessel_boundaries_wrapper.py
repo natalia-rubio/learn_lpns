@@ -22,6 +22,7 @@ def find_centerline_file(set_name, geo_name, data_dir='data'):
     """
     possible_paths = [
         os.path.join(data_dir, 'oneD', set_name, geo_name, 'unsteady_soln.vtp'),
+        os.path.join(data_dir, 'oneD', "VMR_rigid_aortas", geo_name, 'unsteady_soln.vtp'),
         os.path.join(data_dir, 'oneD', set_name, geo_name, 'centerlines_simVascular.vtp'),
         os.path.join(data_dir, 'threeD', set_name, geo_name, 'centerlines_simVascular.vtp'),
         os.path.join(data_dir, 'threeD', set_name, geo_name, 'centerlines', 'centerlines.vtp'),
@@ -106,6 +107,12 @@ Examples:
       --geo-name 0063_1001 \\
       --data-dir /path/to/data \\
       --output-dir /path/to/results
+
+  # Use zeroD data under a run-config subfolder (e.g. stenosis_off)
+  python3 util/visualizations/plot_vessel_boundaries_wrapper.py \\
+      --set-name VMR_rigid_aorta_adults \\
+      --geo-name 0094_0001 \\
+      --run-config stenosis_off
         """
     )
     
@@ -117,6 +124,8 @@ Examples:
                        help='Base data directory (default: data)')
     parser.add_argument('--output-dir', type=str, default='results',
                        help='Base output directory (default: results)')
+    parser.add_argument('--run-config', type=str, default=None,
+                       help='ZeroD run-config subfolder (e.g. stenosis_off, base). If set, geometric inputs are read from data/zeroD/<set_name>/<run-config>/<geo_name>/')
     parser.add_argument('--skip-bifurcations', action='store_true',
                        help='Skip plotting bifurcations geometry')
     parser.add_argument('--skip-el-adjusted', action='store_true',
@@ -131,6 +140,8 @@ Examples:
     print(f"  Geometry: {args.geo_name}")
     print(f"  Data directory: {args.data_dir}")
     print(f"  Output directory: {args.output_dir}")
+    if args.run_config:
+        print(f"  Run config (zeroD): {args.run_config}")
     
     # Find centerline file
     print(f"\nFinding centerline file...")
@@ -146,8 +157,11 @@ Examples:
     
     print(f"  ✓ Found: {centerline_path}")
     
-    # Define geometry paths
-    zerod_dir = os.path.join(args.data_dir, 'zeroD', args.set_name, args.geo_name)
+    # Define geometry paths (zeroD may be under set_name/run_config/geo_name when --run-config is set)
+    if args.run_config:
+        zerod_dir = os.path.join(args.data_dir, 'zeroD', args.set_name, args.run_config, args.geo_name)
+    else:
+        zerod_dir = os.path.join(args.data_dir, 'zeroD', args.set_name, args.geo_name)
     
     bifurcations_path = os.path.join(zerod_dir, 'bifurcations_geometric_input.json')
     el_adjusted_path = os.path.join(zerod_dir, 'bifurcations_EL_geometric_input.json')

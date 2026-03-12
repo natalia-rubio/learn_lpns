@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy import stats as scipy_stats
 
 from util.visualizations.plot_location_comparison import get_line_style
 from util.visualizations.cv_pressure_errors_to_latex import MODALITY_DISPLAY, VAL_GEOMETRY_DISPLAY
@@ -142,7 +143,7 @@ def main():
     for tid, val_geo in trial_rows:
         geo_label = _val_geo_to_label(val_geo)
         x_labels.append(f"Trial {tid}\n{geo_label}")
-    x_labels.append("Mean")
+    x_labels.append("Average")
     n_groups = len(x_labels)
     x = np.arange(n_groups)
     n_mods = len(MODALITY_KEYS)
@@ -156,9 +157,20 @@ def main():
     fig, ax = plt.subplots(figsize=(max(8, n_groups * 1.2), 5))
     for i, mod in enumerate(MODALITY_KEYS):
         vals_frac = by_mod[mod]
-        mean_val = statistics.mean([v for v in vals_frac if not _isnan(v)]) if vals_frac else float("nan")
+        clean = [v for v in vals_frac if not _isnan(v)]
+        mean_val = statistics.mean(clean) if clean else float("nan")
+        std_val = statistics.stdev(clean) if len(clean) >= 2 else (0.0 if clean else float("nan"))
         vals_frac = list(vals_frac) + [mean_val]
         vals_pct = [v * 100 if not _isnan(v) else 0 for v in vals_frac]
+        # 95% CI half-width on the mean bar: t_{n-1, 0.975} * (s / sqrt(n))
+        n_trials = len(clean)
+        if n_trials >= 2 and not _isnan(std_val):
+            t_crit = scipy_stats.t.ppf(0.975, df=n_trials - 1)
+            sem_pct = (std_val * 100) / (n_trials ** 0.5)
+            ci_half_pct = t_crit * sem_pct
+        else:
+            ci_half_pct = 0.0
+        yerr = [0.0] * (n_groups - 1) + [ci_half_pct]
         style_key = MODALITY_STYLE_KEY.get(mod, mod)
         style = get_line_style(style_key)
         color = style["color"]
@@ -171,6 +183,9 @@ def main():
             color=color,
             edgecolor="black",
             linewidth=0.5,
+            yerr=yerr,
+            capsize=2,
+            error_kw={"color": "black", "linewidth": 0.8},
         )
 
     ax.set_ylabel(r"Max. Relative Error over Cardiac Cycle (\%)", fontsize=12)

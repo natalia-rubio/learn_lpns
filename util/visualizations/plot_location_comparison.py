@@ -94,7 +94,7 @@ LINE_STYLES = {
         'linestyle': '-',
         'linewidth': 8,
         'label': '3D Solution',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     # Geometric 0D (uncalibrated) - original geometry
     'geometric_0d': {
@@ -102,23 +102,23 @@ LINE_STYLES = {
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D Poiseuille',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     # Geometric 0D (uncalibrated) - bifurcations geometry
     'bifurcations_geometric_0d': {
         'color': 'indianred',
-        'linestyle': ':',
+        'linestyle': '-',
         'linewidth': 4,
         'label': '0D Poiseuille',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     # Geometric 0D (uncalibrated) - bifurcations geometry
     'bifurcations_EL_geometric_0d': {
         'color': 'indianred',
-        'linestyle': ':',
-        'linewidth': 4,
+        'linestyle': '--',
+        'linewidth': 5,
         'label': '0D Poiseuille',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     # Original geometry calibrated results
     'original_NORMAL_JUNCTION': {
@@ -126,28 +126,28 @@ LINE_STYLES = {
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D $\Delta P = 0$ Junction (Calibrated) (orig)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     'original_BloodVesselJunction': {
         'color': 'mediumpurple',
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D RRI Junction (Calibrated) (orig)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     'original_DirIndepJunction': {
         'color': 'dodgerblue',
         'linestyle': '--',
         'linewidth': 4,
         'label': 'Dir-Indep Junction (orig)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     'original_HybridJunction': {
         'color': 'violet',
         'linestyle': '--',
         'linewidth': 4,
         'label': 'Hybrid Junction (orig)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     # Bifurcations geometry calibrated results
     'bifurcations_NORMAL_JUNCTION': {
@@ -155,28 +155,28 @@ LINE_STYLES = {
         'linestyle': ':',
         'linewidth': 4,
         'label': '0D $\Delta P = 0$ Junction (Calibrated) (bif)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     'bifurcations_BloodVesselJunction': {
         'color': 'mediumpurple',
         'linestyle': ':',
         'linewidth': 4,
         'label': '0D RRI Junction (Calibrated) (bif)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     'bifurcations_DirIndepJunction': {
         'color': 'dodgerblue',
         'linestyle': ':',
         'linewidth': 4,
         'label': 'Dir-Indep Junction (bif)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     'bifurcations_HybridJunction': {
         'color': 'violet',
         'linestyle': ':',
         'linewidth': 4,
         'label': 'Hybrid Junction (bif)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     # Legacy support for old naming (without geometry prefix)
     'NORMAL_JUNCTION': {
@@ -184,64 +184,64 @@ LINE_STYLES = {
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D $\Delta P = 0$ Junction (Calibrated)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     'BloodVesselJunction': {
         'color': 'mediumpurple',
         'linestyle': '--',
         'linewidth': 4,
         'label': '0D RRI Junction (Calibrated)',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     'DirIndepJunction': {
         'color': 'dodgerblue',
         'linestyle': '--',
         'linewidth': 4,
         'label': 'Dir-Indep Junction',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     'HybridJunction': {
         'color': 'violet',
         'linestyle': '--',
         'linewidth': 4,
         'label': 'Hybrid Junction',
-        'alpha': 0.5,
+        'alpha': 0.75,
     },
     # NN-modified BloodVesselJunction (always dodger blue, dashed)
     'bifurcations_BloodVesselJunction_NN': {
         'color': 'dodgerblue',
         'linestyle': '--',
         'linewidth': 4,
-        'label': '0D RRI Junction (NN)',
-        'alpha': 0.5,
+        'label': 'Learned Junctions',
+        'alpha': 0.75,
     },
     'original_BloodVesselJunction_NN': {
         'color': 'dodgerblue',
         'linestyle': '--',
         'linewidth': 4,
-        'label': '0D RRI Junction (NN)',
-        'alpha': 0.5,
+        'label': 'Learned Junctions',
+        'alpha': 0.75,
     },
     'BloodVesselJunction_NN': {
         'color': 'dodgerblue',
         'linestyle': '--',
         'linewidth': 4,
-        'label': '0D RRI Junction (NN)',
-        'alpha': 0.5,
+        'label': 'Learned Junctions',
+        'alpha': 0.75,
     },
     'BloodVesselJunction_NN_plus_Vessel_NN': {
         'color': 'limegreen',
         'linestyle': '--',
         'linewidth': 4,
-        'label': '0D RRI Junction (NN + Vessel NN)',
-        'alpha': 0.5,
+        'label': 'Learned Junctions and Vessels',
+        'alpha': 0.75,
     },
     'NN_vessel': {
         'color': 'gold',
         'linestyle': '-.',
         'linewidth': 4,
-        'label': '0D NN Vessel Only',
-        'alpha': 0.5,
+        'label': 'Learned Vessels',
+        'alpha': 0.75,
     },
 }
 
@@ -270,8 +270,8 @@ def get_line_style(key):
             'color': 'dodgerblue',
             'linestyle': '--',
             'linewidth': 4,
-            'label': '0D RRI Junction (NN)',
-            'alpha': 0.5,
+            'label': 'Learned Junctions',
+            'alpha': 0.75,
         }
     
     # Try to parse as {geometry}_{junction_type}
@@ -287,7 +287,7 @@ def get_line_style(key):
                 'linestyle': linestyle,
                 'linewidth': 4,
                 'label': label,
-                'alpha': 0.5,
+                'alpha': 0.75,
             }
     
     # Fallback default
@@ -296,7 +296,7 @@ def get_line_style(key):
         'linestyle': '-',
         'linewidth': 4,
         'label': key,
-        'alpha': 0.5,
+        'alpha': 0.75,
     }
 # =============================================================================
 
@@ -891,6 +891,8 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
                        alpha=style['alpha'])
         
         for jtype, data in calibrated_data_dict.items():
+            if 'NORMAL_JUNCTION' in jtype:
+                continue
             if data['pressures'] is not None:
                 style = get_line_style(jtype)
                 ax.plot(data['times'], data['pressures'], 
@@ -905,7 +907,9 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         for geo_data in geometric_data_dict.values():
             if geo_data.get('pressures') is not None:
                 all_pressures.extend(geo_data['pressures'])
-        for data in calibrated_data_dict.values():
+        for jtype, data in calibrated_data_dict.items():
+            if 'NORMAL_JUNCTION' in jtype:
+                continue
             if data['pressures'] is not None:
                 all_pressures.extend(data['pressures'])
         
@@ -934,6 +938,8 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
                        alpha=style['alpha'])
         
         for jtype, data in calibrated_data_dict.items():
+            if 'NORMAL_JUNCTION' in jtype:
+                continue
             if data['flows'] is not None:
                 style = get_line_style(jtype)
                 ax.plot(data['times'], data['flows'], 
@@ -948,7 +954,9 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         for geo_data in geometric_data_dict.values():
             if geo_data.get('flows') is not None:
                 all_flows.extend(geo_data['flows'])
-        for data in calibrated_data_dict.values():
+        for jtype, data in calibrated_data_dict.items():
+            if 'NORMAL_JUNCTION' in jtype:
+                continue
             if data['flows'] is not None:
                 all_flows.extend(data['flows'])
         
@@ -1018,11 +1026,16 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     
     # Title
     title_text = location
+    if location == "INFLOW:branch0_seg0":
+        title_text = "3D vs 0D Solutions at Aorta Inlet"
     
-    plt.tight_layout(rect=[0, 0, 1, 0.85])
-    fig.suptitle(title_text, fontsize=28, weight='bold', y=0.995)
-    fig.legend(unique_handles, unique_labels, loc='upper center', ncol=3, 
-               bbox_to_anchor=(0.5, 0.97), fontsize=24, frameon=True)
+    plt.tight_layout(rect=[0, 0, 1, 0.78])
+    fig.suptitle(title_text, fontsize=28, weight='bold', y=0.95)
+    # Match legend width to plot area; allow enough height for multiple rows (more modalities)
+    ax_bbox = axes[0].get_position()
+    fig.legend(unique_handles, unique_labels, loc='upper center', ncol=3,
+               bbox_to_anchor=(ax_bbox.x0-0.1, 0.65, ax_bbox.width+0.2, 0.25),
+               bbox_transform=fig.transFigure, mode='expand', fontsize=22, frameon=False)
     
     # Ensure x-axis labels are visible
     for ax_idx in [1, 3]:
@@ -1032,11 +1045,14 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
             axes[ax_idx].xaxis.set_ticks(locs)
             axes[ax_idx].xaxis.set_ticklabels([f'{loc:.2f}' for loc in locs], fontsize=20)
     
-    # Save plot
+    # Save plot (PNG and PDF)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    base_path = os.path.splitext(output_path)[0]
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    other_ext = '.pdf' if not output_path.lower().endswith('.pdf') else '.png'
+    plt.savefig(base_path + other_ext, dpi=150, bbox_inches='tight')
     if verbose:
-        print(f"✓ Plot saved to: {output_path}")
+        print(f"✓ Plot saved to: {output_path} and {base_path}{other_ext}")
     
     plt.close()
     return True
@@ -1060,6 +1076,8 @@ def main():
                         help='Output directory for plots (run-config subfolder is appended)')
     parser.add_argument('--data-dir', default='data/zeroD', 
                         help='Data directory for input files')
+    parser.add_argument('--geometry-variant', default=None,
+                        help='Geometry variant (e.g. bifurcations_EL). When set, also load NN modalities from {variant}_NN_*_results.csv if present.')
     parser.add_argument('--time-period', type=float, default=None,
                         help='Time period in seconds (default: auto-detect)')
     parser.add_argument('--zoom-start', type=int, default=None,
@@ -1090,6 +1108,16 @@ def main():
     for jtype in args.junction_types:
         csv_path = os.path.join(data_dir, f'calibrated_results_{jtype}.csv')
         calibrated_csv_paths[jtype] = csv_path
+    # Add NN modalities (Learned Junctions, Learned Junctions and Vessels, Learned Vessels) when geometry-variant is set
+    if getattr(args, 'geometry_variant', None):
+        for nn_jtype, nn_basename in [
+            ('BloodVesselJunction_NN', f"{args.geometry_variant}_NN_BloodVesselJunction_results.csv"),
+            ('BloodVesselJunction_NN_plus_Vessel_NN', f"{args.geometry_variant}_NN_JunctionAndVessel_results.csv"),
+            ('NN_vessel', f"{args.geometry_variant}_NN_VesselOnly_results.csv"),
+        ]:
+            nn_path = os.path.join(data_dir, nn_basename)
+            if os.path.exists(nn_path):
+                calibrated_csv_paths[nn_jtype] = nn_path
     
     if not os.path.exists(calibration_input_path):
         print(f"Error: Calibration input file not found: {calibration_input_path}")

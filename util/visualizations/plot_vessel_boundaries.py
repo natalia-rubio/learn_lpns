@@ -203,9 +203,38 @@ def plot_vessel_boundaries(geometric_input_path, centerline_path, output_path,
     if len(connector_outlet_points) > 0:
         connector_outlet_points = np.array(connector_outlet_points)
     
+    # Rotate 200° about z-axis (180° + 20°): (x, y) -> (x*cos(200°)-y*sin(200°), x*sin(200°)+y*cos(200°))
+    theta = np.deg2rad(160)
+    cos_t, sin_t = np.cos(theta), np.sin(theta)
+    def rotate_200_z(arr):
+        a = np.asarray(arr).copy()
+        x, y = a[:, 0].copy(), a[:, 1].copy()
+        a[:, 0] = x * cos_t - y * sin_t
+        a[:, 1] = x * sin_t + y * cos_t
+        return a
+    points = rotate_200_z(points)
+    if len(inlet_points) > 0:
+        inlet_points = rotate_200_z(inlet_points)
+    if len(outlet_points) > 0:
+        outlet_points = rotate_200_z(outlet_points)
+    if len(connector_inlet_points) > 0:
+        connector_inlet_points = rotate_200_z(connector_inlet_points)
+    if len(connector_outlet_points) > 0:
+        connector_outlet_points = rotate_200_z(connector_outlet_points)
+    
     # Create 3D plot
     fig = plt.figure(figsize=figsize)
+    fig.patch.set_facecolor('white')
     ax = fig.add_subplot(111, projection='3d')
+    ax.grid(False)
+    ax.set_facecolor('white')
+    # Hide bounding box and axes completely
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.pane.set_facecolor('white')
+        axis.pane.set_edgecolor('white')
+        axis.line.set_color('white')
+        axis.set_ticklabels([])
+    ax.set_axis_off()
     
     # Plot centerline as points (not connected)
     ax.scatter(points[:, 0], points[:, 1], points[:, 2],
@@ -232,11 +261,6 @@ def plot_vessel_boundaries(geometric_input_path, centerline_path, output_path,
         ax.scatter(connector_inlet_points[:, 0], connector_inlet_points[:, 1], connector_inlet_points[:, 2],
                   facecolors='none', edgecolors='green', s=120, marker='o', linewidths=2,
                   alpha=0.8, label='Connector Inlets', zorder=11)
-    
-    # Set labels and title
-    ax.set_xlabel('X (cm)', fontsize=12)
-    ax.set_ylabel('Y (cm)', fontsize=12)
-    ax.set_zlabel('Z (cm)', fontsize=12)
     
     if title:
         ax.set_title(title, fontsize=14, pad=20)
@@ -283,7 +307,7 @@ def plot_vessel_boundaries(geometric_input_path, centerline_path, output_path,
     print(f"\nSaving plot to: {output_path}")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     
     print(f"  ✓ Saved successfully")
