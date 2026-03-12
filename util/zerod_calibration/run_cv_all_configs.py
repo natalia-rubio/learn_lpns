@@ -27,6 +27,7 @@ DEFAULT_CONFIGS = [
     ("stenosis_off", ["--stenosis-off"]),
     ("penalty_off", ["--penalty-off"]),
     ("stenosis_off_symmetric", ["--stenosis-off", "--symmetric-loss"]),
+    ("stenosis_off:bifurcations", ["--stenosis-off", "bifurcations"]),
 ]
 
 

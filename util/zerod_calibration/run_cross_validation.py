@@ -1029,6 +1029,93 @@ def regenerate_cv_metrics_from_existing(
     return summary_path
 
 
+def regenerate_location_plots(
+    set_name,
+    geometry_variant,
+    data_root="data",
+    run_config_suffix="",
+    stenosis_off=False,
+    normalize=False,
+    penalty_off=False,
+    symmetric_loss=False,
+    clip_predictions=False,
+):
+    """
+    Regenerate location comparison plots from existing zeroD data by running
+    generate_zerod_inputs with skip flags so only Step 6 (plots) runs.
+    No training or deploy. Use after a CV run to refresh plots.
+
+    run_config_suffix: same as used when running CV (e.g. "stenosis_off")
+      so that zeroD and plot output paths match.
+
+    Requires: data/zeroD/{set_name}/{run_config_suffix}/{geo}/... with
+      {geometry_variant}_calibration_input_BloodVesselJunction.json or
+      calibration_input.json per geometry.
+    """
+    script_dir = os.path.dirname(__file__)
+    generate_script = os.path.join(script_dir, "generate_zerod_inputs.py")
+    if run_config_suffix:
+        zero_d_base = os.path.join(data_root, "zeroD", set_name, run_config_suffix)
+    else:
+        zero_d_base = os.path.join(data_root, "zeroD", set_name)
+    if not os.path.isdir(zero_d_base):
+        print(f"ZeroD base not found: {zero_d_base}")
+        print("Run cross-validation once to create zeroD data, then use --plots-only to regenerate plots.")
+        return None
+
+    # Discover geometries: subdirs that have calibration input for this variant
+    calib_name = f"{geometry_variant}_calibration_input_BloodVesselJunction.json"
+    geometries = []
+    for name in sorted(os.listdir(zero_d_base)):
+        base_dir = os.path.join(zero_d_base, name)
+        if not os.path.isdir(base_dir):
+            continue
+        calib_path = os.path.join(base_dir, calib_name)
+        fallback = os.path.join(base_dir, "calibration_input.json")
+        if os.path.exists(calib_path) or os.path.exists(fallback):
+            geometries.append(name)
+    if not geometries:
+        print(f"No geometries with calibration input found under {zero_d_base}")
+        return None
+
+    print(f"Regenerating location plots for {len(geometries)} geometries...")
+    success_count = 0
+    for geo_name in geometries:
+        cmd = [
+            sys.executable,
+            generate_script,
+            "--set-name",
+            set_name,
+            "--geo-name",
+            geo_name,
+            "--skip-base-generation",
+            "--skip-observation",
+            "--skip-calibration",
+            "--skip-forward",
+            "--skip-mse-calculation",
+        ]
+        if stenosis_off:
+            cmd.append("--stenosis-off")
+        if normalize:
+            cmd.append("--normalize")
+        if penalty_off:
+            cmd.append("--penalty-off")
+        if symmetric_loss:
+            cmd.append("--symmetric-loss")
+        if clip_predictions:
+            cmd.append("--clip-predictions")
+        # Include NN modalities (Learned Junctions, Learned Junctions and Vessels, Learned Vessels) in plots when CSVs exist
+        cmd.append("--NN-vessel")
+        result = subprocess.run(cmd, cwd=REPO_ROOT, text=True)
+        if result.returncode == 0:
+            print(f"  ✓ {geo_name}")
+            success_count += 1
+        else:
+            print(f"  ✗ {geo_name} (exit code {result.returncode})")
+    print(f"Done: {success_count}/{len(geometries)} geometries.")
+    return success_count
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run cross-validation: X random 90/10 splits, train and deploy per trial, report MSE for all modalities."
@@ -1115,10 +1202,37 @@ def main():
         action="store_true",
         help="Regenerate CV summary CSVs (overall MSE + pressure/flow MSE + max error) from existing cv_summary.csv and per-geometry mse_comparison.csv files. No training or deploy.",
     )
+    parser.add_argument(
+        "--plots-only",
+        action="store_true",
+        help="Regenerate location comparison plots from existing zeroD data. No training or deploy.",
+    )
     args = parser.parse_args()
 
     if getattr(args, "stenosis_off", False) and getattr(args, "penalty_off", False):
         parser.error("Cannot use both --stenosis-off and --penalty-off.")
+    if args.metrics_only and args.plots_only:
+        parser.error("Cannot use both --metrics-only and --plots-only.")
+    if args.plots_only:
+        run_config_suffix = get_run_config_suffix(
+            normalize=args.normalize,
+            stenosis_off=getattr(args, "stenosis_off", False),
+            symmetric_loss=getattr(args, "symmetric_loss", False),
+            clip_predictions=getattr(args, "clip_predictions", False),
+            penalty_off=getattr(args, "penalty_off", False),
+        )
+        regenerate_location_plots(
+            set_name=args.set_name,
+            geometry_variant=args.geometry_variant,
+            data_root=args.data_root,
+            run_config_suffix=run_config_suffix,
+            stenosis_off=getattr(args, "stenosis_off", False),
+            normalize=args.normalize,
+            penalty_off=getattr(args, "penalty_off", False),
+            symmetric_loss=getattr(args, "symmetric_loss", False),
+            clip_predictions=getattr(args, "clip_predictions", False),
+        )
+        return
     if args.metrics_only:
         run_config_suffix = get_run_config_suffix(
             normalize=args.normalize,

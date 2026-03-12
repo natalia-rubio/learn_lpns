@@ -529,7 +529,7 @@ def load_vessel_geometric_features(
     # vessel_id, is_inlet, base geometric params + all COMPUTED_VESSEL_FEATURES + zero_d_element_values from config
     _computed_vessel_suffixes = [name for name, _ in COMPUTED_VESSEL_FEATURES]
     feature_names = [
-        #"vessel_id",
+        "vessel_id",
         "is_inlet",
         "vessel_length",
         "inlet_area",

@@ -27,13 +27,13 @@ from scipy import stats
 # Value can be a string (single line) or a list/tuple of strings (multiple lines, joined by newline).
 # Add or override entries to customize; configs not listed use the folder name.
 CONFIG_DISPLAY_NAME = {
-    "base": ["Stenosis coefficient with calibrator penalty,", "asymmetric loss,", "entrance-length adjustment"],
-    "stenosis_off": ["No stenosis coefficient,", "asymmetric loss,", "entrance-length adjustment"],
-    "penalty_off": ["Stenosis coefficient without calibrator penalty,","asymmetric loss", "entrance-length adjustment"],
+    "base": [r"$R_{\mathrm{quad}}$ with calibrator penalty,", "asymmetric loss,", "entrance-length adjustment"],
+    "stenosis_off": [r"No $R_{\mathrm{quad}}$,", "asymmetric loss,", "entrance-length adjustment"],
+    "penalty_off": [r"$R_{\mathrm{quad}}$ without calibrator penalty,", "asymmetric loss", "entrance-length adjustment"],
     #"symmetric": ["No stenosis coefficient, symmetric loss"],
-    "stenosis_off_symmetric": ["No stenosis coefficient,", "symmetric loss,", "entrance-length adjustment"],
+    "stenosis_off_symmetric": [r"No $R_{\mathrm{quad}}$,", "symmetric loss,", "entrance-length adjustment"],
     # Config with different geometry variant: "config_suffix:variant" -> data from that config folder, that variant's CSV
-    "stenosis_off:bifurcations": ["No stenosis coefficient,", "asymmetric loss,", "no entrance-length adjustment"],
+    "stenosis_off:bifurcations": [r"No $R_{\mathrm{quad}}$,", "asymmetric loss,", "no entrance-length adjustment"],
     "normalized": "Normalized",
     "normalized_clip": "Normalized + clip",
 }
