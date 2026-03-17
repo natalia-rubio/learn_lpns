@@ -203,7 +203,7 @@ def plot_vessel_boundaries(geometric_input_path, centerline_path, output_path,
     if len(connector_outlet_points) > 0:
         connector_outlet_points = np.array(connector_outlet_points)
     
-    # Rotate 200° about z-axis (180° + 20°): (x, y) -> (x*cos(200°)-y*sin(200°), x*sin(200°)+y*cos(200°))
+    # Rotate 160° about z-axis
     theta = np.deg2rad(160)
     cos_t, sin_t = np.cos(theta), np.sin(theta)
     def rotate_200_z(arr):
@@ -238,7 +238,7 @@ def plot_vessel_boundaries(geometric_input_path, centerline_path, output_path,
     
     # Plot centerline as points (not connected)
     ax.scatter(points[:, 0], points[:, 1], points[:, 2],
-               c='gray', s=5, alpha=0.3, label='Centerline', zorder=0)
+               c='gray', s=18, alpha=0.3, label='Centerline', zorder=0)
     
     # Plot regular vessel outlet points (red squares) - smaller size
     if len(outlet_points) > 0:
@@ -269,35 +269,14 @@ def plot_vessel_boundaries(geometric_input_path, centerline_path, output_path,
     
     ax.legend(loc='upper right', fontsize=10)
     
-    # Set equal aspect ratio and zoom in more tightly
-    # Get axis limits - use only vessel boundary points for tighter zoom
-    boundary_points_list = []
-    if len(inlet_points) > 0:
-        boundary_points_list.append(inlet_points)
-    if len(outlet_points) > 0:
-        boundary_points_list.append(outlet_points)
-    if len(connector_inlet_points) > 0:
-        boundary_points_list.append(connector_inlet_points)
-    if len(connector_outlet_points) > 0:
-        boundary_points_list.append(connector_outlet_points)
-    
-    if len(boundary_points_list) > 0:
-        boundary_points = np.vstack(boundary_points_list)
-    else:
-        # Fallback to all centerline points
-        boundary_points = points
-    
-    # Calculate range with tighter zoom (reduce padding)
-    max_range = np.array([boundary_points[:, 0].max() - boundary_points[:, 0].min(),
-                          boundary_points[:, 1].max() - boundary_points[:, 1].min(),
-                          boundary_points[:, 2].max() - boundary_points[:, 2].min()]).max() / 2.0
-    
-    # Reduce range significantly to zoom in much more tightly (multiply by 0.7 = 30% reduction)
+    # Set axis limits from full centerline so zoom is consistent with junction-boundaries plot
+    max_range = np.array([points[:, 0].max() - points[:, 0].min(),
+                          points[:, 1].max() - points[:, 1].min(),
+                          points[:, 2].max() - points[:, 2].min()]).max() / 2.0
     max_range = max_range * 0.7
-    
-    mid_x = (boundary_points[:, 0].max() + boundary_points[:, 0].min()) * 0.5
-    mid_y = (boundary_points[:, 1].max() + boundary_points[:, 1].min()) * 0.5
-    mid_z = (boundary_points[:, 2].max() + boundary_points[:, 2].min()) * 0.5
+    mid_x = (points[:, 0].max() + points[:, 0].min()) * 0.5
+    mid_y = (points[:, 1].max() + points[:, 1].min()) * 0.5
+    mid_z = (points[:, 2].max() + points[:, 2].min()) * 0.5
     
     ax.set_xlim(mid_x - max_range, mid_x + max_range)
     ax.set_ylim(mid_y - max_range, mid_y + max_range)

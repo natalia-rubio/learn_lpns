@@ -188,7 +188,7 @@ def main():
             error_kw={"color": "black", "linewidth": 0.8},
         )
 
-    ax.set_ylabel(r"Max. Relative Error over Cardiac Cycle (\%)", fontsize=12)
+    ax.set_ylabel(r"Max. Inlet Pressure Error over Cardiac Cycle (\%)", fontsize=12)
     ax.set_xlabel(r"Cross Validation\ Trial", fontsize=12)
     ax.set_xticks(x)
     ax.set_xticklabels(x_labels, fontsize=10.5, ha="center")
