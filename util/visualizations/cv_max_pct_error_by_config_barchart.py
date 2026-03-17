@@ -251,10 +251,10 @@ def main():
     )
     ax.set_yticks(y_pos)
     ax.set_yticklabels(labels, fontsize=11)
-    ax.set_xlabel(r"Max.\ Relative Error over Cardiac Cycle (\%)", fontsize=12)
+    ax.set_xlabel(r"Max. Inlet Pressure Error over Cardiac Cycle (\%)", fontsize=12)
     x_max = args.xmax
     ax.set_xlim(0, x_max if x_max is not None else None)
-    ax.set_title(r"Max. Relative Error over Cardiac Cycle (\%) by Pipeline Configuration", fontsize=12)
+    ax.set_title(r"Max. Inlet Pressure Error over Cardiac Cycle (\%) by Pipeline Configuration", fontsize=12)
     ax.invert_yaxis()  # smallest (best) at top
     ax.grid(axis="x", alpha=0.3)
     for spine in ax.spines.values():

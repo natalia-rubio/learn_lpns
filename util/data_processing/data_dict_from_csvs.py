@@ -39,6 +39,29 @@ except ImportError:
     plt = None
 
 
+def _setup_latex_histograms() -> bool:
+    """Enable LaTeX rendering for matplotlib if available. Returns True if LaTeX is in use."""
+    if not HAS_MATPLOTLIB:
+        return False
+    try:
+        plt.rcParams["text.usetex"] = True
+        plt.rcParams["font.family"] = "serif"
+        plt.rcParams["font.serif"] = ["Computer Modern Roman", "DejaVu Serif"]
+        plt.rcParams["mathtext.fontset"] = "cm"
+        return True
+    except Exception:
+        plt.rcParams["text.usetex"] = False
+        plt.rcParams["font.family"] = "serif"
+        plt.rcParams["font.serif"] = ["DejaVu Serif"]
+        return False
+
+
+def _feature_name_to_latex(name: str) -> str:
+    """Return LaTeX-safe string for feature name (escape underscores for text mode)."""
+    escaped = name.replace("_", r"\_")
+    return rf"\texttt{{{escaped}}}"
+
+
 def get_default_include_features() -> List[str]:
     """
     Get the default list of features to include in the neural network input.
@@ -286,6 +309,106 @@ def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[L
     return header, np.asarray(rows, dtype=float)
 
 
+def _plot_column_histograms(
+    data_array: np.ndarray,
+    column_names: List[str],
+    output_dir: str,
+    set_name: str,
+    num_geos: int,
+) -> int:
+    """
+    Generate one histogram per column (one PNG + PDF per column), with LaTeX formatting.
+    Returns the number of columns plotted.
+    """
+    if not HAS_MATPLOTLIB:
+        return 0
+
+    os.makedirs(output_dir, exist_ok=True)
+    n_cols = len(column_names)
+    if data_array.shape[1] != n_cols:
+        raise ValueError(
+            f"Column count mismatch: data_array has {data_array.shape[1]} columns, "
+            f"but {n_cols} names provided"
+        )
+
+    use_latex = _setup_latex_histograms()
+    if use_latex:
+        xlabel, ylabel = r"Value", r"Frequency"
+    else:
+        xlabel, ylabel = "Value", "Frequency"
+
+    n_samples = data_array.shape[0]
+    set_label = set_name if set_name else ""
+
+    for idx, col_name in enumerate(column_names):
+        col_data = data_array[:, idx]
+        col_data_clean = col_data[np.isfinite(col_data)]
+
+        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+
+        if len(col_data_clean) == 0:
+            ax.text(0.5, 0.5, "No valid data", ha="center", va="center", transform=ax.transAxes)
+            title_str = col_name
+        else:
+            n_bins = min(50, max(10, int(np.sqrt(len(col_data_clean)))))
+            ax.hist(col_data_clean, bins=n_bins, edgecolor="black", alpha=0.7)
+            mean_val = np.mean(col_data_clean)
+            std_val = np.std(col_data_clean)
+            n_val = len(col_data_clean)
+            if use_latex:
+                stats_text = (
+                    rf"Mean: ${mean_val:.4f}$" + "\n"
+                    + rf"Std: ${std_val:.4f}$" + "\n"
+                    + rf"$N = {n_val}$"
+                )
+                title_str = _feature_name_to_latex(col_name)
+            else:
+                stats_text = f"Mean: {mean_val:.4f}\nStd: {std_val:.4f}\nN: {n_val}"
+                title_str = col_name
+            ax.text(
+                0.98, 0.98, stats_text, transform=ax.transAxes,
+                fontsize=9, verticalalignment="top", horizontalalignment="right",
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+            )
+
+        ax.set_xlabel(xlabel, fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.set_title(title_str, fontsize=12)
+        ax.grid(True, alpha=0.3)
+
+        if set_label:
+            fig.suptitle(
+                rf"{set_label} ($n_{{\mathrm{{geos}}}} = {num_geos}$, $n_{{\mathrm{{samples}}}} = {n_samples}$)",
+                fontsize=11, fontweight="bold", y=1.02,
+            )
+        else:
+            fig.suptitle(
+                rf"$n_{{\mathrm{{geos}}}} = {num_geos}$, $n_{{\mathrm{{samples}}}} = {n_samples}$",
+                fontsize=11, fontweight="bold", y=1.02,
+            )
+        plt.tight_layout()
+
+        safe_name = col_name.replace(os.sep, "_").strip() or f"col_{idx}"
+        base_path = os.path.join(output_dir, safe_name)
+        png_path = base_path + ".png"
+        pdf_path = base_path + ".pdf"
+        try:
+            plt.savefig(png_path, dpi=150, bbox_inches="tight")
+            plt.savefig(pdf_path, bbox_inches="tight")
+            print(f"  Saved {safe_name} -> {png_path}, {pdf_path}")
+        except Exception as e:
+            if use_latex and "usetex" in str(e).lower():
+                plt.rcParams["text.usetex"] = False
+                plt.savefig(png_path, dpi=150, bbox_inches="tight")
+                plt.savefig(pdf_path, bbox_inches="tight")
+                print(f"  Saved {safe_name} (no LaTeX) -> {png_path}, {pdf_path}")
+            else:
+                raise
+        plt.close(fig)
+
+    return n_cols
+
+
 def plot_feature_histograms(
     input_array: np.ndarray,
     feature_names: List[str],
@@ -294,85 +417,37 @@ def plot_feature_histograms(
     num_geos: int,
 ) -> None:
     """
-    Generate histograms showing the frequency distribution for each feature.
-    
-    Args:
-        input_array: NumPy array of shape (n_samples, n_features)
-        feature_names: List of feature names corresponding to columns
-        output_dir: Directory to save histogram plots
-        set_name: Set name (e.g., "VMR")
-        num_geos: Number of geometries processed
+    Generate one histogram per feature (one file per feature), with LaTeX formatting.
+    Saves each figure as both PNG and PDF.
     """
     if not HAS_MATPLOTLIB:
         print("Warning: matplotlib not available, skipping histogram generation")
         return
-    
-    os.makedirs(output_dir, exist_ok=True)
-    
-    n_features = len(feature_names)
-    if input_array.shape[1] != n_features:
-        raise ValueError(
-            f"Feature count mismatch: input_array has {input_array.shape[1]} columns, "
-            f"but {n_features} feature names provided"
-        )
-    
-    # Create a grid of subplots
-    n_cols = 3
-    n_rows = (n_features + n_cols - 1) // n_cols  # Ceiling division
-    
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
-    if n_features == 1:
-        axes = [axes]
-    elif n_rows == 1:
-        axes = axes.flatten()
-    else:
-        axes = axes.flatten()
-    
-    for idx, feature_name in enumerate(feature_names):
-        ax = axes[idx]
-        feature_data = input_array[:, idx]
-        
-        # Remove NaN and infinite values
-        feature_data_clean = feature_data[np.isfinite(feature_data)]
-        
-        if len(feature_data_clean) == 0:
-            ax.text(0.5, 0.5, 'No valid data', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(feature_name, fontsize=12)
-            continue
-        
-        # Create histogram
-        n_bins = min(50, max(10, int(np.sqrt(len(feature_data_clean)))))
-        ax.hist(feature_data_clean, bins=n_bins, edgecolor='black', alpha=0.7)
-        ax.set_xlabel('Value', fontsize=10)
-        ax.set_ylabel('Frequency', fontsize=10)
-        ax.set_title(feature_name, fontsize=12)
-        ax.grid(True, alpha=0.3)
-        
-        # Add statistics text
-        mean_val = np.mean(feature_data_clean)
-        std_val = np.std(feature_data_clean)
-        stats_text = f'Mean: {mean_val:.4f}\nStd: {std_val:.4f}\nN: {len(feature_data_clean)}'
-        ax.text(0.98, 0.98, stats_text, transform=ax.transAxes,
-                fontsize=9, verticalalignment='top', horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
-    # Hide unused subplots
-    for idx in range(n_features, len(axes)):
-        axes[idx].axis('off')
-    
-    plt.suptitle(
-        f'Feature Distributions: {set_name} (n_geos={num_geos}, n_samples={input_array.shape[0]})',
-        fontsize=14,
-        fontweight='bold'
+    n = _plot_column_histograms(
+        input_array, feature_names, output_dir, set_name, num_geos
     )
-    plt.tight_layout()
-    
-    # Save figure
-    output_path = os.path.join(output_dir, f'feature_histograms_{set_name}_num_geos_{num_geos}.png')
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    print(f"Saved feature histograms to: {output_path}")
+    print(f"Saved {n} feature histograms (PNG + PDF) to: {output_dir}")
+
+
+def plot_lumped_param_histograms(
+    output_array: np.ndarray,
+    output_names: List[str],
+    output_dir: str,
+    set_name: str,
+    num_geos: int,
+) -> None:
+    """
+    Generate one histogram per junction lumped parameter (one PNG + PDF per parameter).
+    Saves into output_dir/lumped_parameters/.
+    """
+    if not HAS_MATPLOTLIB:
+        return
+    lumped_dir = os.path.join(output_dir, "lumped_parameters")
+    n = _plot_column_histograms(
+        output_array, output_names, lumped_dir, set_name, num_geos
+    )
+    if n:
+        print(f"Saved {n} junction lumped parameter histograms (PNG + PDF) to: {lumped_dir}")
 
 
 def build_data_dict_from_csvs(
@@ -512,20 +587,28 @@ def build_data_dict_from_csvs(
             for idx in tortuosity_indices:
                 input_array[:, idx] = np.maximum(input_array[:, idx], 1.0)
 
-    # Generate histograms if requested
-    if plot_histograms and include_features is not None and feature_order is not None:
-        print("Plotting histograms...")
+    # Generate histograms if requested (features and junction lumped parameters)
+    if plot_histograms:
         if histogram_output_dir is None:
-            # Default output directory includes geometry variant
             histogram_output_dir = os.path.join("data", "feature_histograms", set_name, geometry_variant)
-        
-        plot_feature_histograms(
-            input_array=input_array,
-            feature_names=feature_order,
-            output_dir=histogram_output_dir,
-            set_name=set_name,
-            num_geos=len(geometries),
-        )
+        if include_features is not None and feature_order is not None:
+            print("Plotting feature histograms...")
+            plot_feature_histograms(
+                input_array=input_array,
+                feature_names=feature_order,
+                output_dir=histogram_output_dir,
+                set_name=set_name,
+                num_geos=len(geometries),
+            )
+        if output_order is not None:
+            print("Plotting junction lumped parameter histograms...")
+            plot_lumped_param_histograms(
+                output_array=output_array,
+                output_names=output_order,
+                output_dir=histogram_output_dir,
+                set_name=set_name,
+                num_geos=len(geometries),
+            )
 
     # --- Compute stats (always, for the summary CSV) ---
     input_mean = np.mean(input_array, axis=0)
@@ -745,6 +828,8 @@ __all__ = [
     "get_default_include_outputs_vessel",
     "filter_features_from_array",
     "filter_outputs_from_array",
+    "plot_feature_histograms",
+    "plot_lumped_param_histograms",
     "_read_csv_matrix",
 ]
 

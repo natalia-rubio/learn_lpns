@@ -148,8 +148,8 @@ def main():
     parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., tree_000)')
 
     parser.add_argument('--junction-types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
-                       default='BloodVesselJunction,NORMAL_JUNCTION,DirIndepJunction,HybridJunction',
-                       help='Comma-separated junction types for calibration (default: all four types)')
+                       default='BloodVesselJunction,NORMAL_JUNCTION',
+                       help='Comma-separated junction types for calibration (default: BloodVesselJunction,NORMAL_JUNCTION)')
     parser.add_argument('--zoom-start', type=int, default=None,
                        help='Start index for zoom window (shaded region in plots). Default: 599')
     parser.add_argument('--zoom-end', type=int, default=None,
@@ -743,6 +743,11 @@ def main():
                     with open(variant_geometric_input, 'r') as f:
                         nn_config = json.load(f)
                     
+                    # For bifurcations (non-EL), convert NORMAL_JUNCTION -> BloodVesselJunction and set
+                    # junction_values from geometric_params; NN prediction loop will overwrite with predictions.
+                    if geo_variant_name == 'bifurcations':
+                        convert_el_normal_junctions_to_blood_vessel_junction(nn_config)
+                    
                     # Extract geometric features using the same workflow as data processing
                     # This ensures we use the same 13 features that the model was trained on
                     from util.data_processing.data_dict_from_csvs import (
@@ -1083,6 +1088,10 @@ def main():
             # Step 3.7 (optional): Vessel NN inference: predict vessel R/S/L and write NN_JunctionAndVessel config
             if getattr(args, 'NN_vessel', False):
                 from util.data_processing.inputs_from_0d_config import load_vessel_geometric_features
+                from util.data_processing.data_dict_from_csvs import (
+                    filter_features_from_array,
+                    get_default_include_features_vessel,
+                )
                 from util.neural_network.nn_model import predict as nn_predict
                 from util.neural_network.nn_util import dill_load
                 import jax.numpy as jnp
@@ -1126,6 +1135,12 @@ def main():
                         if len(X_v) == 0:
                             print(f"      No non-connector vessels, skipping vessel NN for {geo_variant_name}")
                             continue
+                        # Filter to same 21 features used in vessel NN training (avoids 21 vs 25 shape mismatch)
+                        X_v, feat_names_v = filter_features_from_array(
+                            X_v, feat_names_v,
+                            include_features=get_default_include_features_vessel(),
+                            remap_tortuosity=False,
+                        )
                         norm_suffix = "_normalized" if args.normalize else ""
                         # For CV: junction dir is e.g. bifurcations_EL_normalized_trial_0, vessel dir is bifurcations_EL_vessel_normalized_trial_0
                         if getattr(args, 'model_dir', None) and '_trial_' in os.path.basename(args.model_dir):

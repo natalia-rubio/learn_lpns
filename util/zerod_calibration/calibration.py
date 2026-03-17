@@ -4,6 +4,23 @@ import numpy as np
 from util.zerod_calibration.file_io import timestep_from_1D, convert_numpy_to_list
 
 
+def repeat_observations_in_time(observations, num_repeats=5):
+    """
+    Repeat each observation series in time by concatenating the series num_repeats times.
+    Used when the 1D solution is short (e.g. one cardiac cycle) to extend for calibration.
+    """
+    result = {"y": {}, "dy": {}}
+    for key in observations["y"]:
+        arr = np.asarray(observations["y"][key])
+        result["y"][key] = np.concatenate([arr] * num_repeats)
+    for key in observations.get("dy", []):
+        arr = np.asarray(observations["dy"][key])
+        result["dy"][key] = np.concatenate([arr] * num_repeats)
+    if not result["dy"]:
+        result.pop("dy")
+    return result
+
+
 def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False):
     """
     Create calibration input file from geometric input and observations.
