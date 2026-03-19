@@ -21,6 +21,9 @@ from vtk.util.numpy_support import numpy_to_vtk as n2v
 from util.vtk_functions import read_geo, write_geo, calculator, cut_plane, connectivity, Integration
 from util.get_bc_integrals import get_res_names
 
+# Timeout for svSlicer subprocess (seconds). Increase for very large runs.
+SVSLICER_TIMEOUT_SECONDS = 3600  # 1 hour
+
 def pad_timestep(time_str, width=5):
     """
     Pad timestep string with zeros to specified width.
@@ -364,10 +367,10 @@ def call_svslicer(combined_vtu_path, centerline_path, output_path, num_threads=N
         # Run svSlicer and capture output
         # Use subprocess.run with timeout to avoid hanging indefinitely
         try:
-            result = subprocess.run(cmd, env=env, capture_output=True, text=True, 
-                                   timeout=3600)  # 1 hour timeout
+            result = subprocess.run(cmd, env=env, capture_output=True, text=True,
+                                   timeout=SVSLICER_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
-            print(f"  Error: svSlicer timed out after 1 hour")
+            print(f"  Error: svSlicer timed out after {SVSLICER_TIMEOUT_SECONDS}s")
             return False
         
         # Check if output file was created (more reliable than exit code)

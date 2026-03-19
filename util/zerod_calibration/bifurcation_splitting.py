@@ -1683,7 +1683,32 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
 
                                         # New merged vessel length: from new boundary to original outlet
                                         new_merged_length = merged_path_end - new_junction_boundary_path
+                                        length_epsilon = 1e-10
 
+                                        # If the remainder length is zero or negligible, convert to connector (same as single-vessel path)
+                                        if new_merged_length <= length_epsilon:
+                                            if verbose:
+                                                print(f"      → New merged vessel length is ~0, converting to connector (fully absorbed into junction)")
+                                            old_name = merged_vessel.get('vessel_name', '')
+                                            connector_name = old_name if 'connector' in old_name.lower() else f"{old_name}_connectorEL"
+                                            merged_vessel['vessel_name'] = connector_name
+                                            _absorb_vessel_params(junc, outlet_vessel_name, merged_vessel, fraction=1.0)
+                                            if connector_name != outlet_vessel_name:
+                                                _rename_outlet_in_gp(junc, outlet_vessel_name, connector_name)
+                                            merged_vessel['vessel_length'] = 0.0
+                                            if 'zero_d_element_values' not in merged_vessel:
+                                                merged_vessel['zero_d_element_values'] = {}
+                                            merged_vessel['zero_d_element_values']['R_poiseuille'] = 0.0
+                                            merged_vessel['zero_d_element_values']['C'] = 1e-10
+                                            merged_vessel['zero_d_element_values']['L'] = 0.0
+                                            merged_vessel['zero_d_element_values']['stenosis_coefficient'] = 0.0
+                                            set_vessel_node_ids(merged_vessel, merged_outlet_idx, merged_outlet_idx)
+                                            new_connector_vessels.append(merged_vessel)
+                                            print(f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
+                                                  f"fully absorbed by EL, converted to {connector_name}")
+                                            extension_successful = True
+                                            break
+                                        # Else: remainder length is positive, shorten merged vessel by EL
                                         # Absorb proportional params from the merged vessel
                                         consumed_length = new_junction_boundary_path - merged_path_start
                                         fraction_consumed = consumed_length / merged_length if merged_length > 0 else 0.0

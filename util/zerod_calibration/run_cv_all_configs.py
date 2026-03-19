@@ -22,12 +22,14 @@ os.chdir(REPO_ROOT)  # ensure cwd is repo root for -m invocations
 
 # Configs to run: (run_config_suffix, list of run_cross_validation flags)
 # Order is the order of execution; barchart by-config will discover and sort by value.
+# Use --run-config SUFFIX as the single way to specify config.
 DEFAULT_CONFIGS = [
-    ("base", []),
-    ("stenosis_off", ["--stenosis-off"]),
-    ("penalty_off", ["--penalty-off"]),
-    ("stenosis_off_symmetric", ["--stenosis-off", "--symmetric-loss"]),
-    ("stenosis_off:bifurcations", ["--stenosis-off", "bifurcations"]),
+    ("base", ["--run-config", "base"]),
+    ("stenosis_off", ["--run-config", "stenosis_off"]),
+    ("penalty_off", ["--run-config", "penalty_off"]),
+    ("stenosis_off_symmetric", ["--run-config", "stenosis_off_symmetric"]),
+    ("symmetric_penalty_off", ["--run-config", "symmetric_penalty_off"]),
+    ("stenosis_off:bifurcations", ["--run-config", "stenosis_off"]),
 ]
 
 
@@ -59,7 +61,7 @@ def main():
         nargs="*",
         default=None,
         metavar="CONFIG",
-        help="Config suffixes to run (default: base stenosis_off penalty_off stenosis_off_symmetric). Must match DEFAULT_CONFIGS keys.",
+        help="Config suffixes to run (default: base stenosis_off penalty_off stenosis_off_symmetric symmetric_penalty_off). Must match DEFAULT_CONFIGS keys.",
     )
     parser.add_argument(
         "--only-barcharts",

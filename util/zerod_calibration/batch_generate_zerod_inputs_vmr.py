@@ -21,6 +21,10 @@ from datetime import datetime
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO_ROOT)
 
+# Timeout in seconds for each generate_zerod_inputs.py run. Increase for slow/large geometries.
+DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS = 1000
+
+
 def get_vmr_geometries(richter_dir='data/zeroD/VMR/richter-0d'):
     """
     Get list of valid VMR geometry names from richter-0d directory.
@@ -179,21 +183,24 @@ def check_geometry_complete(set_name, geo_name, junction_types, skip_forward=Fal
     
     return True
 
-def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, timeout_seconds=300):
+def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, timeout_seconds=None):
     """
     Run generate_zerod_inputs.py for a single geometry.
-    
+
     Args:
         geo_name: Geometry name (e.g., '0063_1001')
         args_dict: Dictionary of arguments to pass to generate_zerod_inputs.py
         verbose: Whether to print verbose output
-        timeout_seconds: Maximum time to wait (default: 300 = 5 minutes)
+        timeout_seconds: Maximum time to wait (default: DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS)
         
     Returns:
         (success: bool, error_message: str or None, timed_out: bool, generated_files: list or None)
     """
+    if timeout_seconds is None:
+        timeout_seconds = DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS
+
     script_path = os.path.join(REPO_ROOT, 'util', 'zerod_calibration', 'generate_zerod_inputs.py')
-    
+
     # Build command
     cmd = [sys.executable, script_path, '--set-name', set_name, '--geo-name', geo_name]
     
@@ -347,8 +354,8 @@ Examples:
                        help='Symmetric loss run-config: overestimate weight 1.0 for all models (for path naming)')
     parser.add_argument('--clip-predictions', action='store_true', dest='clip_predictions',
                        help='Clip R/S/L to training set min/max (run-config)')
-    parser.add_argument('--timeout', type=int, default=1000,
-                       help='Timeout in seconds for each geometry (default: 300 = 5 minutes)')
+    parser.add_argument('--timeout', type=int, default=DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS,
+                       help=f'Timeout in seconds for each geometry (default: {DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS})')
     parser.add_argument('--max-failures', type=int, default=None,
                        help='Stop after N failures (default: continue all)')
     parser.add_argument('--log-file', type=str, default=None,

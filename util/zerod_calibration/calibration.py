@@ -3,6 +3,17 @@ import json
 import numpy as np
 from util.zerod_calibration.file_io import timestep_from_1D, convert_numpy_to_list
 
+# Default L2 penalties when not set-specific (R_poiseuille, stenosis_coefficient)
+DEFAULT_L2_R = 10**5
+DEFAULT_L2_STENOSIS = 10**10
+
+# Per-set L2 penalties (set_name -> (L2_penalty_R_poiseuille, L2_penalty_stenosis_coefficient)).
+# Add entries to tune calibration by anatomy/set; unlisted sets use DEFAULT_L2_*.
+SET_L2_PENALTIES = {
+    "VMR_abdo": (10**2, 10**5),
+    "VMR_rigid_aorta_adults": (10**5, 10**10),
+}
+
 
 def repeat_observations_in_time(observations, num_repeats=5):
     """
@@ -21,7 +32,7 @@ def repeat_observations_in_time(observations, num_repeats=5):
     return result
 
 
-def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False):
+def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False, set_name=None):
     """
     Create calibration input file from geometric input and observations.
     Computes BC times from 1D solution timesteps multiplied by timestep size from XML.
@@ -34,6 +45,7 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         geo_dir: Geometry directory (to find XML file for timestep size)
         stenosis_off: If True, set calibrate_stenosis_coefficient False and set all stenosis to 0
         penalty_off: If True (and stenosis_off is False), set L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient to 0. Incompatible with stenosis_off.
+        set_name: Optional set name (e.g. VMR_abdo) used to look up set-specific L2 penalties from SET_L2_PENALTIES; unlisted sets use defaults.
     """
     if stenosis_off and penalty_off:
         raise ValueError("Cannot use both --stenosis-off and --penalty-off.")
@@ -94,15 +106,20 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
                 j["junction_values"]["stenosis_coefficient"] = [0.0] * n_out
         print("  Stenosis-off: all stenosis coefficients set to 0, calibrate_stenosis_coefficient=False, L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
     
-    # Add calibration parameters (when stenosis_off or penalty_off, zero the R and stenosis L2 penalties)
-    l2_R = 0.0 if (stenosis_off or penalty_off) else 10**5
-    l2_stenosis = 0.0 if (stenosis_off or penalty_off) else 10**10
-    if penalty_off and not stenosis_off:
-        print("  Penalty-off: L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
+    # Add calibration parameters: L2 penalties depend on set_name when not penalty_off/stenosis_off
+    if stenosis_off or penalty_off:
+        l2_R = 0.0
+        l2_stenosis = 0.0
+        if penalty_off and not stenosis_off:
+            print("  Penalty-off: L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
+    else:
+        l2_R, l2_stenosis = SET_L2_PENALTIES.get(set_name, (DEFAULT_L2_R, DEFAULT_L2_STENOSIS))
+        if set_name and set_name in SET_L2_PENALTIES:
+            print(f"  Set-specific L2 penalties for {set_name}: R={l2_R}, stenosis={l2_stenosis}")
     inp["calibration_parameters"] = {
         "tolerance_gradient": 1e-4,
         "tolerance_increment": 1e-4,
-        "maximum_iterations": 100,
+        "maximum_iterations": 20,
         "calibrate_stenosis_coefficient": not stenosis_off,
         "calibrate_capacitance": False,
         "set_capacitance_to_zero": False,
