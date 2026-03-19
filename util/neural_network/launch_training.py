@@ -64,8 +64,8 @@ def launch_training(network_params, optimizer_params, training_params):
         training_params["num_epochs"] = 1000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10
     else:
-        network_params["layer_width"] = 20
-        network_params["num_layers"] = 4
+        network_params["layer_width"] = 10
+        network_params["num_layers"] = 2
         training_params["num_epochs"] = 4000#5000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 2000
     optimizer_params["decay_rate"] = 0.8
