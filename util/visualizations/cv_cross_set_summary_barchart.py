@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+"""
+Grouped bar chart of cross-validation averages across multiple set names.
+
+For each set_name, plots the average CV metric for:
+  - baseline / poiseuille
+  - learned junctions
+  - learned vessels
+  - learned vessels and junctions
+  - optimal
+
+Also shows a 95% confidence interval computed from standard deviation:
+    CI95 = 1.96 * std / sqrt(n_trials)
+
+Usage:
+  python -m util.visualizations.cv_cross_set_summary_barchart
+  python -m util.visualizations.cv_cross_set_summary_barchart --run-config stenosis_off
+  python -m util.visualizations.cv_cross_set_summary_barchart --metric pressure_max_error
+"""
+
+import argparse
+import csv
+import math
+import os
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+from util.visualizations.plot_location_comparison import get_line_style
+
+
+SET_NAMES_DEFAULT = [
+    "VMR_rigid_aorta_adults_all",
+    "VMR_abdo",
+    "VMR_pulmo",
+]
+
+RUN_CONFIG_FALLBACK_ORDER = [
+    "stenosis_off_symmetric",
+    "stenosis_off",
+    "symmetric_penalty_off",
+    "penalty_off",
+    "base",
+]
+
+MODALITY_ORDER = [
+    "geometric",
+    "BloodVesselJunction_NN",
+    "NN_vessel",
+    "BloodVesselJunction_NN_plus_Vessel_NN",
+    "BloodVesselJunction",
+]
+
+MODALITY_LABEL = {
+    "geometric": "Baseline\n(Poiseuille)",
+    "BloodVesselJunction_NN": "Learned\nJunctions",
+    "NN_vessel": "Learned\nVessels",
+    "BloodVesselJunction_NN_plus_Vessel_NN": "Learned Junctions\nand Vessels",
+    "BloodVesselJunction": "Optimal",
+}
+
+METRIC_CONFIG = {
+    "pressure_max_rel_error": {
+        "csv_suffix": "_pressure_max_rel_error.csv",
+        "col_prefix": "PressureMaxRelError_",
+        "scale": 100.0,
+        "ylabel": r"Max. Inlet Pressure Error over Cardiac Cycle (\%)",
+        "out_suffix": "pressure_max_rel_error",
+    },
+    "pressure_max_error": {
+        "csv_suffix": "_pressure_max_error.csv",
+        "col_prefix": "PressureMaxError_",
+        "scale": 1.0,
+        "ylabel": r"Max. Inlet Pressure Error over Cardiac Cycle (mmHg)",
+        "out_suffix": "pressure_max_error",
+    },
+    "pressure_mse": {
+        "csv_suffix": "_pressure_mse.csv",
+        "col_prefix": "PressureMSE_",
+        "scale": 1.0,
+        "ylabel": r"Inlet Pressure MSE over Cardiac Cycle (mmHg$^2$)",
+        "out_suffix": "pressure_mse",
+    },
+}
+
+
+def _isnan(x):
+    return x != x
+
+
+def _load_trial_values(csv_path, col_name):
+    """Return list of trial-level metric values from the requested column."""
+    values = []
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            trial_id = (row.get("trial_id") or "").strip()
+            if trial_id in ("", "mean", "std"):
+                break
+            try:
+                values.append(float(row.get(col_name, "")))
+            except (TypeError, ValueError):
+                values.append(float("nan"))
+    return values
+
+
+def _mean_std_n(values):
+    clean = [v for v in values if not _isnan(v)]
+    n = len(clean)
+    if n == 0:
+        return float("nan"), float("nan"), 0
+    mean_val = float(np.mean(clean))
+    std_val = float(np.std(clean, ddof=1)) if n >= 2 else 0.0
+    return mean_val, std_val, n
+
+
+def _ci95_from_std(std_val, n):
+    if n <= 1 or _isnan(std_val):
+        return 0.0
+    return 1.96 * std_val / math.sqrt(n)
+
+
+def _modality_color(modality):
+    style_key = "geometric_0d" if modality == "geometric" else modality
+    return get_line_style(style_key).get("color", "gray")
+
+
+def _format_set_label(set_name):
+    if set_name.startswith("VMR_"):
+        return set_name.replace("VMR_", "VMR\n", 1)
+    return set_name
+
+
+def _resolve_csv_path(data_root, set_name, run_config, geometry_variant, csv_suffix, allow_fallback):
+    requested_path = os.path.join(
+        data_root,
+        "cross_validation",
+        set_name,
+        run_config,
+        f"{geometry_variant}_cv_summary{csv_suffix}",
+    )
+    if os.path.isfile(requested_path):
+        return requested_path, run_config
+    if not allow_fallback:
+        return None, None
+
+    candidates = [run_config] + [c for c in RUN_CONFIG_FALLBACK_ORDER if c != run_config]
+    for cfg in candidates:
+        p = os.path.join(
+            data_root,
+            "cross_validation",
+            set_name,
+            cfg,
+            f"{geometry_variant}_cv_summary{csv_suffix}",
+        )
+        if os.path.isfile(p):
+            return p, cfg
+    return None, None
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Grouped bar chart: CV averages across set names, with 95% CI."
+    )
+    parser.add_argument(
+        "--set-names",
+        nargs="+",
+        default=SET_NAMES_DEFAULT,
+        help="Set names to include (default: VMR_rigid_aorta_adults_all VMR_abdo VMR_pulmo)",
+    )
+    parser.add_argument(
+        "--geometry-variant",
+        default="bifurcations_EL",
+        help="Geometry variant in CV summary filename (default: bifurcations_EL)",
+    )
+    parser.add_argument(
+        "--run-config",
+        default="stenosis_off_symmetric",
+        help="Run config subfolder under results/cross_validation/<set_name>/ (default: stenosis_off_symmetric)",
+    )
+    parser.add_argument(
+        "--allow-config-fallback",
+        action="store_true",
+        help="If a set is missing --run-config, try common config fallbacks for that set.",
+    )
+    parser.add_argument(
+        "--metric",
+        default="pressure_max_rel_error",
+        choices=list(METRIC_CONFIG.keys()),
+        help="Metric to plot (default: pressure_max_rel_error)",
+    )
+    parser.add_argument(
+        "--data-root",
+        default="results",
+        help="Root containing cross_validation folder (default: results)",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Output path (default: auto path in results/cross_validation/)",
+    )
+    parser.add_argument(
+        "--dpi",
+        type=int,
+        default=180,
+        help="Figure DPI (default: 180)",
+    )
+    args = parser.parse_args()
+
+    mcfg = METRIC_CONFIG[args.metric]
+    means = {}
+    cis = {}
+    missing = []
+
+    for set_name in args.set_names:
+        csv_path, used_config = _resolve_csv_path(
+            args.data_root,
+            set_name,
+            args.run_config,
+            args.geometry_variant,
+            mcfg["csv_suffix"],
+            args.allow_config_fallback,
+        )
+        if not csv_path:
+            missing.append(
+                os.path.join(
+                    args.data_root,
+                    "cross_validation",
+                    set_name,
+                    args.run_config,
+                    f"{args.geometry_variant}_cv_summary{mcfg['csv_suffix']}",
+                )
+            )
+            continue
+        print(f"Using {set_name}: run-config={used_config} ({csv_path})")
+
+        means[set_name] = []
+        cis[set_name] = []
+        for modality in MODALITY_ORDER:
+            col_name = f"{mcfg['col_prefix']}{modality}"
+            values = _load_trial_values(csv_path, col_name)
+            mean_val, std_val, n = _mean_std_n(values)
+            ci_val = _ci95_from_std(std_val, n)
+            if _isnan(mean_val):
+                mean_val = 0.0
+                ci_val = 0.0
+            means[set_name].append(mean_val * mcfg["scale"])
+            cis[set_name].append(ci_val * mcfg["scale"])
+
+    valid_sets = [s for s in args.set_names if s in means]
+    if not valid_sets:
+        raise SystemExit(
+            "No valid CSV files were found for the requested set names.\n"
+            + "\n".join(missing)
+        )
+
+    plt.rcParams["text.usetex"] = True
+    plt.rcParams["font.family"] = "serif"
+
+    x = np.arange(len(valid_sets))
+    n_mod = len(MODALITY_ORDER)
+    width = 0.85 / n_mod
+    offsets = np.linspace(-0.425 + width / 2, 0.425 - width / 2, n_mod)
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+
+    for i, modality in enumerate(MODALITY_ORDER):
+        y = [means[s][i] for s in valid_sets]
+        yerr = [cis[s][i] for s in valid_sets]
+        ax.bar(
+            x + offsets[i],
+            y,
+            width,
+            yerr=yerr,
+            capsize=2.5,
+            color=_modality_color(modality),
+            edgecolor="black",
+            linewidth=0.6,
+            error_kw={"color": "black", "linewidth": 0.9},
+            label=MODALITY_LABEL[modality],
+        )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([_format_set_label(s) for s in valid_sets], fontsize=11)
+    ax.set_ylabel(mcfg["ylabel"], fontsize=12)
+    ax.set_xlabel("Set Name", fontsize=12)
+    ax.grid(axis="y", alpha=0.3)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.23),
+        ncol=3,
+        frameon=False,
+        fontsize=10,
+    )
+
+    plt.tight_layout(rect=(0, 0, 1, 0.92))
+
+    if args.output:
+        out_path = args.output
+    else:
+        out_dir = os.path.join(args.data_root, "cross_validation")
+        os.makedirs(out_dir, exist_ok=True)
+        out_name = (
+            f"cv_cross_set_summary_{args.run_config}_{args.geometry_variant}_{mcfg['out_suffix']}.pdf"
+        )
+        out_path = os.path.join(out_dir, out_name)
+
+    fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
+    plt.close()
+
+    print(f"Saved: {out_path}")
+    if missing:
+        print("Skipped missing CSV(s):")
+        for path in missing:
+            print(f"  - {path}")
+
+
+if __name__ == "__main__":
+    main()
