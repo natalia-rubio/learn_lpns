@@ -64,9 +64,9 @@ def launch_training(network_params, optimizer_params, training_params):
         training_params["num_epochs"] = 1000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10
     else:
-        network_params["layer_width"] = 10
-        network_params["num_layers"] = 2
-        training_params["num_epochs"] = 10000#5000
+        network_params["layer_width"] = 20
+        network_params["num_layers"] = 4
+        training_params["num_epochs"] = 4000#5000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 2000
     optimizer_params["decay_rate"] = 0.8
     optimizer_params["init"] = lr_init1
@@ -253,7 +253,7 @@ if __name__ == "__main__":
                              "asymmetric_loss_overestimate_weight": 1.0,
                              "symmetric_loss": getattr(cli_args, "symmetric_loss", False)}
             training_params = {"num_epochs": 500,
-                              "batch_size": 10,
+                              "batch_size": int(len(vessel_train_ind)/10),
                               "train_inds": np.asarray(vessel_train_ind),
                               "val_inds": np.asarray(vessel_val_ind),
                               "num_offsets": 1,
@@ -291,7 +291,7 @@ if __name__ == "__main__":
                              "asymmetric_loss_overestimate_weight": 1.0,
                              "symmetric_loss": getattr(cli_args, "symmetric_loss", False)}
             training_params = {"num_epochs": 500,
-                              "batch_size": 10,
+                              "batch_size": int(len(train_inds)/10),
                               "train_inds": train_inds,
                               "val_inds": val_inds,
                               "num_offsets": num_offsets,

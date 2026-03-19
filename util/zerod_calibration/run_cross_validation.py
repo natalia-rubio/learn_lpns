@@ -30,6 +30,36 @@ from util.zerod_calibration.generate_zerod_inputs import get_run_config_suffix
 from util.zerod_calibration.batch_generate_zerod_inputs_vmr import get_vmr_geometries
 
 
+# Recognized --run-config values. Add new configs here when introducing them.
+ALLOWED_RUN_CONFIGS = frozenset({
+    "base",
+    "penalty_off",
+    "symmetric_penalty_off",
+    "stenosis_off",
+    "stenosis_off_symmetric",
+    "normalized",
+    "normalized_penalty_off",
+    "normalized_stenosis_off",
+    "clip",
+    "symmetric",
+})
+
+
+def run_config_suffix_to_flags(run_config_suffix):
+    """
+    Derive boolean flags from a run_config_suffix string (inverse of get_run_config_suffix).
+    Used when the user specifies --run-config instead of individual flags.
+    """
+    s = (run_config_suffix or "base").strip()
+    return {
+        "normalize": "normalized" in s,
+        "stenosis_off": "stenosis_off" in s,
+        "symmetric_loss": "symmetric" in s,
+        "clip_predictions": "clip" in s,
+        "penalty_off": "penalty_off" in s,
+    }
+
+
 def _check_val_out_of_train_range(X, train_ind, val_ind, row_ranges, geometries, feature_names):
     """
     Check for validation rows where any feature is outside the min/max range of the training set.
@@ -150,6 +180,7 @@ def _ensure_ml_inputs_and_jax_for_config(
     clip_predictions,
     penalty_off,
     geometries,
+    no_redo=False,
 ):
     """Run batch_generate_zerod_inputs_vmr then run_data_processing with --run-config."""
     script_dir = os.path.dirname(__file__)
@@ -167,6 +198,8 @@ def _ensure_ml_inputs_and_jax_for_config(
         cmd_batch.append("--symmetric-loss")
     if clip_predictions:
         cmd_batch.append("--clip-predictions")
+    if no_redo:
+        cmd_batch.append("--no-redo")
     result = subprocess.run(cmd_batch, cwd=REPO_ROOT, text=True)
     if result.returncode != 0:
         raise RuntimeError(
@@ -207,6 +240,7 @@ def run_cross_validation(
     penalty_off=False,
     symmetric_loss=False,
     percent_train=0.9,
+    no_redo=False,
 ):
     if ml_inputs_root is None:
         ml_inputs_root = os.path.join(data_root, "ml_inputs")
@@ -265,6 +299,7 @@ def run_cross_validation(
                 clip_predictions=clip_predictions,
                 penalty_off=penalty_off,
                 geometries=_geometries,
+                no_redo=no_redo,
             )
 
     # Discover geometries and row ranges (same order as jax array); use config-specific ml_inputs when set
@@ -1144,9 +1179,10 @@ def main():
         help="Re-run only trial N (0-based). Merges result into existing CV summary if present.",
     )
     parser.add_argument(
-        "--normalize",
-        action="store_true",
-        help="Use z-normalized jax arrays for training and normalization/unnormalization at NN inference.",
+        "--run-config",
+        default="base",
+        metavar="SUFFIX",
+        help="Run config suffix for paths and behavior (default: base). E.g. base, penalty_off, symmetric_penalty_off, stenosis_off, stenosis_off_symmetric. zeroD/ml_inputs/jax/results use .../set_name/SUFFIX/....",
     )
     parser.add_argument(
         "--NN-vessel",
@@ -1167,28 +1203,10 @@ def main():
         help="Skip junction and/or vessel training for a trial if the corresponding model files already exist.",
     )
     parser.add_argument(
-        "--symmetric-loss",
+        "--no-redo",
         action="store_true",
-        dest="symmetric_loss",
-        help="Use symmetric loss in NN training (overestimate weight 1.0 for all models). When off, per-model asymmetric weights are used.",
-    )
-    parser.add_argument(
-        "--clip-predictions",
-        action="store_true",
-        dest="clip_predictions",
-        help="Clip NN predictions (R, S, L) to training set min/max during deploy.",
-    )
-    parser.add_argument(
-        "--stenosis-off",
-        action="store_true",
-        dest="stenosis_off",
-        help="Turn off stenosis: calibrate_stenosis_coefficient=False, set all stenosis to 0, do not use NN to predict stenosis.",
-    )
-    parser.add_argument(
-        "--penalty-off",
-        action="store_true",
-        dest="penalty_off",
-        help="Zero L2 penalties on R and stenosis when stenosis is included (incompatible with --stenosis-off).",
+        dest="no_redo",
+        help="Pass --no-redo to generate_zerod_inputs (skip recreating zeroD files that already exist).",
     )
     parser.add_argument(
         "--percent-train",
@@ -1209,43 +1227,36 @@ def main():
     )
     args = parser.parse_args()
 
-    if getattr(args, "stenosis_off", False) and getattr(args, "penalty_off", False):
-        parser.error("Cannot use both --stenosis-off and --penalty-off.")
+    run_config_suffix = (args.run_config or "base").strip()
+    if run_config_suffix not in ALLOWED_RUN_CONFIGS:
+        parser.error(
+            f"Unrecognized --run-config: {run_config_suffix!r}. "
+            f"Allowed: {', '.join(sorted(ALLOWED_RUN_CONFIGS))}."
+        )
+    flags = run_config_suffix_to_flags(run_config_suffix)
+    if flags["stenosis_off"] and flags["penalty_off"]:
+        parser.error("Cannot use both stenosis_off and penalty_off in --run-config.")
     if args.metrics_only and args.plots_only:
         parser.error("Cannot use both --metrics-only and --plots-only.")
     if args.plots_only:
-        run_config_suffix = get_run_config_suffix(
-            normalize=args.normalize,
-            stenosis_off=getattr(args, "stenosis_off", False),
-            symmetric_loss=getattr(args, "symmetric_loss", False),
-            clip_predictions=getattr(args, "clip_predictions", False),
-            penalty_off=getattr(args, "penalty_off", False),
-        )
         regenerate_location_plots(
             set_name=args.set_name,
             geometry_variant=args.geometry_variant,
             data_root=args.data_root,
             run_config_suffix=run_config_suffix,
-            stenosis_off=getattr(args, "stenosis_off", False),
-            normalize=args.normalize,
-            penalty_off=getattr(args, "penalty_off", False),
-            symmetric_loss=getattr(args, "symmetric_loss", False),
-            clip_predictions=getattr(args, "clip_predictions", False),
+            stenosis_off=flags["stenosis_off"],
+            normalize=flags["normalize"],
+            penalty_off=flags["penalty_off"],
+            symmetric_loss=flags["symmetric_loss"],
+            clip_predictions=flags["clip_predictions"],
         )
         return
     if args.metrics_only:
-        run_config_suffix = get_run_config_suffix(
-            normalize=args.normalize,
-            stenosis_off=getattr(args, "stenosis_off", False),
-            symmetric_loss=getattr(args, "symmetric_loss", False),
-            clip_predictions=getattr(args, "clip_predictions", False),
-            penalty_off=getattr(args, "penalty_off", False),
-        )
         regenerate_cv_metrics_from_existing(
             set_name=args.set_name,
             geometry_variant=args.geometry_variant,
             data_root=args.data_root,
-            normalize=args.normalize,
+            normalize=flags["normalize"],
             run_config_suffix=run_config_suffix,
         )
         return
@@ -1257,14 +1268,15 @@ def main():
         data_root=args.data_root,
         set_type=args.set_type,
         trial_index=args.trial,
-        normalize=args.normalize,
+        normalize=flags["normalize"],
         nn_vessel=args.nn_vessel,
         skip_training_if_exists=args.skip_training_if_exists,
-        clip_predictions=args.clip_predictions,
-        stenosis_off=args.stenosis_off,
-        penalty_off=args.penalty_off,
-        symmetric_loss=args.symmetric_loss,
+        clip_predictions=flags["clip_predictions"],
+        stenosis_off=flags["stenosis_off"],
+        penalty_off=flags["penalty_off"],
+        symmetric_loss=flags["symmetric_loss"],
         percent_train=args.percent_train,
+        no_redo=getattr(args, "no_redo", False),
     )
 
 

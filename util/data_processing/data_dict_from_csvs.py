@@ -456,7 +456,7 @@ def build_data_dict_from_csvs(
     output_type: str = "rri",
     ml_inputs_root: str = "data/ml_inputs",
     require_same_rows: bool = True,
-    plot_histograms: bool = True,
+    plot_histograms: bool = False,
     histogram_output_dir: Optional[str] = None,
     geometry_variant: str = "bifurcations",
     normalize: bool = False,
@@ -476,7 +476,7 @@ def build_data_dict_from_csvs(
         output_type: Output type ("rri", "ri", or "rr")
         ml_inputs_root: Root directory for ML inputs
         require_same_rows: Whether to require same number of rows in input and output CSVs
-        plot_histograms: Whether to generate histograms for selected features (default: True)
+        plot_histograms: Whether to generate histograms for selected features (default: False)
         histogram_output_dir: Directory to save histogram plots. If None, saves to 
                              "data/feature_histograms/{set_name}/{geometry_variant}"
         geometry_variant: Geometry variant name (e.g., "bifurcations" or "bifurcations_EL")
@@ -586,6 +586,17 @@ def build_data_dict_from_csvs(
             # Clamp tortuosity values to be at least 1.0
             for idx in tortuosity_indices:
                 input_array[:, idx] = np.maximum(input_array[:, idx], 1.0)
+
+    if np.any(np.isnan(input_array)):
+        raise ValueError(
+            "NaN found in junction input array (geometric features). "
+            "Check geometric_features.csv for all geometries (e.g. flow_split, flow_split_inv)."
+        )
+    if np.any(np.isnan(output_array)):
+        raise ValueError(
+            "NaN found in junction output array (lumped parameters). "
+            "Check junction_lumped_parameters.csv for all geometries."
+        )
 
     # Generate histograms if requested (features and junction lumped parameters)
     if plot_histograms:
@@ -769,6 +780,18 @@ def build_data_dict_from_vessel_csvs(
         output_array = np.vstack(all_outputs)
 
     n = input_array.shape[0]
+    if n > 0:
+        if np.any(np.isnan(input_array)):
+            raise ValueError(
+                "NaN found in vessel input array (vessel geometric features). "
+                "Check vessel_geometric_features.csv for all geometries."
+            )
+        if np.any(np.isnan(output_array)):
+            raise ValueError(
+                "NaN found in vessel output array (vessel lumped parameters). "
+                "Check vessel_lumped_parameters.csv for all geometries."
+            )
+
     scaling_factors = np.ones((n, 1), dtype=float)
 
     output_min = np.min(output_array, axis=0) if n > 0 else np.zeros(3, dtype=float)

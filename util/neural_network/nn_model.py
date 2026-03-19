@@ -74,7 +74,7 @@ class NeuralNet():
     
     def get_gradients(self, indices):
         """Compute gradients of loss w.r.t. weights for the given batch (no update)."""
-        print(f" Overestimate weight: {self.asymmetric_loss_overestimate_weight}")
+        #print(f" Overestimate weight: {self.asymmetric_loss_overestimate_weight}")
         return grad(loss, argnums=-2)(
             self.input[indices, :],
             self.output[indices, :],

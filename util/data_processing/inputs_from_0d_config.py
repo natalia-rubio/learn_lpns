@@ -457,8 +457,9 @@ def compute_junction_flow_splits(
         if require_two_outlets and len(outlet_vessels) != 2:
             continue
         if not inlet_vessels:
-            out[j_name] = (("", ""), (np.nan, np.nan))
-            continue
+            raise ValueError(
+                f"Junction {j_name!r} has no inlet vessels; cannot compute flow split."
+            )
 
         # Use original inlet (trace back through connectors) for denominator
         original_inlet_name = original_inlet_by_junction.get(j_name, "")
@@ -469,11 +470,15 @@ def compute_junction_flow_splits(
         out1_name = vessel_id_to_name.get(outlet_vessels[1], "")
 
         if not original_inlet_name or not out0_name or not out1_name:
-            out[j_name] = ((out0_name or "", out1_name or ""), (np.nan, np.nan))
-            continue
+            raise ValueError(
+                f"Junction {j_name!r}: missing inlet or outlet names "
+                f"(original_inlet={original_inlet_name!r}, out0={out0_name!r}, out1={out1_name!r})."
+            )
         if original_inlet_name not in results or out0_name not in results or out1_name not in results:
-            out[j_name] = ((out0_name, out1_name), (np.nan, np.nan))
-            continue
+            raise ValueError(
+                f"Junction {j_name!r}: original inlet or outlets not found in geometric results. "
+                f"Results keys include: {list(results.keys())[:5]}..."
+            )
 
         ratios0: List[float] = []
         ratios1: List[float] = []
@@ -493,8 +498,16 @@ def compute_junction_flow_splits(
             if q1 is not None:
                 ratios1.append(float(q1) / float(q_in))
 
-        fs0 = float(np.mean(ratios0)) * 100.0 if ratios0 else np.nan
-        fs1 = float(np.mean(ratios1)) * 100.0 if ratios1 else np.nan
+        if not ratios0 and not ratios1:
+            # All timesteps had inlet flow < 5; use default 50% / 50%
+            fs0, fs1 = 50.0, 50.0
+        elif not ratios0 or not ratios1:
+            raise ValueError(
+                f"Junction {j_name!r}: inconsistent flow split (one outlet has flow data, the other does not)."
+            )
+        else:
+            fs0 = float(np.mean(ratios0)) * 100.0
+            fs1 = float(np.mean(ratios1)) * 100.0
         out[j_name] = ((out0_name, out1_name), (fs0, fs1))
 
     return out

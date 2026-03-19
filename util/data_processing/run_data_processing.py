@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--percent-train", type=float, default=0.8, help="Fraction of points used for training (default: 0.8)")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for train/val split (default: 0)")
     parser.add_argument("--data-root", default="data", help="Repo data root (default: data)")
-    parser.add_argument("--run-config", default="base", help="Run config suffix for path separation (default: base). E.g. normalized_clip, stenosis_off. ml_inputs/jax_arrays/zeroD use .../set_name/run_config/...)")
+    parser.add_argument("--run-config", default="base", help="Run config suffix for path separation (default: base). E.g. stenosis_off, penalty_off. ml_inputs/jax_arrays/zeroD use .../set_name/run_config/...)")
     parser.add_argument("--normalize", action="store_true", help="Apply z-normalization to inputs/outputs (saves to separate _normalized pkl)")
     parser.add_argument("--verbose", action="store_true", help="Verbose printing")
     args = parser.parse_args()
@@ -157,11 +157,20 @@ def main():
                 flow_splits = compute_junction_flow_splits(geometric_input_path, geometric_results_path)
                 flow_split_col = []
                 for i, jname in enumerate(junction_names):
-                    (out0_name, out1_name), (fs0, fs1) = flow_splits.get(
-                        jname, (("", ""), (float("nan"), float("nan")))
-                    )
+                    if jname not in flow_splits:
+                        raise ValueError(
+                            f"Junction {jname!r} not in flow splits (expected for two-outlet junctions from {geometric_results_path})."
+                        )
+                    (out0_name, out1_name), (fs0, fs1) = flow_splits[jname]
                     primary = outlet_primary_names[i]
-                    val = fs0 if primary == out0_name else (fs1 if primary == out1_name else float("nan"))
+                    if primary == out0_name:
+                        val = fs0
+                    elif primary == out1_name:
+                        val = fs1
+                    else:
+                        raise ValueError(
+                            f"Primary outlet {primary!r} for junction {jname!r} does not match outlets ({out0_name!r}, {out1_name!r})."
+                        )
                     flow_split_col.append(val)
                 X = np.column_stack([X, flow_split_col])
                 feature_names = feature_names + ["flow_split"]

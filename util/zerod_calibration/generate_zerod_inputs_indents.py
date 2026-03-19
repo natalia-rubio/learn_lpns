@@ -79,6 +79,8 @@ def main():
                         help='Skip MSE calculation step')
     parser.add_argument('--skip-plots', action='store_true',
                        help='Skip generating comparison plots')
+    parser.add_argument('--plot-junction-pressure-diff', action='store_true',
+                       help='Generate junction pressure difference plots (off by default)')
     parser.add_argument('--NN-only', action='store_true',
                        help='Only run NN inference and forward simulation on NN inputs (skip calibration)')
     parser.add_argument('--no-redo', action='store_true',
@@ -1210,9 +1212,9 @@ def main():
             import traceback
             traceback.print_exc()
     
-    # Plot junction pressure differences for each geometry variant
+    # Plot junction pressure differences for each geometry variant (off by default)
     # By default: skip original, only plot first 5 junctions for bifurcations
-    if not args.skip_plots:
+    if not args.skip_plots and args.plot_junction_pressure_diff:
         for geo_variant_name, geo_variant_paths in geometry_variants.items():
             # Skip original geometry variant
             if geo_variant_name == 'original':

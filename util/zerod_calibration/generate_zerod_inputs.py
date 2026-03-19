@@ -170,6 +170,8 @@ def main():
                         help='Skip MSE calculation step')
     parser.add_argument('--skip-plots', action='store_true',
                        help='Skip generating comparison plots')
+    parser.add_argument('--plot-junction-pressure-diff', action='store_true',
+                       help='Generate junction pressure difference plots (off by default)')
     parser.add_argument('--NN-only', action='store_true',
                        help='Only run NN inference and forward simulation on NN inputs (skip calibration)')
     parser.add_argument('--no-redo', action='store_true',
@@ -567,7 +569,8 @@ def main():
                             variant_geometric_input, obs_for_calib, variant_calibration_input,
                             centerline_soln_path=soln_path, geo_dir=geo_dir,
                             stenosis_off=getattr(args, 'stenosis_off', False),
-                            penalty_off=getattr(args, 'penalty_off', False)
+                            penalty_off=getattr(args, 'penalty_off', False),
+                            set_name=getattr(args, 'set_name', None),
                         )
                         generated_files.append(variant_calibration_input)
                         print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
@@ -676,7 +679,10 @@ def main():
                     '--percent-train', '1',
                     '--seed', '0',
                     '--data-root', 'data',
+                    '--run-config', run_config_suffix,
                 ]
+                if getattr(args, 'normalize', False):
+                    run_data_processing_cmd.append('--normalize')
                 if verbose:
                     run_data_processing_cmd.append('--verbose')
                 result = subprocess.run(
@@ -1761,9 +1767,9 @@ def main():
             import traceback
             traceback.print_exc()
     
-    # Plot junction pressure differences for each geometry variant
+    # Plot junction pressure differences for each geometry variant (off by default)
     # By default: skip original, only plot first 5 junctions for bifurcations
-    if not args.skip_plots:
+    if not args.skip_plots and args.plot_junction_pressure_diff:
         for geo_variant_name, geo_variant_paths in geometry_variants.items():
             # Skip original geometry variant
             if geo_variant_name == 'original':
