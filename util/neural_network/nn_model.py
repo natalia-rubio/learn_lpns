@@ -57,6 +57,22 @@ class NeuralNet():
         
         self.input = self.data_dict["input"]
         self.output = self.data_dict[f"output_{self.output_type}"]
+        n_rows = int(self.input.shape[0])
+        # Bifurcation generation per row (for optional loss weighting); not an input feature
+        graw = self.data_dict.get("generation")
+        if graw is not None:
+            garr = jnp.asarray(graw, dtype=jnp.float32).reshape(n_rows)
+        else:
+            garr = jnp.zeros((n_rows,), dtype=jnp.float32)
+        self._generation_full = garr
+        self.gen_loss = bool(network_params.get("gen_loss", False))
+        # Per-sample weight = gen_loss_scale * 2^(-generation): smaller generation -> larger weight
+        self.gen_loss_scale = float(network_params.get("gen_loss_scale", 1.0))
+        if self.gen_loss:
+            print(
+                f"  gen_loss: ON  (sample weight = {self.gen_loss_scale} / 2^generation); "
+                f"generation in pkl: {'yes' if graw is not None else 'no (zeros)'}"
+            )
         
         self.num_output_coefs = 3
 
@@ -75,7 +91,14 @@ class NeuralNet():
     def get_gradients(self, indices):
         """Compute gradients of loss w.r.t. weights for the given batch (no update)."""
         #print(f" Overestimate weight: {self.asymmetric_loss_overestimate_weight}")
-        return grad(loss, argnums=-2)(
+        idx = jnp.asarray(indices)
+        if self.gen_loss:
+            gen_b = self._generation_full[idx]
+            # Emphasize proximal (low generation): weight decays by half per bifurcation level
+            sample_w = self.gen_loss_scale / jnp.power(2.0, gen_b)
+        else:
+            sample_w = jnp.ones((idx.shape[0],), dtype=jnp.float32)
+        return grad(loss, argnums=-3)(
             self.input[indices, :],
             self.output[indices, :],
             self.data_dict["scaling_factors"][indices, :],
@@ -84,6 +107,7 @@ class NeuralNet():
             self.use_leaky_relu,
             self.weights,
             self.asymmetric_loss_overestimate_weight,
+            sample_w,
         )
 
     def update(self, indices):
@@ -100,16 +124,25 @@ def predict(input, weights, use_leaky_relu=False):
 
 
 @jit(static_argnums=(4, 5))  # target_coef_ind, use_leaky_relu
-def loss(input, outputs, scaling_factors, scaling_dict, target_coef_ind, use_leaky_relu, weights, overestimate_weight=1.0):
+def loss(
+    input,
+    outputs,
+    scaling_factors,
+    scaling_dict,
+    target_coef_ind,
+    use_leaky_relu,
+    weights,
+    overestimate_weight,
+    sample_weights,
+):
     coefs_pred = predict(input, weights, use_leaky_relu)
     residual = coefs_pred[:, 0] - outputs[:, target_coef_ind]
-    av_residual = jnp.abs(coefs_pred[:, 0]) - jnp.abs(outputs[:, target_coef_ind]) 
-    # Overestimate (residual > 0) weighted more than underestimate (residual <= 0)
-    # w = jnp.where((outputs[:, target_coef_ind] > 0) & (residual > 0), overestimate_weight, 1.0)
-    # w = jnp.where((outputs[:, target_coef_ind] < 0) & (residual <= 0), overestimate_weight, w)
-    w = jnp.where(av_residual > 0, overestimate_weight, 1.0)
+    av_residual = jnp.abs(coefs_pred[:, 0]) - jnp.abs(outputs[:, target_coef_ind])
+    w_asym = jnp.where(av_residual > 0, overestimate_weight, 1.0)
+    w = w_asym * sample_weights
+    sq = jnp.square(residual)
     L2_penalty = get_L2(weights) / (len(weights) * jnp.size(weights[0][0]))
-    return jnp.mean(w * jnp.square(residual)) + L2_penalty * 0
+    return jnp.sum(w * sq) / jnp.maximum(jnp.sum(w), 1e-8) + L2_penalty * 0
 
 
 @jit(static_argnums=(4, 5))  # target_coef_ind, use_leaky_relu

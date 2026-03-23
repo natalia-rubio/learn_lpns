@@ -17,6 +17,10 @@ Test geometry list from CV summary.
 
 Usage:
   python -m util.visualizations.cv_geometric_vs_calibrated_histograms VMR_rigid_aorta_adults --run-config stenosis_off -o histograms.pdf
+
+  Multiple sets (same --run-config and --geometry-variant; pooled histograms and stats):
+  python -m util.visualizations.cv_geometric_vs_calibrated_histograms \\
+    VMR_rigid_aorta_adults_all VMR_abdo VMR_pulmo --run-config stenosis_off_symmetric_gen_loss
 """
 
 import argparse
@@ -154,6 +158,13 @@ def _collect_differences(set_name, run_config, geometry_variant, data_root, resu
                 out[key]["nn_pct_err"].append((n_list[i] - c) / abs_c)
                 out[key]["cal_values"].append(c)
     return out
+
+
+def _merge_diffs_into(accum, new_diffs):
+    """Extend accum's lists in-place with values from new_diffs (same structure as _collect_differences)."""
+    for key in accum:
+        for subkey in accum[key]:
+            accum[key][subkey].extend(new_diffs[key][subkey])
 
 
 def _report_average_pct_error(diffs, file=None, min_abs_cal=5.0):
@@ -353,10 +364,10 @@ def main():
         description="Histograms of geometric vs calibrated R_poiseuille and L for CV test geometries."
     )
     parser.add_argument(
-        "set_name",
-        nargs="?",
-        default="VMR_rigid_aorta_adults",
-        help="Set name (default: VMR_rigid_aorta_adults)",
+        "set_names",
+        nargs="*",
+        default=["VMR_rigid_aorta_adults"],
+        help="One or more set names (default: VMR_rigid_aorta_adults). Same --run-config for all.",
     )
     parser.add_argument(
         "--run-config",
@@ -381,7 +392,7 @@ def main():
     parser.add_argument(
         "--output", "-o",
         default=None,
-        help="Output figure path (default: results/cross_validation/<set>/<run_config>/cv_geometric_vs_calibrated_histograms.pdf)",
+        help="Output figure path (default: under results/cross_validation/; multi-set dir joins names with __)",
     )
     parser.add_argument(
         "--bins",
@@ -403,13 +414,36 @@ def main():
 
     data_root = os.path.abspath(args.data_root)
     results_root = os.path.abspath(args.results_root)
-    diffs = _collect_differences(
-        args.set_name,
-        args.run_config,
-        args.geometry_variant,
-        data_root,
-        results_root,
-    )
+    set_names = list(args.set_names)
+    if not set_names:
+        set_names = ["VMR_rigid_aorta_adults"]
+
+    if len(set_names) == 1:
+        print(f"Set: {set_names[0]}")
+    else:
+        print(f"Combining {len(set_names)} sets: {', '.join(set_names)}")
+
+    diffs = None
+    for sn in set_names:
+        part = _collect_differences(
+            sn,
+            args.run_config,
+            args.geometry_variant,
+            data_root,
+            results_root,
+        )
+        if diffs is None:
+            diffs = part
+        else:
+            _merge_diffs_into(diffs, part)
+        n_jR = len(part["junction_R"]["geo_minus_cal"])
+        n_jL = len(part["junction_L"]["geo_minus_cal"])
+        n_vR = len(part["vessel_R"]["geo_minus_cal"])
+        n_vL = len(part["vessel_L"]["geo_minus_cal"])
+        print(
+            f"  [{sn}] geo−cal counts: junctions R={n_jR} L={n_jL}, vessels R={n_vR} L={n_vL}"
+        )
+
     n_jR_geo = len(diffs["junction_R"]["geo_minus_cal"])
     n_jL_geo = len(diffs["junction_L"]["geo_minus_cal"])
     n_vR_geo = len(diffs["vessel_R"]["geo_minus_cal"])
@@ -425,11 +459,19 @@ def main():
     if args.output:
         output_path = args.output
     else:
+        cross_dir = (
+            set_names[0]
+            if len(set_names) == 1
+            else "__".join(set_names)
+        )
         out_dir = os.path.join(
-            results_root, "cross_validation", args.set_name, args.run_config
+            results_root, "cross_validation", cross_dir, args.run_config
         )
         os.makedirs(out_dir, exist_ok=True)
-        output_path = os.path.join(out_dir, "cv_geometric_vs_calibrated_histograms.pdf")
+        base_name = "cv_geometric_vs_calibrated_histograms"
+        if len(set_names) > 1:
+            base_name = f"{base_name}_{'__'.join(set_names)}"
+        output_path = os.path.join(out_dir, f"{base_name}.pdf")
 
     _plot_histograms(diffs, output_path, nbins=args.bins, dpi=args.dpi)
     print(f"Saved: {output_path}")

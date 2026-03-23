@@ -241,6 +241,9 @@ def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, time
         cmd.append('--symmetric-loss')
     if args_dict.get('clip_predictions', False):
         cmd.append('--clip-predictions')
+    rc = args_dict.get('run_config')
+    if rc:
+        cmd.extend(['--run-config', rc])
     # Run command
     try:
         if verbose:
@@ -354,6 +357,13 @@ Examples:
                        help='Symmetric loss run-config: overestimate weight 1.0 for all models (for path naming)')
     parser.add_argument('--clip-predictions', action='store_true', dest='clip_predictions',
                        help='Clip R/S/L to training set min/max (run-config)')
+    parser.add_argument(
+        '--run-config',
+        default=None,
+        metavar='SUFFIX',
+        help='Path suffix for zeroD/ml_inputs (e.g. stenosis_off_symmetric_gen_loss). '
+        'Passed to generate_zerod_inputs; must match --stenosis-off/--symmetric-loss/...',
+    )
     parser.add_argument('--timeout', type=int, default=DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS,
                        help=f'Timeout in seconds for each geometry (default: {DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS})')
     parser.add_argument('--max-failures', type=int, default=None,
@@ -393,6 +403,7 @@ Examples:
         'penalty_off': getattr(args, 'penalty_off', False),
         'symmetric_loss': getattr(args, 'symmetric_loss', False),
         'clip_predictions': getattr(args, 'clip_predictions', False),
+        'run_config': (getattr(args, 'run_config', None) or '').strip() or None,
     }
     
     if getattr(args, 'stenosis_off', False) and getattr(args, 'penalty_off', False):
@@ -471,6 +482,7 @@ Examples:
     print(f"  Stenosis-off: {getattr(args, 'stenosis_off', False)}")
     print(f"  Symmetric-loss: {getattr(args, 'symmetric_loss', False)}")
     print(f"  Clip-predictions: {getattr(args, 'clip_predictions', False)}")
+    print(f"  Run-config (path suffix): {getattr(args, 'run_config', None) or '(from flags only)'}")
     print(f"  Timeout per geometry: {args.timeout}s ({args.timeout/60:.1f} minutes)")
     print(f"  Max failures: {args.max_failures if args.max_failures else 'unlimited'}")
     if args.only_failed:

@@ -482,13 +482,15 @@ def build_data_dict_from_csvs(
         geometry_variant: Geometry variant name (e.g., "bifurcations" or "bifurcations_EL")
 
     Returns:
-        Dictionary with keys "input", "output_{output_type}", and "scaling_factors"
+        Dictionary with keys "input", "output_{output_type}", "scaling_factors", and
+        "generation" (1-D float array, bifurcation depth per row for optional loss weighting; not part of "input").
     """
     if output_type not in {"rri", "ri", "rr"}:
         raise ValueError(f"Unsupported output_type: {output_type}")
 
     all_inputs: List[np.ndarray] = []
     all_outputs: List[np.ndarray] = []
+    all_generation: List[np.ndarray] = []
     # Per-row provenance: (geometry_name, primary_outlet_name) for every row
     row_geo_names: List[str] = []
     row_outlet_names: List[str] = []
@@ -512,6 +514,14 @@ def build_data_dict_from_csvs(
 
         geom_header, geom_X = _read_csv_matrix(geom_csv)
         out_header, out_Y = _read_csv_matrix(out_csv)
+
+        # Generation (bifurcation depth) for loss weighting — kept out of NN inputs
+        col_to_idx = {name: i for i, name in enumerate(geom_header)}
+        gi = col_to_idx.get("generation")
+        if gi is not None:
+            geo_gen = np.asarray(geom_X[:, gi], dtype=float).ravel()
+        else:
+            geo_gen = np.zeros(geom_X.shape[0], dtype=float)
 
         if require_same_rows and geom_X.shape[0] != out_Y.shape[0]:
             raise ValueError(
@@ -569,9 +579,15 @@ def build_data_dict_from_csvs(
         # Use filtered columns from geometric_features and junction_lumped_parameters
         all_inputs.append(geom_X)
         all_outputs.append(out_Y)
+        all_generation.append(geo_gen)
 
     input_array = np.vstack(all_inputs)
     output_array = np.vstack(all_outputs)
+    generation_array = np.concatenate(all_generation, axis=0)
+    if generation_array.shape[0] != input_array.shape[0]:
+        raise ValueError(
+            f"generation row count {generation_array.shape[0]} != input rows {input_array.shape[0]}"
+        )
 
     # Remap tortuosity values less than 1 to 1 (after stacking)
     # Tortuosity should be >= 1 (straight line = 1, curved paths > 1)
@@ -695,6 +711,7 @@ def build_data_dict_from_csvs(
             "input": jnp.asarray(input_array),
             f"output_{output_type}": jnp.asarray(output_array),
             "scaling_factors": jnp.asarray(scaling_factors),
+            "generation": jnp.asarray(generation_array, dtype=jnp.float32),
             "normalized": normalize,
             "output_min": jnp.asarray(output_min),
             "output_max": jnp.asarray(output_max),
@@ -709,6 +726,7 @@ def build_data_dict_from_csvs(
             "input": input_array,
             f"output_{output_type}": output_array,
             "scaling_factors": scaling_factors,
+            "generation": np.asarray(generation_array, dtype=np.float32),
             "normalized": normalize,
             "output_min": output_min,
             "output_max": output_max,
@@ -738,13 +756,14 @@ def build_data_dict_from_vessel_csvs(
     order as junction "rri").
 
     Returns:
-        Dictionary with "input", "output_rri" (or "output_rri_vessel"), "scaling_factors",
-        and optionally "input_mean", "input_std", "output_mean", "output_std" if normalize.
+        Dictionary with "input", "output_rri", "scaling_factors", "generation" (same length as rows;
+        optional loss weights), and optionally normalization stats if normalize.
     """
     include_features = get_default_include_features_vessel()
     output_cols = get_default_include_outputs_vessel()
     all_inputs: List[np.ndarray] = []
     all_outputs: List[np.ndarray] = []
+    all_generation: List[np.ndarray] = []
     row_ranges: List[Tuple[int, int]] = []  # (start, end) per geometry in order
     geometries_with_vessels: List[str] = []  # geometry names that contributed rows (same order as row_ranges)
 
@@ -754,6 +773,12 @@ def build_data_dict_from_vessel_csvs(
         if not os.path.exists(feat_csv) or not os.path.exists(tgt_csv):
             continue
         feat_header, feat_X = _read_csv_matrix(feat_csv)
+        fmap = {name: i for i, name in enumerate(feat_header)}
+        gi = fmap.get("generation")
+        if gi is not None:
+            vessel_gen = np.asarray(feat_X[:, gi], dtype=float).ravel()
+        else:
+            vessel_gen = np.zeros(feat_X.shape[0], dtype=float)
         feat_X_filtered, _ = filter_features_from_array(
             feat_X, feat_header, include_features=include_features, remap_tortuosity=False
         )
@@ -767,6 +792,7 @@ def build_data_dict_from_vessel_csvs(
         start = sum(x.shape[0] for x in all_inputs)
         all_inputs.append(feat_X_filtered)
         all_outputs.append(tgt_Y)
+        all_generation.append(vessel_gen)
         row_ranges.append((start, start + feat_X_filtered.shape[0]))
         geometries_with_vessels.append(geo)
 
@@ -780,6 +806,14 @@ def build_data_dict_from_vessel_csvs(
         output_array = np.vstack(all_outputs)
 
     n = input_array.shape[0]
+    if all_generation:
+        generation_array = np.concatenate(all_generation, axis=0)
+        if generation_array.shape[0] != n:
+            raise ValueError(
+                f"vessel generation rows {generation_array.shape[0]} != input rows {n}"
+            )
+    else:
+        generation_array = np.zeros(0, dtype=float)
     if n > 0:
         if np.any(np.isnan(input_array)):
             raise ValueError(
@@ -808,10 +842,12 @@ def build_data_dict_from_vessel_csvs(
         output_array = (output_array - output_mean) / output_std_safe
 
     if jnp is not None:
+        gen_jax = jnp.asarray(generation_array, dtype=jnp.float32) if n > 0 else jnp.zeros(0, dtype=jnp.float32)
         data_dict = {
             "input": jnp.asarray(input_array),
             "output_rri": jnp.asarray(output_array),
             "scaling_factors": jnp.asarray(scaling_factors),
+            "generation": gen_jax,
             "normalized": normalize,
             "row_ranges": row_ranges,
             "geometries": geometries_with_vessels,
@@ -828,6 +864,7 @@ def build_data_dict_from_vessel_csvs(
             "input": input_array,
             "output_rri": output_array,
             "scaling_factors": scaling_factors,
+            "generation": np.asarray(generation_array, dtype=np.float32) if n > 0 else np.zeros(0, dtype=np.float32),
             "normalized": normalize,
             "row_ranges": row_ranges,
             "geometries": geometries_with_vessels,

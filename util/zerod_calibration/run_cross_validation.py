@@ -27,6 +27,10 @@ from util.data_processing.data_dict_from_csvs import get_default_include_feature
 from util.tools.basic import load_dict, save_dict
 from util.zerod_calibration.post_processing import calculate_mse_between_3d_and_0d
 from util.zerod_calibration.generate_zerod_inputs import get_run_config_suffix
+from util.zerod_calibration.run_config_canonical import (
+    canonical_run_config_for_data_paths,
+    run_config_suffix_to_flags,
+)
 from util.zerod_calibration.batch_generate_zerod_inputs_vmr import get_vmr_geometries
 
 
@@ -34,30 +38,19 @@ from util.zerod_calibration.batch_generate_zerod_inputs_vmr import get_vmr_geome
 ALLOWED_RUN_CONFIGS = frozenset({
     "base",
     "penalty_off",
+    "penalty_off_gen_loss",
+    "symmetric_penalty_off_gen_loss",
     "symmetric_penalty_off",
     "stenosis_off",
     "stenosis_off_symmetric",
+    "stenosis_off_symmetric_gen_loss",
     "normalized",
     "normalized_penalty_off",
     "normalized_stenosis_off",
     "clip",
     "symmetric",
+    "symmetric_gen_loss",
 })
-
-
-def run_config_suffix_to_flags(run_config_suffix):
-    """
-    Derive boolean flags from a run_config_suffix string (inverse of get_run_config_suffix).
-    Used when the user specifies --run-config instead of individual flags.
-    """
-    s = (run_config_suffix or "base").strip()
-    return {
-        "normalize": "normalized" in s,
-        "stenosis_off": "stenosis_off" in s,
-        "symmetric_loss": "symmetric" in s,
-        "clip_predictions": "clip" in s,
-        "penalty_off": "penalty_off" in s,
-    }
 
 
 def _check_val_out_of_train_range(X, train_ind, val_ind, row_ranges, geometries, feature_names):
@@ -200,6 +193,8 @@ def _ensure_ml_inputs_and_jax_for_config(
         cmd_batch.append("--clip-predictions")
     if no_redo:
         cmd_batch.append("--no-redo")
+    if run_config_suffix:
+        cmd_batch.extend(["--run-config", run_config_suffix])
     result = subprocess.run(cmd_batch, cwd=REPO_ROOT, text=True)
     if result.returncode != 0:
         raise RuntimeError(
@@ -241,6 +236,7 @@ def run_cross_validation(
     symmetric_loss=False,
     percent_train=0.9,
     no_redo=False,
+    run_config_cli=None,
 ):
     if ml_inputs_root is None:
         ml_inputs_root = os.path.join(data_root, "ml_inputs")
@@ -255,11 +251,23 @@ def run_cross_validation(
         clip_predictions=clip_predictions,
         penalty_off=penalty_off,
     )
-    if run_config_suffix:
-        print(f"Run config: {run_config_suffix} (results, zeroD, ml_inputs, jax under this subfolder)")
+    # All on-disk paths (zeroD, ml_inputs, jax, splits, models, CV) use the full CLI suffix when set,
+    # e.g. stenosis_off_symmetric_gen_loss is its own tree (duplicate of physics vs ..._symmetric).
+    data_paths_suffix = (
+        run_config_cli.strip() if run_config_cli is not None else run_config_suffix
+    )
+    if run_config_cli is not None:
+        cli_canon = canonical_run_config_for_data_paths(run_config_cli) or run_config_cli.strip()
+        if cli_canon != run_config_suffix:
+            raise ValueError(
+                f"--run-config {run_config_cli!r} canonicalizes to {cli_canon!r}, "
+                f"but flags from that config correspond to {run_config_suffix!r}."
+            )
+    if run_config_suffix or run_config_cli:
+        print(f"Run config: flags->{run_config_suffix!r}, paths->{data_paths_suffix!r}")
 
-    # When run_config_suffix is set, get canonical geometry list from richter-0d; if any missing from ml_inputs or jax missing, run batch + data processing
-    if run_config_suffix:
+    # When data_paths_suffix is set, get canonical geometry list from richter-0d; if any missing from ml_inputs or jax missing, run batch + data processing
+    if data_paths_suffix:
         richter_dir = os.path.join(data_root, "zeroD", set_name, "richter-0d")
         try:
             _geometries = get_vmr_geometries(richter_dir)
@@ -269,7 +277,7 @@ def run_cross_validation(
                 "Ensure is only supported for sets with data/zeroD/<set_name>/richter-0d/."
             ) from e
         _num_geos = len(_geometries)
-        ml_inputs_dir = os.path.join(data_root, "ml_inputs", set_name, run_config_suffix, geometry_variant)
+        ml_inputs_dir = os.path.join(data_root, "ml_inputs", set_name, data_paths_suffix, geometry_variant)
         _missing_geos = []
         for _geo in _geometries:
             _geo_dir = os.path.join(ml_inputs_dir, _geo)
@@ -278,19 +286,19 @@ def run_cross_validation(
             if not os.path.exists(_gf) or not os.path.exists(_jp):
                 _missing_geos.append(_geo)
         _jax_path = os.path.join(
-            data_root, "jax_arrays", set_name, run_config_suffix, geometry_variant, set_type,
+            data_root, "jax_arrays", set_name, data_paths_suffix, geometry_variant, set_type,
             f"jax_arrays_num_geos_{_num_geos}{norm_suffix}.pkl",
         )
         _jax_missing = not os.path.exists(_jax_path)
         if _missing_geos or _jax_missing:
             if _missing_geos:
-                print(f"Run config {run_config_suffix}: missing ml_inputs for {len(_missing_geos)} geometries (e.g. {_missing_geos[:3]}{'...' if len(_missing_geos) > 3 else ''})")
+                print(f"Run config {data_paths_suffix}: missing ml_inputs for {len(_missing_geos)} geometries (e.g. {_missing_geos[:3]}{'...' if len(_missing_geos) > 3 else ''})")
             if _jax_missing:
-                print(f"Run config {run_config_suffix}: jax_arrays pkl not found")
+                print(f"Run config {data_paths_suffix}: jax_arrays pkl not found")
             _ensure_ml_inputs_and_jax_for_config(
                 set_name=set_name,
                 geometry_variant=geometry_variant,
-                run_config_suffix=run_config_suffix,
+                run_config_suffix=data_paths_suffix,
                 data_root=data_root,
                 set_type=set_type,
                 normalize=normalize,
@@ -304,18 +312,18 @@ def run_cross_validation(
 
     # Discover geometries and row ranges (same order as jax array); use config-specific ml_inputs when set
     row_ranges, total_rows, geometries = get_geometry_row_ranges(
-        ml_inputs_root, set_name, geometry_variant, run_config_suffix=run_config_suffix
+        ml_inputs_root, set_name, geometry_variant, run_config_suffix=data_paths_suffix
     )
     num_geos = len(geometries)
     if num_geos == 0:
         raise ValueError(
             f"No geometries found under {ml_inputs_root}/{set_name}"
-            + (f"/{run_config_suffix}" if run_config_suffix else "") + f"/{geometry_variant}"
+            + (f"/{data_paths_suffix}" if data_paths_suffix else "") + f"/{geometry_variant}"
         )
 
-    if run_config_suffix:
+    if data_paths_suffix:
         jax_path = os.path.join(
-            data_root, "jax_arrays", set_name, run_config_suffix, geometry_variant, set_type,
+            data_root, "jax_arrays", set_name, data_paths_suffix, geometry_variant, set_type,
             f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl",
         )
     else:
@@ -327,18 +335,18 @@ def run_cross_validation(
         hint = ""
         if normalize:
             hint = (
-                f" Generate it by running data processing with --normalize (and --run-config {run_config_suffix!r} if using a config), e.g.: "
+                f" Generate it by running data processing with --normalize (and --run-config {data_paths_suffix!r} if using a config), e.g.: "
                 f"python util/data_processing/run_data_processing.py --set-name {set_name} --geometry-variant {geometry_variant} --normalize"
-                + (f" --run-config {run_config_suffix}" if run_config_suffix else "")
+                + (f" --run-config {data_paths_suffix}" if data_paths_suffix else "")
             )
         raise FileNotFoundError(
             f"Jax arrays not found: {jax_path} (expected {num_geos} geometries"
             + (" with normalization" if normalize else "") + ")." + hint
         )
 
-    if run_config_suffix:
+    if data_paths_suffix:
         vessel_jax_path = os.path.join(
-            data_root, "jax_arrays", set_name, run_config_suffix, geometry_variant, set_type,
+            data_root, "jax_arrays", set_name, data_paths_suffix, geometry_variant, set_type,
             f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl",
         ) if normalize else None
     else:
@@ -354,19 +362,21 @@ def run_cross_validation(
             f"Row count mismatch: row_ranges sum={total_rows} vs jax num_pts={num_pts}"
         )
 
-    if run_config_suffix:
+    if data_paths_suffix:
         split_indices_dir = os.path.join(
-            data_root, "split_indices", set_name, run_config_suffix, geometry_variant, set_type
+            data_root, "split_indices", set_name, data_paths_suffix, geometry_variant, set_type
         )
     else:
         split_indices_dir = os.path.join(
             data_root, "split_indices", set_name, geometry_variant, set_type
         )
-    if run_config_suffix:
-        model_dir_base = os.path.join("results", "models", set_name, run_config_suffix)
-        zero_d_base = os.path.join(data_root, "zeroD", set_name, run_config_suffix)
+    if data_paths_suffix:
+        model_dir_base = os.path.join("results", "models", set_name, data_paths_suffix)
     else:
         model_dir_base = os.path.join("results", "models", set_name)
+    if data_paths_suffix:
+        zero_d_base = os.path.join(data_root, "zeroD", set_name, data_paths_suffix)
+    else:
         zero_d_base = os.path.join(data_root, "zeroD", set_name)
     script_dir = os.path.dirname(__file__)
     launch_training_script = os.path.join(
@@ -478,8 +488,8 @@ def run_cross_validation(
         out_of_range = _check_val_out_of_train_range(
             X_input, train_ind, val_ind, row_ranges, geometries, feature_names
         )
-        if run_config_suffix:
-            out_dir_cv = os.path.join("results", "cross_validation", set_name, run_config_suffix)
+        if data_paths_suffix:
+            out_dir_cv = os.path.join("results", "cross_validation", set_name, data_paths_suffix)
         else:
             out_dir_cv = os.path.join("results", "cross_validation", set_name)
         os.makedirs(out_dir_cv, exist_ok=True)
@@ -551,8 +561,9 @@ def run_cross_validation(
                 cmd_train.append("--normalize")
             if symmetric_loss:
                 cmd_train.append("--symmetric-loss")
-            if run_config_suffix:
-                cmd_train.extend(["--run-config", run_config_suffix])
+            launch_rc = run_config_cli if run_config_cli is not None else run_config_suffix
+            if launch_rc:
+                cmd_train.extend(["--run-config", launch_rc])
             print(f"  Running: {' '.join(cmd_train)}")
             result_train = subprocess.run(cmd_train, cwd=REPO_ROOT, text=True)
             if result_train.returncode != 0:
@@ -594,8 +605,9 @@ def run_cross_validation(
                     cmd_vessel.append("--normalize")
                 if symmetric_loss:
                     cmd_vessel.append("--symmetric-loss")
-                if run_config_suffix:
-                    cmd_vessel.extend(["--run-config", run_config_suffix])
+                launch_rc = run_config_cli if run_config_cli is not None else run_config_suffix
+                if launch_rc:
+                    cmd_vessel.extend(["--run-config", launch_rc])
                 print(f"  Running vessel training: {' '.join(cmd_vessel)}")
                 result_vessel = subprocess.run(cmd_vessel, cwd=REPO_ROOT, text=True)
                 if result_vessel.returncode != 0:
@@ -638,6 +650,9 @@ def run_cross_validation(
                 cmd_deploy.append("--penalty-off")
             if symmetric_loss:
                 cmd_deploy.append("--symmetric-loss")
+            deploy_rc = run_config_cli if run_config_cli is not None else run_config_suffix
+            if deploy_rc:
+                cmd_deploy.extend(["--run-config", deploy_rc])
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
             result_deploy = subprocess.run(cmd_deploy, cwd=REPO_ROOT, text=True)
             if result_deploy.returncode != 0:
@@ -704,8 +719,8 @@ def run_cross_validation(
                 break
     modalities = sorted(modalities)
 
-    if run_config_suffix:
-        out_dir = os.path.join("results", "cross_validation", set_name, run_config_suffix)
+    if data_paths_suffix:
+        out_dir = os.path.join("results", "cross_validation", set_name, data_paths_suffix)
     else:
         out_dir = os.path.join("results", "cross_validation", set_name)
     os.makedirs(out_dir, exist_ok=True)
@@ -1139,6 +1154,8 @@ def regenerate_location_plots(
             cmd.append("--symmetric-loss")
         if clip_predictions:
             cmd.append("--clip-predictions")
+        if run_config_suffix:
+            cmd.extend(["--run-config", run_config_suffix])
         # Include NN modalities (Learned Junctions, Learned Junctions and Vessels, Learned Vessels) in plots when CSVs exist
         cmd.append("--NN-vessel")
         result = subprocess.run(cmd, cwd=REPO_ROOT, text=True)
@@ -1182,7 +1199,7 @@ def main():
         "--run-config",
         default="base",
         metavar="SUFFIX",
-        help="Run config suffix for paths and behavior (default: base). E.g. base, penalty_off, symmetric_penalty_off, stenosis_off, stenosis_off_symmetric. zeroD/ml_inputs/jax/results use .../set_name/SUFFIX/....",
+        help="Run config suffix for paths and behavior (default: base). E.g. base, symmetric, symmetric_gen_loss, penalty_off, penalty_off_gen_loss, symmetric_penalty_off, symmetric_penalty_off_gen_loss, stenosis_off, stenosis_off_symmetric. zeroD/ml_inputs/jax/results use .../set_name/SUFFIX/....",
     )
     parser.add_argument(
         "--NN-vessel",
@@ -1277,6 +1294,7 @@ def main():
         symmetric_loss=flags["symmetric_loss"],
         percent_train=args.percent_train,
         no_redo=getattr(args, "no_redo", False),
+        run_config_cli=run_config_suffix,
     )
 
 
