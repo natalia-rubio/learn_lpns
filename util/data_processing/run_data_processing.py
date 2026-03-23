@@ -85,7 +85,13 @@ def main():
     parser.add_argument("--percent-train", type=float, default=0.8, help="Fraction of points used for training (default: 0.8)")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for train/val split (default: 0)")
     parser.add_argument("--data-root", default="data", help="Repo data root (default: data)")
-    parser.add_argument("--run-config", default="base", help="Run config suffix for path separation (default: base). E.g. stenosis_off, penalty_off. ml_inputs/jax_arrays/zeroD use .../set_name/run_config/...)")
+    parser.add_argument(
+        "--run-config",
+        default="base",
+        help="Run config suffix for path separation (default: base). "
+        "ml_inputs/jax_arrays/split_indices use .../set_name/<suffix>/... "
+        "(e.g. stenosis_off_symmetric_gen_loss is a full duplicate path tree).",
+    )
     parser.add_argument("--normalize", action="store_true", help="Apply z-normalization to inputs/outputs (saves to separate _normalized pkl)")
     parser.add_argument("--verbose", action="store_true", help="Verbose printing")
     args = parser.parse_args()

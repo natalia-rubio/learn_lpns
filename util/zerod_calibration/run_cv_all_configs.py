@@ -32,6 +32,13 @@ DEFAULT_CONFIGS = [
     ("stenosis_off:bifurcations", ["--run-config", "stenosis_off"]),
 ]
 
+# Valid for e.g. `--configs penalty_off_gen_loss` but not part of the default batch (extra data + training).
+OPTIONAL_CONFIGS = {
+    "penalty_off_gen_loss": ["--run-config", "penalty_off_gen_loss"],
+    "symmetric_gen_loss": ["--run-config", "symmetric_gen_loss"],
+    "symmetric_penalty_off_gen_loss": ["--run-config", "symmetric_penalty_off_gen_loss"],
+}
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -85,7 +92,7 @@ def main():
     num_trials = args.num_trials
     config_list = args.configs or [c[0] for c in DEFAULT_CONFIGS]
     # Build (suffix, cv_flags) for each requested config
-    config_map = dict(DEFAULT_CONFIGS)
+    config_map = {**dict(DEFAULT_CONFIGS), **OPTIONAL_CONFIGS}
     configs_with_flags = []
     for c in config_list:
         if c not in config_map:
@@ -145,7 +152,8 @@ def main():
         by_config_list.append("stenosis_off:bifurcations")
     cmd_by = [
         sys.executable, "-m", "util.visualizations.cv_max_pct_error_by_config_barchart",
-        set_name, geometry_variant,
+        set_name,
+        "--geometry", geometry_variant,
         "--configs", *by_config_list,
         "--data-root", "results",
         "--xmax", "40",

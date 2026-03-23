@@ -13,6 +13,8 @@ Supported metrics (--metric):
 Usage:
   python -m util.visualizations.cv_pressure_max_pct_error_barchart VMR_rigid_aorta_adults bifurcations_EL
   python -m util.visualizations.cv_pressure_max_pct_error_barchart VMR_rigid_aorta_adults bifurcations_EL --metric pressure_max_error
+  python -m util.visualizations.cv_pressure_max_pct_error_barchart --all-sets
+  python -m util.visualizations.cv_pressure_max_pct_error_barchart --all-sets bifurcations_EL
 """
 
 import argparse
@@ -29,11 +31,11 @@ from scipy import stats as scipy_stats
 from util.visualizations.plot_location_comparison import get_line_style
 from util.visualizations.cv_pressure_errors_to_latex import MODALITY_DISPLAY, VAL_GEOMETRY_DISPLAY
 
-# Same modality order as LaTeX table
+# Bar / legend order (Learned Vessels before Learned Junctions; LaTeX table may differ)
 MODALITY_KEYS = [
     "geometric",
-    "BloodVesselJunction_NN",
     "NN_vessel",
+    "BloodVesselJunction_NN",
     "BloodVesselJunction_NN_plus_Vessel_NN",
     "BloodVesselJunction",
 ]
@@ -51,7 +53,11 @@ RUN_CONFIGS = [
     "base",
     "stenosis_off",
     "stenosis_off_symmetric",
+    "stenosis_off_symmetric_gen_loss",
     "penalty_off",
+    "penalty_off_gen_loss",
+    "symmetric_penalty_off_gen_loss",
+    "symmetric_gen_loss",
     "symmetric_penalty_off",
 ]
 
@@ -97,6 +103,18 @@ def _val_geo_to_label(val_geo):
 
 def _isnan(x):
     return x != x
+
+
+def discover_cross_validation_set_names(data_root):
+    """List subdirectory names under ``<data_root>/cross_validation`` (one per dataset)."""
+    cv_root = os.path.join(data_root, "cross_validation")
+    if not os.path.isdir(cv_root):
+        return []
+    return sorted(
+        d
+        for d in os.listdir(cv_root)
+        if os.path.isdir(os.path.join(cv_root, d)) and not d.startswith(".")
+    )
 
 
 def load_csv_column(path, prefix, modality):
@@ -220,7 +238,17 @@ def main():
     parser = argparse.ArgumentParser(
         description="Bar chart of a pressure error metric per trial and mean, by modality."
     )
-    parser.add_argument("set_name", help="Set name (e.g., VMR_rigid_aorta_adults)")
+    parser.add_argument(
+        "--all-sets",
+        action="store_true",
+        help="Generate plots for every set_name under <data-root>/cross_validation/ (ignores set_name positional).",
+    )
+    parser.add_argument(
+        "set_name",
+        nargs="?",
+        default=None,
+        help="Set name (e.g., VMR_rigid_aorta_adults). Omit when using --all-sets.",
+    )
     parser.add_argument(
         "geometry_variant",
         nargs="?",
@@ -236,7 +264,7 @@ def main():
     parser.add_argument(
         "--output", "-o",
         default=None,
-        help="Output file (only used when --metric selects a single metric)",
+        help="Output file (only when a single set, single run-config, and single metric; not with --all-sets)",
     )
     parser.add_argument(
         "--data-root",
@@ -247,7 +275,7 @@ def main():
         "--run-config",
         default="all",
         choices=["all"] + RUN_CONFIGS,
-        help="Run config subfolder (default: all). Use e.g. stenosis_off or penalty_off_symmetric for a single config.",
+        help="Run config subfolder (default: all). Use e.g. stenosis_off or symmetric_penalty_off_gen_loss for a single config.",
     )
     parser.add_argument(
         "--dpi",
@@ -257,20 +285,42 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.all_sets:
+        if args.set_name is not None:
+            parser.error("Do not pass set_name when using --all-sets")
+        set_names = discover_cross_validation_set_names(args.data_root)
+        if not set_names:
+            parser.error(
+                f"No subdirectories found under {os.path.join(args.data_root, 'cross_validation')}"
+            )
+        print(f"--all-sets: found {len(set_names)} set(s): {', '.join(set_names)}")
+    elif args.set_name is None:
+        parser.error("set_name is required unless you pass --all-sets")
+    else:
+        set_names = [args.set_name]
+
     run_configs = RUN_CONFIGS if args.run_config == "all" else [args.run_config]
     metrics = list(METRIC_CONFIG.keys()) if args.metric == "all" else [args.metric]
-    single_output = len(run_configs) == 1 and len(metrics) == 1
+    single_output = (
+        len(set_names) == 1
+        and len(run_configs) == 1
+        and len(metrics) == 1
+        and not args.all_sets
+    )
 
-    for rc in run_configs:
-        out_dir = os.path.join(args.data_root, "cross_validation", args.set_name, rc)
-        if not os.path.isdir(out_dir):
-            continue
-        for metric_key in metrics:
-            output_path = args.output if single_output else None
-            try:
-                generate_bar_chart(metric_key, out_dir, args.geometry_variant, output_path, args.dpi)
-            except FileNotFoundError as e:
-                print(f"Skipping {rc}/{metric_key}: {e}")
+    for set_name in set_names:
+        for rc in run_configs:
+            out_dir = os.path.join(args.data_root, "cross_validation", set_name, rc)
+            if not os.path.isdir(out_dir):
+                continue
+            for metric_key in metrics:
+                output_path = args.output if single_output else None
+                try:
+                    generate_bar_chart(
+                        metric_key, out_dir, args.geometry_variant, output_path, args.dpi
+                    )
+                except FileNotFoundError as e:
+                    print(f"Skipping {set_name}/{rc}/{metric_key}: {e}")
 
 
 if __name__ == "__main__":

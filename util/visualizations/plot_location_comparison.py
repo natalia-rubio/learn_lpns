@@ -10,6 +10,7 @@ Location format: "source:target" where:
   - "branch5_seg0:RESISTANCE_0" - vessel to outlet BC (terminal outlet)
 """
 
+import glob
 import os
 import sys
 import argparse
@@ -17,6 +18,11 @@ import json
 import csv
 import numpy as np
 import warnings
+
+from util.visualizations.cv_pressure_errors_to_latex import (
+    format_modality_display_for_legend,
+    MODALITY_DISPLAY,
+)
 
 # Suppress matplotlib warnings about redundant linestyle
 warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
@@ -93,7 +99,7 @@ LINE_STYLES = {
         'color': 'black',
         'linestyle': '-',
         'linewidth': 8,
-        'label': '3D Solution',
+        'label': '3D_Solution',
         'alpha': 0.75,
     },
     # Geometric 0D (uncalibrated) - original geometry
@@ -246,6 +252,75 @@ LINE_STYLES = {
 }
 
 
+def _modality_key_from_plot_key(key):
+    """Map plot/csv style key to MODALITY_DISPLAY key, or None if no shared bar-chart name."""
+    if key == '3d_model':
+        return '3d_model'
+    if key in ('geometric_0d', 'bifurcations_geometric_0d', 'bifurcations_EL_geometric_0d'):
+        return 'geometric'
+    if 'BloodVesselJunction_NN_plus_Vessel_NN' in key:
+        return 'BloodVesselJunction_NN_plus_Vessel_NN'
+    if 'NN_vessel' in key:
+        return 'NN_vessel'
+    if 'BloodVesselJunction_NN' in key:
+        return 'BloodVesselJunction_NN'
+    if 'NORMAL_JUNCTION' in key:
+        return 'NORMAL_JUNCTION'
+    if 'BloodVesselJunction' in key:
+        return 'BloodVesselJunction'
+    if key.endswith('_NN'):
+        return 'BloodVesselJunction_NN'
+    return None
+
+
+def _geometry_variant_suffix_lines(key, modality_key):
+    """Optional extra legend line when multiple calibrated curves share one modality name."""
+    if modality_key == 'BloodVesselJunction':
+        if key.startswith('original_BloodVesselJunction'):
+            return ['(orig)']
+        if key.startswith('bifurcations_BloodVesselJunction') and not key.startswith('bifurcations_EL'):
+            return ['(bif)']
+        if key.startswith('bifurcations_EL_') and 'BloodVesselJunction' in key and 'NN' not in key:
+            return ['(EL)']
+    if modality_key == 'NORMAL_JUNCTION':
+        if key.startswith('original_NORMAL_JUNCTION'):
+            return ['(orig)']
+        if key.startswith('bifurcations_NORMAL_JUNCTION') and not key.startswith('bifurcations_EL'):
+            return ['(bif)']
+        if key.startswith('bifurcations_EL_') and 'NORMAL_JUNCTION' in key:
+            return ['(EL)']
+    return None
+
+
+def _legend_order_key(label):
+    """
+    Sort key (rank, label) for figure legend. Lower rank appears first.
+    Matches modality order used with cv_pressure_max_pct_error_barchart / MODALITY_DISPLAY
+    (3D, Poiseuille, Learned Vessels, Learned Junctions, Learned J+V, Optimal/Fit to 3D, then ΔP=0).
+    """
+    lines = [ln.strip() for ln in label.split('\n') if ln.strip()]
+    if not lines:
+        return (100, label)
+    top = lines[0]
+    if top == '3D':
+        return (0, label)
+    if top == 'Poiseuille':
+        return (1, label)
+    if top == 'Learned':
+        if len(lines) >= 3 and 'and' in lines[2]:
+            return (4, label)
+        if len(lines) >= 2 and lines[1] == 'Vessels':
+            return (2, label)
+        if len(lines) >= 2 and lines[1] == 'Junctions':
+            return (3, label)
+        return (99, label)
+    if top == 'Optimal':
+        return (5, label)
+    if '\\Delta' in label or (top.startswith('$') and 'Delta' in top):
+        return (6, label)
+    return (100, label)
+
+
 def get_line_style(key):
     """
     Get line style for a given key. Handles dynamic generation for 
@@ -257,47 +332,54 @@ def get_line_style(key):
     Returns:
         Dictionary with color, linestyle, linewidth, label, alpha
     """
-    # If key is directly defined, return it
     if key in LINE_STYLES:
-        return LINE_STYLES[key]
-    
-    # NN vessel-only (e.g. NN_vessel or bifurcations_EL_NN_vessel)
-    if 'NN_vessel' in key:
-        return LINE_STYLES['NN_vessel']
-    # Special handling for NN lines: always dodger blue, dashed
-    if 'BloodVesselJunction_NN' in key or key.endswith('_NN'):
-        return {
+        base = LINE_STYLES[key]
+    elif 'NN_vessel' in key:
+        base = LINE_STYLES['NN_vessel']
+    elif 'BloodVesselJunction_NN' in key or key.endswith('_NN'):
+        base = {
             'color': 'dodgerblue',
             'linestyle': '--',
             'linewidth': 4,
             'label': 'Learned Junctions',
             'alpha': 0.75,
         }
-    
-    # Try to parse as {geometry}_{junction_type}
-    for geometry in ['original', 'bifurcations']:
-        if key.startswith(f'{geometry}_'):
-            junction_type = key[len(f'{geometry}_'):]
-            color = JUNCTION_COLORS.get(junction_type, 'gray')
-            linestyle = GEOMETRY_LINESTYLES.get(geometry, '-')
-            suffix = '(orig)' if geometry == 'original' else '(bif)'
-            label = f'{junction_type} {suffix}'
-            return {
-                'color': color,
-                'linestyle': linestyle,
+    else:
+        parsed = None
+        for geometry in ['original', 'bifurcations']:
+            if key.startswith(f'{geometry}_'):
+                junction_type = key[len(f'{geometry}_'):]
+                color = JUNCTION_COLORS.get(junction_type, 'gray')
+                linestyle = GEOMETRY_LINESTYLES.get(geometry, '-')
+                suffix = '(orig)' if geometry == 'original' else '(bif)'
+                label = f'{junction_type} {suffix}'
+                parsed = {
+                    'color': color,
+                    'linestyle': linestyle,
+                    'linewidth': 4,
+                    'label': label,
+                    'alpha': 0.75,
+                }
+                break
+        if parsed is not None:
+            base = parsed
+        else:
+            base = {
+                'color': 'gray',
+                'linestyle': '-',
                 'linewidth': 4,
-                'label': label,
+                'label': key,
                 'alpha': 0.75,
             }
-    
-    # Fallback default
-    return {
-        'color': 'gray',
-        'linestyle': '-',
-        'linewidth': 4,
-        'label': key,
-        'alpha': 0.75,
-    }
+
+    out = dict(base)
+    mod = _modality_key_from_plot_key(key)
+    if mod is not None and mod in MODALITY_DISPLAY:
+        extra = _geometry_variant_suffix_lines(key, mod)
+        lab = format_modality_display_for_legend(mod, extra)
+        if lab is not None:
+            out['label'] = lab
+    return out
 # =============================================================================
 
 
@@ -618,6 +700,90 @@ def get_all_locations_from_calibration_input(calibration_input_path):
     return sorted(locations)
 
 
+def _find_mse_comparison_csv(calibration_input_path):
+    """
+    Path to *_{mse_comparison}.csv next to calibration input (same file used for CV bar charts).
+    """
+    if not calibration_input_path:
+        return None
+    d = os.path.dirname(os.path.abspath(calibration_input_path))
+    bn = os.path.basename(calibration_input_path)
+    idx = bn.find("_calibration_input")
+    if idx > 0:
+        prefix = bn[:idx]
+        p = os.path.join(d, f"{prefix}_mse_comparison.csv")
+        if os.path.exists(p):
+            return p
+    cands = glob.glob(os.path.join(d, "*_mse_comparison.csv"))
+    if not cands:
+        return None
+    if len(cands) == 1:
+        return cands[0]
+    for c in sorted(cands):
+        if "bifurcations_EL" in os.path.basename(c):
+            return c
+    return sorted(cands)[0]
+
+
+def _load_mean_pressure_max_rel_pct_from_mse_csv(path):
+    """
+    Parse Summary Statistics row 'Mean Pressure Max Rel Error' (fractions 0–1) into
+    modality column name -> percent (0–100). Matches bifurcations_EL_mse_comparison.csv.
+    """
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, newline="") as f:
+        reader = csv.reader(f)
+        header = None
+        for row in reader:
+            if not row:
+                continue
+            if row[0] == "Metric":
+                header = row
+            elif header and row[0] == "Mean Pressure Max Rel Error":
+                out = {}
+                for j, name in enumerate(header[1:], 1):
+                    if j < len(row):
+                        try:
+                            out[name] = float(row[j]) * 100.0
+                        except ValueError:
+                            pass
+                return out if out else None
+    return None
+
+
+def _slice_results_dict_for_window(results_dict, t_lo, t_hi):
+    """Copy of results_dict with each series limited to times in [t_lo, t_hi]."""
+    out = {}
+    for k, d in results_dict.items():
+        if d.get('times') is None or len(d['times']) == 0:
+            continue
+        t = np.asarray(d['times'], dtype=float)
+        mask = (t >= t_lo) & (t <= t_hi)
+        if not np.any(mask):
+            continue
+        out[k] = {
+            'times': t[mask],
+            'pressures': np.asarray(d['pressures'])[mask] if d.get('pressures') is not None else None,
+            'flows': np.asarray(d['flows'])[mask] if d.get('flows') is not None else None,
+        }
+    return out
+
+
+def _fill_rel_pct_from_mse_summary(rel_pct_by_plot_key, mse_pct_by_modality, geometric_results, calibrated_results):
+    """Map MSE CSV modality columns to plot keys (same names as _modality_key_from_plot_key)."""
+    for geo_key in geometric_results:
+        mod = _modality_key_from_plot_key(geo_key)
+        if mod == "geometric" and "geometric" in mse_pct_by_modality:
+            rel_pct_by_plot_key[geo_key] = mse_pct_by_modality["geometric"]
+    for jtype in calibrated_results:
+        if "NORMAL_JUNCTION" in jtype:
+            continue
+        mod = _modality_key_from_plot_key(jtype)
+        if mod and mod in mse_pct_by_modality:
+            rel_pct_by_plot_key[jtype] = mse_pct_by_modality[mod]
+
+
 def get_time_period(set_name, geo_name):
     """
     Try to get the actual time period from 3D simulation XML.
@@ -809,8 +975,7 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     axes[3].tick_params(labelbottom=True)
     
     # Get styles from configuration
-    style_3d = LINE_STYLES['3d_model']
-    style_geo = LINE_STYLES['geometric_0d']
+    style_3d = get_line_style('3d_model')
     
     # Determine zoom window - automatically set to last 20% of time period
     num_time_steps = len(times_geo)
@@ -842,6 +1007,16 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
     zoom_times = times_geo[zoom_start_idx:zoom_end_idx]
     time_zoom_start = zoom_times[0] if len(zoom_times) > 0 else times_geo[0]
     time_zoom_end = zoom_times[-1] if len(zoom_times) > 0 else times_geo[-1]
+    # Exact x-axis limits for zoom panels (first/last time sample in window; no extra margin)
+    zoom_xlim_lo = float(times_geo[zoom_start_idx])
+    zoom_xlim_hi = float(times_geo[zoom_end_idx - 1]) if zoom_end_idx > zoom_start_idx else zoom_xlim_lo
+
+    # Legend max %: only when *_{mse_comparison}.csv exists (same Mean Pressure Max Rel Error as CV bar charts).
+    rel_pct_by_plot_key = {}
+    mse_csv = _find_mse_comparison_csv(calibration_input_path)
+    mse_by_mod = _load_mean_pressure_max_rel_pct_from_mse_csv(mse_csv) if mse_csv else None
+    if mse_by_mod:
+        _fill_rel_pct_from_mse_summary(rel_pct_by_plot_key, mse_by_mod, geometric_results, calibrated_results)
     
     # Prepare zoomed data
     pressures_3d_zoom = pressures_3d_mmhg[zoom_start_idx:zoom_end_idx] if pressures_3d_mmhg is not None else None
@@ -873,8 +1048,14 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
                 }
     
     # Helper functions for plotting
+    def _label_with_rel_pct(base_label, plot_key):
+        pct = rel_pct_by_plot_key.get(plot_key)
+        if pct is None or not np.isfinite(pct):
+            return base_label
+        return f"{base_label}\nMPE: {pct:.1f}\%%"
+
     def plot_pressure_data(ax, times_data, pressures_3d_data, geometric_data_dict, 
-                          calibrated_data_dict, set_ylim_from_3d=True):
+                          calibrated_data_dict, set_ylim_from_3d=False):
         if pressures_3d_data is not None:
             ax.plot(times_data, pressures_3d_data, 
                    color=style_3d['color'], linestyle=style_3d['linestyle'],
@@ -885,9 +1066,10 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         for geo_key, geo_data in geometric_data_dict.items():
             if geo_data.get('pressures') is not None:
                 style = get_line_style(geo_key)
+                lab = _label_with_rel_pct(style['label'], geo_key)
                 ax.plot(geo_data['times'], geo_data['pressures'], 
                        color=style['color'], linestyle=style['linestyle'],
-                       linewidth=style['linewidth'], label=style['label'], 
+                       linewidth=style['linewidth'], label=lab, 
                        alpha=style['alpha'])
         
         for jtype, data in calibrated_data_dict.items():
@@ -895,9 +1077,10 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
                 continue
             if data['pressures'] is not None:
                 style = get_line_style(jtype)
+                lab = _label_with_rel_pct(style['label'], jtype)
                 ax.plot(data['times'], data['pressures'], 
                        color=style['color'], linestyle=style['linestyle'],
-                       linewidth=style['linewidth'], label=style['label'], 
+                       linewidth=style['linewidth'], label=lab, 
                        alpha=style['alpha'])
         
         # Set y-limits
@@ -917,11 +1100,11 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
             pressure_min = np.min(all_pressures)
             pressure_max = np.max(all_pressures)
             pressure_range = pressure_max - pressure_min
-            if pressure_range > 0:
-                ax.set_ylim(pressure_min - 0.1 * pressure_range, pressure_max + 0.1 * pressure_range)
+            # if pressure_range > 0:
+            #     ax.set_ylim(pressure_min - 0.1 * pressure_range, pressure_max + 0.1 * pressure_range)
     
     def plot_flow_data(ax, times_data, flows_3d_data, geometric_data_dict, 
-                      calibrated_data_dict, set_ylim_from_3d=True):
+                      calibrated_data_dict, set_ylim_from_3d=False):
         if flows_3d_data is not None:
             ax.plot(times_data, flows_3d_data, 
                    color=style_3d['color'], linestyle=style_3d['linestyle'],
@@ -932,9 +1115,10 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         for geo_key, geo_data in geometric_data_dict.items():
             if geo_data.get('flows') is not None:
                 style = get_line_style(geo_key)
+                lab = _label_with_rel_pct(style['label'], geo_key)
                 ax.plot(geo_data['times'], geo_data['flows'], 
                        color=style['color'], linestyle=style['linestyle'],
-                       linewidth=style['linewidth'], label=style['label'], 
+                       linewidth=style['linewidth'], label=lab, 
                        alpha=style['alpha'])
         
         for jtype, data in calibrated_data_dict.items():
@@ -942,9 +1126,10 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
                 continue
             if data['flows'] is not None:
                 style = get_line_style(jtype)
+                lab = _label_with_rel_pct(style['label'], jtype)
                 ax.plot(data['times'], data['flows'], 
                        color=style['color'], linestyle=style['linestyle'],
-                       linewidth=style['linewidth'], label=style['label'], 
+                       linewidth=style['linewidth'], label=lab, 
                        alpha=style['alpha'])
         
         # Set y-limits
@@ -964,58 +1149,68 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
             flow_min = np.min(all_flows)
             flow_max = np.max(all_flows)
             flow_range = flow_max - flow_min
-            if flow_range > 0:
-                ax.set_ylim(flow_min - 0.1 * flow_range, flow_max + 0.1 * flow_range)
+            # if flow_range > 0:
+            #     ax.set_ylim(flow_min - 0.1 * flow_range, flow_max + 0.1 * flow_range)
     
-    # Determine full time range
-    all_times = list(times_geo)
-    for data in calibrated_results.values():
-        if data['times'] is not None:
-            all_times.extend(data['times'])
-    time_min = np.min(all_times)
-    time_max = np.max(all_times)
+    # Top “full cycle” panels: only the last 80% of the cycle (drop first 20%). Zoom band & zoom rows unchanged.
+    _t0 = float(times_geo[0])
+    _t1 = float(times_geo[-1])
+    _span = _t1 - _t0
+    full_view_t0 = _t0 + 0.2 * _span
+    full_view_t1 = _t1
+
+    # Top row: plot only the last 80% of samples so autoscale / y-range uses that window (not full cycle).
+    tgeo = np.asarray(times_geo, dtype=float)
+    mask_top = (tgeo >= full_view_t0) & (tgeo <= full_view_t1)
+    times_3d_top = np.asarray(times_3d_sec)[mask_top] if times_3d_sec is not None else None
+    pressures_3d_top = np.asarray(pressures_3d_mmhg)[mask_top] if pressures_3d_mmhg is not None else None
+    flows_3d_top = np.asarray(flows_3d)[mask_top] if flows_3d is not None else None
+    geometric_results_top = _slice_results_dict_for_window(geometric_results, full_view_t0, full_view_t1)
+    calibrated_results_top = _slice_results_dict_for_window(calibrated_results, full_view_t0, full_view_t1)
     
-    # Plot 1: Zoomed pressure
+    # Row 1–2: full cycle (top) — x view = last 80% of cycle
     ax = axes[0]
-    plot_pressure_data(ax, zoom_times, pressures_3d_zoom, geometric_results_zoom, 
-                      calibrated_results_zoom, set_ylim_from_3d=False)
+    ax.axvspan(zoom_xlim_lo, zoom_xlim_hi, alpha=0.4, color='gray', zorder=0)
+    plot_pressure_data(ax, times_3d_top, pressures_3d_top, geometric_results_top, 
+                      calibrated_results_top, set_ylim_from_3d=False)
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
-    ax.set_xlim(time_zoom_start, time_zoom_end)
+    ax.set_xlim(full_view_t0, full_view_t1)
+    ax.margins(x=0)
     ax.tick_params(axis='x', bottom=False, labelbottom=False)
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
-    # Plot 2: Zoomed flow
     ax = axes[1]
-    plot_flow_data(ax, zoom_times, flows_3d_zoom, geometric_results_zoom, 
-                   calibrated_results_zoom, set_ylim_from_3d=False)
+    ax.axvspan(zoom_xlim_lo, zoom_xlim_hi, alpha=0.4, color='gray', zorder=0)
+    plot_flow_data(ax, times_3d_top, flows_3d_top, geometric_results_top, 
+                  calibrated_results_top, set_ylim_from_3d=False)
     ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
-    ax.set_xlim(time_zoom_start, time_zoom_end)
+    ax.set_xlim(full_view_t0, full_view_t1)
+    ax.margins(x=0)
     ax.tick_params(axis='x', labelbottom=True, bottom=True, labelsize=20)
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
-    # Plot 3: Full pressure
+    # Row 3–4: zoom window (bottom); xlims match window exactly (no horizontal margin)
     ax = axes[2]
-    ax.axvspan(time_zoom_start, time_zoom_end, alpha=0.4, color='gray', zorder=0)
-    plot_pressure_data(ax, times_3d_sec, pressures_3d_mmhg, geometric_results, 
-                      calibrated_results, set_ylim_from_3d=True)
+    plot_pressure_data(ax, zoom_times, pressures_3d_zoom, geometric_results_zoom, 
+                      calibrated_results_zoom, set_ylim_from_3d=False)
     ax.set_ylabel(r'Pressure (mmHg)', fontsize=24)
-    ax.set_xlim(time_min, time_max)
+    ax.set_xlim(zoom_xlim_lo, zoom_xlim_hi)
+    ax.margins(x=0)
     ax.tick_params(axis='x', bottom=False, labelbottom=False)
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
-    # Plot 4: Full flow
     ax = axes[3]
-    ax.axvspan(time_zoom_start, time_zoom_end, alpha=0.4, color='gray', zorder=0)
-    plot_flow_data(ax, times_3d_sec, flows_3d, geometric_results, 
-                  calibrated_results, set_ylim_from_3d=True)
+    plot_flow_data(ax, zoom_times, flows_3d_zoom, geometric_results_zoom, 
+                   calibrated_results_zoom, set_ylim_from_3d=False)
     ax.set_xlabel(r'Time (s)', fontsize=24)
     ax.set_ylabel(r'Flow (cm$^3$/s)', fontsize=24)
-    ax.set_xlim(time_min, time_max)
+    ax.set_xlim(zoom_xlim_lo, zoom_xlim_hi)
+    ax.margins(x=0)
     ax.tick_params(axis='x', labelbottom=True, bottom=True, labelsize=20)
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
     
     # Create legend (exclude spurious entries like "-location INFLOW:branch0_seg0")
-    handles, labels = axes[2].get_legend_handles_labels()
+    handles, labels = axes[0].get_legend_handles_labels()
     seen = set()
     unique_handles, unique_labels = [], []
     for handle, label in zip(handles, labels):
@@ -1023,19 +1218,63 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
             seen.add(label)
             unique_handles.append(handle)
             unique_labels.append(label)
+
+    legend_pairs = list(zip(unique_handles, unique_labels))
+    legend_pairs.sort(key=lambda hl: _legend_order_key(hl[1]))
+    unique_handles = [h for h, _ in legend_pairs]
+    unique_labels = [lb for _, lb in legend_pairs]
     
     # Title
     title_text = location
     if location == "INFLOW:branch0_seg0":
-        title_text = "3D vs 0D Solutions at Aorta Inlet"
+        title_text = "3D vs 0D Solutions at Vasculature Inlet"
     
-    plt.tight_layout(rect=[0, 0, 1, 0.78])
+    plt.tight_layout(rect=[0, 0, 1, 0.76])
     fig.suptitle(title_text, fontsize=28, weight='bold', y=0.95)
-    # Match legend width to plot area; allow enough height for multiple rows (more modalities)
-    ax_bbox = axes[0].get_position()
-    fig.legend(unique_handles, unique_labels, loc='upper center', ncol=3,
-               bbox_to_anchor=(ax_bbox.x0-0.1, 0.65, ax_bbox.width+0.2, 0.25),
-               bbox_transform=fig.transFigure, mode='expand', fontsize=22, frameon=False)
+    # Two-row legend: 3D centered on top; remaining modalities in one row below (same order as before).
+    center_x = 0.5
+    handles_3d, labels_3d = [], []
+    handles_rest, labels_rest = [], []
+    for h, lb in zip(unique_handles, unique_labels):
+        if lb.split("\n")[0].strip() == "3D":
+            handles_3d.append(h)
+            labels_3d.append(lb)
+        else:
+            handles_rest.append(h)
+            labels_rest.append(lb)
+
+    if handles_3d and handles_rest:
+        fig.legend(
+            handles_3d,
+            labels_3d,
+            loc="lower center",
+            bbox_to_anchor=(center_x, 0.85),
+            bbox_transform=fig.transFigure,
+            ncol=1,
+            fontsize=22,
+            frameon=False,
+        )
+        fig.legend(
+            handles_rest,
+            labels_rest,
+            loc="upper center",
+            bbox_to_anchor=(center_x, 0.87),
+            bbox_transform=fig.transFigure,
+            ncol=len(handles_rest),
+            fontsize=22,
+            frameon=False,
+        )
+    else:
+        fig.legend(
+            unique_handles,
+            unique_labels,
+            loc="upper center",
+            bbox_to_anchor=(center_x, 0.62),
+            bbox_transform=fig.transFigure,
+            ncol=min(3, max(1, len(unique_handles))),
+            fontsize=22,
+            frameon=False,
+        )
     
     # Ensure x-axis labels are visible
     for ax_idx in [1, 3]:

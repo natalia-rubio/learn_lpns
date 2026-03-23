@@ -18,8 +18,10 @@ import vtk
 import numpy as np
 import argparse
 import xml.etree.ElementTree as ET
+from typing import Optional
 import csv
 from collections import defaultdict, OrderedDict
+from util.zerod_calibration.run_config_canonical import canonical_run_config_for_data_paths
 from util.zerod_calibration.oned_to_zerod import *
 from util.zerod_calibration.post_processing import *
 from util.zerod_calibration.bifurcation_splitting import *
@@ -196,6 +198,15 @@ def main():
                        help='Zero L2 penalties on R and stenosis when stenosis is included. Incompatible with --stenosis-off.')
     parser.add_argument('--symmetric-loss', action='store_true', dest='symmetric_loss',
                        help='Record that NN was trained with symmetric loss (for path naming; does not change inference)')
+    parser.add_argument(
+        '--run-config',
+        default=None,
+        metavar='SUFFIX',
+        help='Optional path suffix for zeroD/ml_inputs (e.g. stenosis_off_symmetric_gen_loss). '
+        'Must match flags from --normalize/--stenosis-off/...; a trailing _gen_loss is an '
+        'extra variant (own jax/splits paths + gen-weighted loss) and is ignored only when '
+        'checking flag parity.',
+    )
 
     args = parser.parse_args(); verbose = args.verbose
     if args.normalize:
@@ -214,13 +225,25 @@ def main():
         if 'BloodVesselJunction' not in args.junction_types:
             args.junction_types = ['BloodVesselJunction']
     # Run-config suffix: record normalize, stenosis-off, symmetric-loss for path separation
-    run_config_suffix = get_run_config_suffix(
+    flag_run_config_suffix = get_run_config_suffix(
         normalize=getattr(args, 'normalize', False),
         stenosis_off=getattr(args, 'stenosis_off', False),
         symmetric_loss=getattr(args, 'symmetric_loss', False),
         clip_predictions=getattr(args, 'clip_predictions', False),
         penalty_off=getattr(args, 'penalty_off', False),
     )
+    rc_arg = getattr(args, 'run_config', None)
+    if rc_arg is not None and str(rc_arg).strip():
+        rc = str(rc_arg).strip()
+        canon = canonical_run_config_for_data_paths(rc) or rc
+        if canon != flag_run_config_suffix:
+            parser.error(
+                f"--run-config {rc!r} does not match flags (canonical {canon!r} vs {flag_run_config_suffix!r} "
+                "from --normalize/--stenosis-off/--symmetric-loss/...)."
+            )
+        run_config_suffix = rc
+    else:
+        run_config_suffix = flag_run_config_suffix
     if run_config_suffix:
         print(f"  Run config: {run_config_suffix}")
     if getattr(args, 'stenosis_off', False) and getattr(args, 'penalty_off', False):
@@ -1626,13 +1649,14 @@ def main():
                                 nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
                                 if os.path.exists(nn_results_csv):
                                     combined_csv_paths[f'{geo_variant_name}_BloodVesselJunction_NN'] = str(nn_results_csv)
-                                if getattr(args, 'NN_vessel', False):
-                                    nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
-                                    if os.path.exists(nn_jv_results_csv):
-                                        combined_csv_paths[f'{geo_variant_name}_BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
-                                    nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
-                                    if os.path.exists(nn_vessel_only_results_csv):
-                                        combined_csv_paths[f'{geo_variant_name}_NN_vessel'] = str(nn_vessel_only_results_csv)
+                                # Plot NN vessel modalities whenever CSVs exist (same as plot_location_comparison CLI).
+                                # --NN-vessel still controls whether earlier steps generate these files.
+                                nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
+                                if os.path.exists(nn_jv_results_csv):
+                                    combined_csv_paths[f'{geo_variant_name}_BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
+                                nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
+                                if os.path.exists(nn_vessel_only_results_csv):
+                                    combined_csv_paths[f'{geo_variant_name}_NN_vessel'] = str(nn_vessel_only_results_csv)
                         
                         if combined_csv_paths or geometric_csv_paths:
                             success_count = 0
@@ -1707,13 +1731,13 @@ def main():
                             nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
                             if os.path.exists(nn_results_csv):
                                 variant_csv_paths['BloodVesselJunction_NN'] = str(nn_results_csv)
-                            if getattr(args, 'NN_vessel', False):
-                                nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
-                                if os.path.exists(nn_jv_results_csv):
-                                    variant_csv_paths['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
-                                nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
-                                if os.path.exists(nn_vessel_only_results_csv):
-                                    variant_csv_paths['NN_vessel'] = str(nn_vessel_only_results_csv)
+                            # Plot NN vessel modalities whenever CSVs exist (same as plot_location_comparison CLI).
+                            nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
+                            if os.path.exists(nn_jv_results_csv):
+                                variant_csv_paths['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
+                            nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
+                            if os.path.exists(nn_vessel_only_results_csv):
+                                variant_csv_paths['NN_vessel'] = str(nn_vessel_only_results_csv)
                         
                         if variant_csv_paths or variant_geometric_csv_paths:
                             # Build vessel name mapping for EL-adjusted geometry

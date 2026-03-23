@@ -30,14 +30,35 @@ MODALITY_KEYS = [
 # Display names for the table header: modality key (code) -> display.
 # Value = string (single-line header) or list of strings (multi-line via \\shortstack).
 MODALITY_DISPLAY = {
+    # Reference time series (location comparison plots only; not a CV summary column)
+    "3d_model": [r"3D", r"Solution"],
     "geometric": [r"Poiseuille", r"(Baseline)"],
     "BloodVesselJunction_NN": [r"Learned", r"Junctions"],
     "NN_vessel": [r"Learned", r"Vessels"],
     "BloodVesselJunction_NN_plus_Vessel_NN": [
         r"Learned",  r"Junctions", r"and Vessels"
     ],
-    "BloodVesselJunction": ["Optimal"],
+    "BloodVesselJunction": [r"Optimal", r"Fit to 3D"],
+    # Calibrated $\Delta P = 0$ junction (not in default CV bar chart columns)
+    "NORMAL_JUNCTION": [r"$\Delta P = 0$", r"Junction"],
 }
+
+
+def format_modality_display_for_legend(modality_key, extra_lines=None):
+    """
+    Turn a MODALITY_DISPLAY entry into a matplotlib legend string (one row per line).
+
+    ``extra_lines`` optional suffix rows, e.g. ["(orig)"] when both original and bifurcations
+    optimal curves appear on the same figure.
+    """
+    spec = MODALITY_DISPLAY.get(modality_key)
+    if spec is None:
+        return None
+    lines = list(spec) if isinstance(spec, list) else [spec]
+    if extra_lines:
+        lines = lines + [str(x) for x in extra_lines]
+    return "\n".join(lines)
+
 
 # Display names for the Metric column (sub-rows). Key = metric key in code.
 # Value = string or list of strings (multi-line via \\shortstack).

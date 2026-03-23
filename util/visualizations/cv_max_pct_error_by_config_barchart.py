@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Horizontal bar chart of maximum percent error (pressure) for the NN junction+vessel modality,
-one bar per run config. Configs are subfolders under results/cross_validation/<set_name>/
-(e.g. base, stenosis_off, penalty_off). Uses a display-name dictionary for axis labels.
+Horizontal bar chart of maximum percent error (pressure) for the NN junction+vessel modality.
+For each run config (subfolder under results/cross_validation/<set_name>/), plots one or more
+horizontal bars: one bar per set name when multiple sets are given (grouped by config on the y-axis).
 
 Usage:
-  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults bifurcations_EL
-  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults bifurcations_EL --configs base stenosis_off penalty_off --output configs_comparison.pdf
+  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults
+  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults --geometry bifurcations_EL
+  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults VMR_abdo VMR_pulmo_healthy
+  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults --configs base stenosis_off --output configs_comparison.pdf
+
+Set DEFAULT_SET_NAMES / DEFAULT_RUN_CONFIGS below to avoid repeating long CLI lists.
 """
 
 import argparse
@@ -30,12 +34,55 @@ CONFIG_DISPLAY_NAME = {
     "base": [r"$R_{\mathrm{quad}}$ with calibrator penalty,", "asymmetric loss,", "entrance-length adjustment"],
     "stenosis_off": [r"No $R_{\mathrm{quad}}$,", "asymmetric loss,", "entrance-length adjustment"],
     "penalty_off": [r"$R_{\mathrm{quad}}$ without calibrator penalty,", "asymmetric loss", "entrance-length adjustment"],
+    "penalty_off_gen_loss": [
+        r"$R_{\mathrm{quad}}$ without calibrator penalty,",
+        "generation-weighted NN loss,",
+        "entrance-length adjustment",
+    ],
+    "symmetric_gen_loss": [
+        r"$R_{\mathrm{quad}}$ with calibrator penalty,",
+        "symmetric loss, generation-weighted NN loss,",
+        "entrance-length adjustment",
+    ],
+    "symmetric_penalty_off_gen_loss": [
+        r"$R_{\mathrm{quad}}$ without calibrator penalty,",
+        "symmetric loss, generation-weighted NN loss,",
+        "entrance-length adjustment",
+    ],
     #"symmetric": ["No stenosis coefficient, symmetric loss"],
-    "stenosis_off_symmetric": [r"No $R_{\mathrm{quad}}$,", "symmetric loss,", "entrance-length adjustment"],
+    "stenosis_off_symmetric": [r"No $R_{\mathrm{quad}}$,", "standard loss,", "entrance-length adjustment"],
+    "stenosis_off_symmetric_gen_loss:bifurcations": [r"No $R_{\mathrm{quad}}$,", "skewed loss,", "no entrance-length adjustment"],
+    "stenosis_off_symmetric_gen_loss": [r"No $R_{\mathrm{quad}}$,", "skewed loss,", "entrance-length adjustment"],
+    "penalty_off_symmetric_gen_loss": [r"$R_{\mathrm{quad}}$,", "skewed loss,", "entrance-length adjustment"],
     # Config with different geometry variant: "config_suffix:variant" -> data from that config folder, that variant's CSV
     "stenosis_off:bifurcations": [r"No $R_{\mathrm{quad}}$,", "asymmetric loss,", "no entrance-length adjustment"],
     "normalized": "Normalized",
     "normalized_clip": "Normalized + clip",
+}
+
+# Optional: CV set names (under results/cross_validation/<set_name>/) when no set names are passed
+# on the command line. None = require at least one set name as a positional argument.
+#DEFAULT_SET_NAMES = None
+# Example:
+DEFAULT_SET_NAMES = ["VMR_rigid_aorta_adults_all", "VMR_abdo", "VMR_pulmo_healthy"]
+
+# Optional: run config subfolders to plot when --configs is not passed on the command line.
+# None = auto-discover every config under results/cross_validation/<first_set_name>/ that has the geometry CSV.
+# Non-None = use this list in order (same syntax as --configs: "config" or "config:variant").
+DEFAULT_RUN_CONFIGS = None
+# Example:
+DEFAULT_RUN_CONFIGS = [
+    "stenosis_off_symmetric_gen_loss",
+    "stenosis_off_symmetric",
+    "symmetric_penalty_off_gen_loss",
+    "stenosis_off_symmetric_gen_loss:bifurcations",
+]
+
+# Optional legend / axis labels for set names (defaults to the raw set_name string).
+SET_DISPLAY_NAME = {
+    # "VMR_rigid_aorta_adults": "Aorta (rigid)",
+    # "VMR_abdo": "Abdomen",
+    # "VMR_pulmo_healthy": "Pulmonary (healthy)",
 }
 
 
@@ -123,25 +170,31 @@ def _ci95_half_width_frac(std_frac, n):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Horizontal bar chart of max percent error (pressure) by run config."
+        description="Horizontal bar chart of max percent error (pressure) by run config (one bar per CV set when multiple sets are given)."
     )
-    parser.add_argument("set_name", help="Set name (e.g., VMR_rigid_aorta_adults)")
     parser.add_argument(
-        "geometry_variant",
-        nargs="?",
+        "set_names",
+        nargs="*",
+        default=None,
+        metavar="SET_NAME",
+        help="CV set name(s) under results/cross_validation/ (e.g. VMR_rigid_aorta_adults VMR_abdo). If omitted, uses DEFAULT_SET_NAMES in this module.",
+    )
+    parser.add_argument(
+        "--geometry",
+        "-g",
         default="bifurcations_EL",
-        help="Geometry variant (default: bifurcations_EL)",
+        help="Geometry variant for CSV filenames (default: bifurcations_EL)",
     )
     parser.add_argument(
         "--configs",
         nargs="*",
         default=None,
-        help="Run config subfolders to include. Use 'config:variant' for a different geometry variant (e.g. stenosis_off:bifurcations). Default: auto-discover.",
+        help="Run config subfolders to include. Use 'config:variant' for a different geometry variant (e.g. stenosis_off:bifurcations). If omitted, uses DEFAULT_RUN_CONFIGS in this module when set, else auto-discover.",
     )
     parser.add_argument(
         "--output", "-o",
         default=None,
-        help="Output file (default: <set_name>_<geometry_variant>_max_pct_error_by_config.pdf)",
+        help="Output file (default: under first set's cross_validation folder, name includes geometry and set count)",
     )
     parser.add_argument(
         "--data-root",
@@ -171,12 +224,27 @@ def main():
     args = parser.parse_args()
 
     data_root = args.data_root.rstrip(os.sep)
-    set_name = args.set_name
-    geometry_variant = args.geometry_variant
+    if args.set_names:
+        set_names = [s.strip() for s in args.set_names if s.strip()]
+    elif DEFAULT_SET_NAMES is not None:
+        set_names = [str(s).strip() for s in DEFAULT_SET_NAMES if str(s).strip()]
+    else:
+        set_names = []
+    if not set_names:
+        raise SystemExit(
+            "Provide at least one set name (positional), or set DEFAULT_SET_NAMES in this module."
+        )
+    geometry_variant = args.geometry
 
     # Resolve list of configs: each entry is "config_suffix" or "config_suffix:variant" (variant override for that bar)
     if args.configs:
         config_entries = [c.strip() for c in args.configs if c.strip()]
+    elif DEFAULT_RUN_CONFIGS is not None:
+        config_entries = [str(c).strip() for c in DEFAULT_RUN_CONFIGS if str(c).strip()]
+    else:
+        config_entries = None
+
+    if config_entries:
         configs = []  # list of (config_suffix, variant_to_use, display_key)
         for c in config_entries:
             if ":" in c:
@@ -186,10 +254,13 @@ def main():
             else:
                 configs.append((c, geometry_variant, c))
     else:
-        discovered = _discover_configs(data_root, set_name, geometry_variant)
+        discovered = _discover_configs(data_root, set_names[0], geometry_variant)
         configs = [(c, geometry_variant, c) for c in discovered]
     if not configs:
-        raise SystemExit("No configs found. Specify --configs or ensure results/cross_validation/<set_name>/<config>/ exist with the geometry CSV.")
+        raise SystemExit(
+            "No configs found. Specify --configs or ensure results/cross_validation/<set_name>/<config>/ exist "
+            "with the geometry CSV (discovery uses the first set name)."
+        )
 
     # Display name dict: start from module default, then apply --display-names
     display_name = dict(CONFIG_DISPLAY_NAME)
@@ -207,50 +278,107 @@ def main():
         raw = display_name.get(display_key, display_key)
         return _display_name_to_label(raw)
 
-    # Load mean, std, n per config; compute value (mean in %) and 95% CI half-width (in %)
-    values = []
-    labels = []
-    ci_half_widths = []
+    def _set_legend_label(sn):
+        return SET_DISPLAY_NAME.get(sn, sn)
+
+    # Load mean, std, n per (config, set); values[ci, si], ci_half_widths[ci, si]
+    n_sets = len(set_names)
+    rows = []
     for config_suffix, variant_to_use, display_key in configs:
-        path = os.path.join(
-            data_root, "cross_validation", set_name, config_suffix,
-            f"{variant_to_use}_cv_summary_pressure_max_rel_error.csv",
-        )
-        if not os.path.isfile(path):
-            warnings.warn(f"Skipping {display_key!r}: missing {path}", stacklevel=1)
+        vals = []
+        cis = []
+        for sn in set_names:
+            path = os.path.join(
+                data_root, "cross_validation", sn, config_suffix,
+                f"{variant_to_use}_cv_summary_pressure_max_rel_error.csv",
+            )
+            if not os.path.isfile(path):
+                warnings.warn(
+                    f"Missing {path!r} for config {display_key!r}; treating as NaN for that set.",
+                    stacklevel=1,
+                )
+                vals.append(float("nan"))
+                cis.append(float("nan"))
+                continue
+            mean_frac, std_frac, n = _load_mean_std_n(path)
+            val_pct = mean_frac * 100.0 if not _isnan(mean_frac) else float("nan")
+            ci_half_frac = _ci95_half_width_frac(std_frac, n)
+            ci_half_pct = ci_half_frac * 100.0 if not _isnan(mean_frac) else float("nan")
+            vals.append(val_pct)
+            cis.append(ci_half_pct)
+        if all(_isnan(v) for v in vals):
+            warnings.warn(f"Skipping config {display_key!r}: no data for any set.", stacklevel=1)
             continue
+        rows.append(
+            {
+                "display_key": display_key,
+                "label": _label_for_key(display_key),
+                "values": vals,
+                "ci_half": cis,
+            }
+        )
 
-        mean_frac, std_frac, n = _load_mean_std_n(path)
-
-        val_pct = mean_frac * 100.0 if not _isnan(mean_frac) else 0.0
-        ci_half_frac = _ci95_half_width_frac(std_frac, n)
-        ci_half_pct = ci_half_frac * 100.0
-        values.append(val_pct)
-        labels.append(_label_for_key(display_key))
-        ci_half_widths.append(ci_half_pct)
-
-    if not values:
+    if not rows:
         raise SystemExit("No config CSVs found. Check paths or run cross-validation for the requested geometry variants.")
 
-    # Order bars from smallest to largest max percent error (smallest at top)
-    triples = sorted(zip(values, labels, ci_half_widths), key=lambda p: p[0])
-    values = [t[0] for t in triples]
-    labels = [t[1] for t in triples]
-    ci_half_widths = [t[2] for t in triples]
+    def _row_sort_key(r):
+        xs = [v for v in r["values"] if not _isnan(v)]
+        if not xs:
+            return float("inf")
+        return float(np.nanmean(xs))
+
+    rows.sort(key=_row_sort_key)
+    config_labels = [r["label"] for r in rows]
+    values = np.array([r["values"] for r in rows], dtype=float)
+    ci_half_widths = np.array([r["ci_half"] for r in rows], dtype=float)
 
     # LaTeX formatting for text
     plt.rcParams["text.usetex"] = True
     plt.rcParams["font.family"] = "serif"
 
-    # Horizontal bar chart: y = config labels, x = max percent error (NN junction+vessel)
-    y_pos = np.arange(len(labels))
-    fig, ax = plt.subplots(figsize=(7, max(4, len(labels) * 0.5)))
-    bars = ax.barh(
-        y_pos, values, height=0.65, align="center", color="#b8b8b8", edgecolor="black", linewidth=0.5,
-        xerr=ci_half_widths, capsize=2.5, error_kw={"color": "black", "linewidth": 1},
-    )
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(labels, fontsize=11)
+    n_configs = len(config_labels)
+    # Horizontal bar chart: y = config labels, x = max percent error (NN junction+vessel); grouped by set
+    y_centers = np.arange(n_configs, dtype=float)
+    if n_sets == 1:
+        bar_height = 0.65
+        offsets = np.array([0.0])
+        colors = ["#b8b8b8"]
+    else:
+        bar_height = min(0.65 / max(n_sets, 1), 0.22)
+        offsets = (np.arange(n_sets) - (n_sets - 1) / 2.0) * (bar_height * 1.08)
+        cmap = plt.get_cmap("tab10")
+        colors = [cmap(i % 10) for i in range(n_sets)]
+
+    fig_w = 8.5 if n_sets > 1 else 7.0
+    fig, ax = plt.subplots(figsize=(fig_w, max(4, n_configs * 0.55)))
+    # (patch, value, ci half-width) for fade overlay when xmax is set
+    bar_value_ci = []
+    for s in range(n_sets):
+        y = y_centers + offsets[s]
+        v_col = values[:, s]
+        ci_col = ci_half_widths[:, s]
+        valid = ~np.isnan(v_col)
+        if not np.any(valid):
+            continue
+        bh = ax.barh(
+            y[valid],
+            v_col[valid],
+            height=bar_height * 0.92,
+            align="center",
+            color=colors[s],
+            edgecolor="black",
+            linewidth=0.5,
+            xerr=ci_col[valid],
+            capsize=2.5 if n_sets == 1 else 2.0,
+            error_kw={"color": "black", "linewidth": 1},
+            label=_set_legend_label(set_names[s]),
+        )
+        for rect, vv, cih in zip(bh, v_col[valid], ci_col[valid]):
+            ci_plot = 0.0 if _isnan(cih) else cih
+            bar_value_ci.append((rect, vv, ci_plot))
+
+    ax.set_yticks(y_centers)
+    ax.set_yticklabels(config_labels, fontsize=11)
     ax.set_xlabel(r"Max. Inlet Pressure Error over Cardiac Cycle (\%)", fontsize=12)
     x_max = args.xmax
     ax.set_xlim(0, x_max if x_max is not None else None)
@@ -259,6 +387,8 @@ def main():
     ax.grid(axis="x", alpha=0.3)
     for spine in ax.spines.values():
         spine.set_visible(False)
+    if n_sets > 1:
+        ax.legend(loc="lower right", fontsize=9, framealpha=0.95)
 
     # Fade out clipped bars on the right when xmax is set (white overlay, alpha 0 -> 1 left to right)
     fade_n = 40
@@ -266,8 +396,8 @@ def main():
     if x_max is not None:
         fade_width = x_max * fade_width_frac
         strip_width = fade_width / fade_n
-        for bar, val, ci in zip(bars, values, ci_half_widths):
-            if bar.get_width() + ci <= x_max:
+        for bar, val, ci in bar_value_ci:
+            if val + ci <= x_max:
                 continue
             y_lo = bar.get_y()
             bar_h = bar.get_height()
@@ -286,29 +416,42 @@ def main():
                 ax.add_patch(rect)
 
     # Value at end of each bar (past the error bar); when bar exceeds x_max, place label just right of cap.
-    # When xmax is set, don't clip any labels so text extending past the axis isn't cut off.
     label_offset = 0.3
     cap_label_offset = 0.8
     clip_labels = x_max is None
-    for bar, val, ci in zip(bars, values, ci_half_widths):
-        w = bar.get_width()
-        x_text = w + ci + label_offset
-        if x_max is not None and x_text > x_max:
-            x_text = x_max + cap_label_offset
+    ann_fs = 12 if n_sets == 1 else 8
+    for s in range(n_sets):
+        y = y_centers + offsets[s]
+        for i in range(n_configs):
+            val = values[i, s]
+            ci = ci_half_widths[i, s]
+            if _isnan(val):
+                continue
+            x_text = val + (0.0 if _isnan(ci) else ci) + label_offset
+            if x_max is not None and x_text > x_max:
+                x_text = x_max + cap_label_offset
             ha = "left"
-        else:
-            ha = "left"
-        label_text = rf"{val:.1f}\% $\pm$ {ci:.1f}\%"
-        ax.text(x_text, bar.get_y() + bar.get_height() / 2, label_text,
-                ha=ha, va="center", fontsize=12, clip_on=clip_labels)
+            ci_show = 0.0 if _isnan(ci) else ci
+            label_text = rf"{val:.1f}\% $\pm$ {ci_show:.1f}\%"
+            ax.text(
+                x_text, y[i], label_text,
+                ha=ha, va="center", fontsize=ann_fs, clip_on=clip_labels,
+            )
 
     plt.tight_layout()
     out_path = args.output
     if not out_path:
-        out_path = os.path.join(
-            data_root, "cross_validation", set_name,
-            f"{geometry_variant}_max_pct_error_by_config.pdf",
-        )
+        if len(set_names) == 1:
+            out_path = os.path.join(
+                data_root, "cross_validation", set_names[0],
+                f"{geometry_variant}_max_pct_error_by_config.pdf",
+            )
+        else:
+            set_slug = "__".join(set_names)
+            out_path = os.path.join(
+                data_root, "cross_validation", set_names[0],
+                f"{geometry_variant}_max_pct_error_by_config_{len(set_names)}sets__{set_slug}.pdf",
+            )
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
     plt.close()

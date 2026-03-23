@@ -34,21 +34,34 @@ from util.visualizations.plot_location_comparison import get_line_style
 SET_NAMES_DEFAULT = [
     "VMR_rigid_aorta_adults_all",
     "VMR_abdo",
-    "VMR_pulmo",
+    "VMR_pulmo_healthy",
 ]
+
+# X-axis labels for each set_name (internal folder name -> plot text). Use "\n" for a line break.
+# Names not listed here fall back to _format_set_label default (VMR_… split or raw set_name).
+SET_DISPLAY_NAME = {
+    "VMR_rigid_aorta_adults_all": "Aortic",
+    #"VMR_rigid_aorta_adults": "Rigid aorta\n(adults)",
+    "VMR_abdo": "Aortofemoral ",
+    "VMR_pulmo": "Pulmonary",
+    "VMR_pulmo_healthy": "Pulmonary"
+}
 
 RUN_CONFIG_FALLBACK_ORDER = [
     "stenosis_off_symmetric",
     "stenosis_off",
     "symmetric_penalty_off",
+    "symmetric_penalty_off_gen_loss",
+    "symmetric_gen_loss",
+    "penalty_off_gen_loss",
     "penalty_off",
     "base",
 ]
 
 MODALITY_ORDER = [
     "geometric",
-    "BloodVesselJunction_NN",
     "NN_vessel",
+    "BloodVesselJunction_NN",
     "BloodVesselJunction_NN_plus_Vessel_NN",
     "BloodVesselJunction",
 ]
@@ -58,7 +71,7 @@ MODALITY_LABEL = {
     "BloodVesselJunction_NN": "Learned\nJunctions",
     "NN_vessel": "Learned\nVessels",
     "BloodVesselJunction_NN_plus_Vessel_NN": "Learned Junctions\nand Vessels",
-    "BloodVesselJunction": "Optimal",
+    "BloodVesselJunction": "Optimal\nFit to 3D",
 }
 
 METRIC_CONFIG = {
@@ -128,9 +141,23 @@ def _modality_color(modality):
 
 
 def _format_set_label(set_name):
+    if set_name in SET_DISPLAY_NAME:
+        return SET_DISPLAY_NAME[set_name]
     if set_name.startswith("VMR_"):
         return set_name.replace("VMR_", "VMR\n", 1)
     return set_name
+
+
+def _format_bar_label(mean, metric_key):
+    """Text above each bar: mean only (95% CI remains on the error bars)."""
+    if not np.isfinite(mean):
+        return ""
+    # text.usetex=True: plain % is a LaTeX comment; use \\%
+    if metric_key == "pressure_max_rel_error":
+        return f"{mean:.1f}"
+    if metric_key == "pressure_max_error":
+        return f"{mean:.1f}"
+    return f"{mean:.3f}"
 
 
 def _resolve_csv_path(data_root, set_name, run_config, geometry_variant, csv_suffix, allow_fallback):
@@ -208,6 +235,13 @@ def main():
         default=180,
         help="Figure DPI (default: 180)",
     )
+    parser.add_argument(
+        "--ytick-fontsize",
+        type=float,
+        default=14,
+        metavar="PT",
+        help="Font size (pt) for y-axis tick labels (default: 9)",
+    )
     args = parser.parse_args()
 
     mcfg = METRIC_CONFIG[args.metric]
@@ -265,7 +299,7 @@ def main():
     width = 0.85 / n_mod
     offsets = np.linspace(-0.425 + width / 2, 0.425 - width / 2, n_mod)
 
-    fig, ax = plt.subplots(figsize=(10, 5.5))
+    fig, ax = plt.subplots(figsize=(11, 7))
 
     for i, modality in enumerate(MODALITY_ORDER):
         y = [means[s][i] for s in valid_sets]
@@ -283,23 +317,65 @@ def main():
             label=MODALITY_LABEL[modality],
         )
 
+    # Max height (bar + error) for y-axis margin
+    max_top = 0.0
+    for set_name in valid_sets:
+        for i in range(len(MODALITY_ORDER)):
+            yv = means[set_name][i]
+            ye = cis[set_name][i]
+            max_top = max(max_top, yv + ye)
+
+    # Labels: same data-y for every bar — small fixed offset above y=0, scaled only by chart range
+    label_fs = 14
+    label_base_offset_frac = 0.015  # fraction of max(bar+error) used as y offset from axis base
+    label_y = label_base_offset_frac * max_top if max_top > 0 else 0.0
+    label_bbox = {
+        "boxstyle": "round,pad=0.22",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": 0.5,
+    }
+    for set_idx, set_name in enumerate(valid_sets):
+        for i, _modality in enumerate(MODALITY_ORDER):
+            yv = means[set_name][i]
+            txt = _format_bar_label(yv, args.metric)
+            if not txt or yv <= 0:
+                continue
+            x_pos = x[set_idx] + offsets[i]
+            ax.text(
+                x_pos,
+                label_y,
+                txt,
+                ha="center",
+                va="bottom",
+                fontsize=label_fs,
+                clip_on=True,
+                bbox=label_bbox,
+            )
+
+    y_hi_auto = ax.get_ylim()[1]
+    #ax.set_ylim(0.0, max(y_hi_auto, max_top * 1.06))
+    ax.set_ylim(0, 37)
+
     ax.set_xticks(x)
-    ax.set_xticklabels([_format_set_label(s) for s in valid_sets], fontsize=11)
-    ax.set_ylabel(mcfg["ylabel"], fontsize=12)
-    ax.set_xlabel("Set Name", fontsize=12)
+    ax.set_xticklabels([_format_set_label(s) for s in valid_sets], fontsize=16)
+    ax.set_ylabel(mcfg["ylabel"], fontsize=16)
+    #ax.set_xlabel("Set Name", fontsize=16)
+    ax.tick_params(axis="y", labelsize=args.ytick_fontsize)
     ax.grid(axis="y", alpha=0.3)
     for spine in ax.spines.values():
         spine.set_visible(False)
 
+    n_legend = len(MODALITY_ORDER)
     ax.legend(
         loc="upper center",
-        bbox_to_anchor=(0.5, 1.23),
-        ncol=3,
+        bbox_to_anchor=(0.5, 1.18),
+        ncol=n_legend,
         frameon=False,
-        fontsize=10,
+        fontsize=16,
     )
 
-    plt.tight_layout(rect=(0, 0, 1, 0.92))
+    plt.tight_layout(rect=(0, 0, 1, 0.88))
 
     if args.output:
         out_path = args.output

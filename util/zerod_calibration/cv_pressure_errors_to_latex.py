@@ -20,7 +20,7 @@ MODALITY_ORDER = [
     ("BloodVesselJunction_NN", r"Learned Junction Parameters"),
     ("NN_vessel", r"Learned Vessel Parameters"),
     ("BloodVesselJunction_NN_plus_Vessel_NN", r"Learned Junction and Vessel Parameters"),
-    ("BloodVesselJunction", "Optimal Parameters"),
+    ("BloodVesselJunction", r"\shortstack{Optimal\\Fit to 3D}"),
 ]
 
 PREFIX_REL = "PressureMaxRelError_"

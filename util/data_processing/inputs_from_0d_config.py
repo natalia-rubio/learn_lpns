@@ -8,6 +8,11 @@ parameters written by `util.zerod_calibration.geometric_params`.
 Each row in the returned array corresponds to one junction instance
 (after bifurcation_splitting, i.e. each with exactly two outlets).
 Each column is a scalar geometric feature derived from `geometric_params`.
+
+Includes **generation**: count of junctions with exactly two outlets (two-outlet
+bifurcations) along the path from the root inlet branch to the junction's inlet
+vessel (0 at the inlet branch). Vessel-level features use the same count to the
+vessel itself (including the bifurcation that feeds that vessel).
 """
 
 import json
@@ -99,6 +104,94 @@ COMPUTED_VESSEL_FEATURES: List[Tuple[str, Any]] = [
 ]
 
 
+def _find_root_vessel_id_for_generation(cfg: Dict[str, Any]):
+    """
+    Vessel_id of the tree root (inlet branch). Matches visualize_centerline_branches
+    logic: prefer vessel with inlet boundary condition, then name containing branch0,
+    else minimum vessel_id.
+    """
+    vessels = cfg.get("vessels", [])
+    found = None
+    for v in vessels:
+        vid = v.get("vessel_id")
+        if vid is None:
+            continue
+        bc = v.get("boundary_conditions")
+        if isinstance(bc, dict) and "inlet" in bc:
+            found = vid
+            break
+    if found is not None:
+        return found
+    for v in vessels:
+        name = v.get("vessel_name", "") or ""
+        if "branch0" in name:
+            vid = v.get("vessel_id")
+            if vid is not None:
+                return vid
+    ids = [v.get("vessel_id") for v in vessels if v.get("vessel_id") is not None]
+    return min(ids) if ids else None
+
+
+def compute_bifurcation_generation_by_vessel(cfg: Dict[str, Any]) -> Dict[Any, float]:
+    """
+    Map vessel_id -> generation: number of 2-outlet junctions along the path from
+    the root inlet vessel to this vessel. The root vessel has generation 0.
+
+    Each time the path crosses a junction with exactly two elements in
+    ``outlet_vessels``, generation increments by one for all downstream outlets.
+
+    Vessels not reachable from the root are omitted from the map.
+    """
+    from collections import deque
+
+    root = _find_root_vessel_id_for_generation(cfg)
+    if root is None:
+        return {}
+    try:
+        root = int(root)
+    except (TypeError, ValueError):
+        pass
+    junctions = cfg.get("junctions", []) or []
+    gen: Dict[Any, float] = {root: 0.0}
+    q = deque([root])
+    while q:
+        vid = q.popleft()
+        g_here = gen[vid]
+        for j in junctions:
+            inlets_raw = j.get("inlet_vessels") or []
+            inlets = []
+            for iv in inlets_raw:
+                try:
+                    inlets.append(int(iv))
+                except (TypeError, ValueError):
+                    inlets.append(iv)
+            if vid not in inlets:
+                continue
+            outs = j.get("outlet_vessels") or []
+            inc = 1.0 if len(outs) == 2 else 0.0
+            g_next = g_here + inc
+            for oid in outs:
+                if oid is None:
+                    continue
+                try:
+                    oid_int = int(oid)
+                except (TypeError, ValueError):
+                    oid_int = oid
+                if oid_int not in gen:
+                    gen[oid_int] = float(g_next)
+                    q.append(oid_int)
+                else:
+                    gen[oid_int] = min(gen[oid_int], float(g_next))
+    # Normalize keys to int where possible (JSON vessel IDs are sometimes str)
+    out: Dict[Any, float] = {}
+    for k, v in gen.items():
+        try:
+            out[int(k)] = float(v)
+        except (TypeError, ValueError):
+            out[k] = float(v)
+    return out
+
+
 def load_junction_geometric_features(
     config_path: str,
     require_two_outlets: bool = True,
@@ -128,6 +221,8 @@ def load_junction_geometric_features(
     """
     with open(config_path, "r") as f:
         cfg = json.load(f)
+
+    gen_by_vessel = compute_bifurcation_generation_by_vessel(cfg)
 
     junctions = cfg.get("junctions", [])
     if not isinstance(junctions, list):
@@ -163,6 +258,16 @@ def load_junction_geometric_features(
             continue
         if verbose:
             print(f"Processing junction {j_name}: {outlet_vessels}")
+
+        inlet_ids_list = j.get("inlet_vessels", []) or []
+        inlet_vid0 = inlet_ids_list[0] if inlet_ids_list else None
+        inlet_key = inlet_vid0
+        if inlet_vid0 is not None:
+            try:
+                inlet_key = int(inlet_vid0)
+            except (TypeError, ValueError):
+                inlet_key = inlet_vid0
+        generation_val = float(gen_by_vessel[inlet_key]) if inlet_key in gen_by_vessel else float("nan")
 
         # Build authoritative outlet_name -> vessel_id mapping for this junction
         # using the junction's outlet_vessels list and the vessels array
@@ -281,6 +386,7 @@ def load_junction_geometric_features(
                 print(f"Adding inlet max inscribed radius: {inlet_max_r}")
             feat_row_0_first.append(_to_float(inlet_max_r))
             feat_row_0_first.extend(_to_float(c) for c in inlet_tangent)
+            feat_row_0_first.append(generation_val if generation_val == generation_val else 0.0)
             feat_row_0_first.extend(get_outlet_features(outlet0_name))
             feat_row_0_first.extend(get_outlet_features(outlet1_name))
             rows.append(feat_row_0_first)
@@ -295,6 +401,7 @@ def load_junction_geometric_features(
             feat_row_1_first: List[float] = [outlet1_vid]
             feat_row_1_first.append(_to_float(inlet_max_r))
             feat_row_1_first.extend(_to_float(c) for c in inlet_tangent)
+            feat_row_1_first.append(generation_val if generation_val == generation_val else 0.0)
             feat_row_1_first.extend(get_outlet_features(outlet1_name))
             feat_row_1_first.extend(get_outlet_features(outlet0_name))
             rows.append(feat_row_1_first)
@@ -336,6 +443,7 @@ def load_junction_geometric_features(
         "inlet_tangent_x",
         "inlet_tangent_y",
         "inlet_tangent_z",
+        "generation",
     ]
     for prefix in ("outlet0", "outlet1"):
         for suffix in _all_outlet_suffixes:
@@ -534,16 +642,19 @@ def load_vessel_geometric_features(
     with open(config_path, "r") as f:
         cfg = json.load(f)
 
+    gen_by_vessel = compute_bifurcation_generation_by_vessel(cfg)
+
     vessels = cfg.get("vessels", [])
     if not isinstance(vessels, list):
         raise ValueError("Expected 'vessels' to be a list in config.")
 
     # Feature column names (order must match row construction below)
-    # vessel_id, is_inlet, base geometric params + all COMPUTED_VESSEL_FEATURES + zero_d_element_values from config
+    # vessel_id, is_inlet, generation, base geometric params + all COMPUTED_VESSEL_FEATURES + zero_d_element_values from config
     _computed_vessel_suffixes = [name for name, _ in COMPUTED_VESSEL_FEATURES]
     feature_names = [
         "vessel_id",
         "is_inlet",
+        "generation",
         "vessel_length",
         "inlet_area",
         "outlet_area",
@@ -578,6 +689,13 @@ def load_vessel_geometric_features(
         if vessel_id is None:
             continue
         is_inlet = 1.0 if "branch0" in vessel_name else 0.0
+        try:
+            vk = int(vessel_id)
+        except (TypeError, ValueError):
+            vk = vessel_id
+        gnum = float(gen_by_vessel[vk]) if vk in gen_by_vessel else float("nan")
+        if gnum != gnum:
+            gnum = 0.0
         vessel_length = float(v.get("vessel_length", 0.0) or 0.0)
         gp = v.get("geometric_params") or {}
         inlet_area = float(gp.get("inlet_area", 0.0) or 0.0)
@@ -619,6 +737,7 @@ def load_vessel_geometric_features(
         row = [
             float(vessel_id),
             is_inlet,
+            gnum,
             vessel_length,
             inlet_area,
             outlet_area,
@@ -689,6 +808,7 @@ def load_vessel_targets_from_config(
 
 __all__ = [
     "COMPUTED_VESSEL_FEATURES",
+    "compute_bifurcation_generation_by_vessel",
     "load_junction_geometric_features",
     "load_vessel_geometric_features",
     "load_vessel_targets_from_config",
