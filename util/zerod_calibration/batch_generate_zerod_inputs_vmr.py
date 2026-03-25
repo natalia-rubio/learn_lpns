@@ -319,8 +319,8 @@ Examples:
     parser.add_argument('--geometries', nargs='+', default=None,
                        help='Specific geometry names to process (default: all)')
     parser.add_argument('--junction-types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
-                       default='NORMAL_JUNCTION,BloodVesselJunction',
-                       help='Comma-separated junction types to process (default: NORMAL_JUNCTION,BloodVesselJunction)')
+                       default='BloodVesselJunction',
+                       help='Comma-separated junction types to process (default: BloodVesselJunction only)')
     parser.add_argument('--zoom-start', type=int, default=None,
                        help='Start index for zoom window (default: 599)')
     parser.add_argument('--zoom-end', type=int, default=None,

@@ -9,6 +9,7 @@ Usage:
   python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults --geometry bifurcations_EL
   python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults VMR_abdo VMR_pulmo_healthy
   python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults --configs base stenosis_off --output configs_comparison.pdf
+  python -m util.visualizations.cv_max_pct_error_by_config_barchart --bar-thickness-scale 1.3
 
 Set DEFAULT_SET_NAMES / DEFAULT_RUN_CONFIGS below to avoid repeating long CLI lists.
 """
@@ -41,21 +42,22 @@ CONFIG_DISPLAY_NAME = {
     ],
     "symmetric_gen_loss": [
         r"$R_{\mathrm{quad}}$ with calibrator penalty,",
-        "symmetric loss, generation-weighted NN loss,",
+        "symmetric loss, Proximity-weighted NN loss,",
         "entrance-length adjustment",
     ],
     "symmetric_penalty_off_gen_loss": [
-        r"$R_{\mathrm{quad}}$ without calibrator penalty,",
-        "symmetric loss, generation-weighted NN loss,",
-        "entrance-length adjustment",
+        r"$R_{\mathrm{quad}}$ (RRI),",
+        "Proximity-weighted NN loss,",
+        "Entrance-length adjustment",
     ],
     #"symmetric": ["No stenosis coefficient, symmetric loss"],
-    "stenosis_off_symmetric": [r"No $R_{\mathrm{quad}}$,", "standard loss,", "entrance-length adjustment"],
-    "stenosis_off_symmetric_gen_loss:bifurcations": [r"No $R_{\mathrm{quad}}$,", "skewed loss,", "no entrance-length adjustment"],
-    "stenosis_off_symmetric_gen_loss": [r"No $R_{\mathrm{quad}}$,", "skewed loss,", "entrance-length adjustment"],
-    "penalty_off_symmetric_gen_loss": [r"$R_{\mathrm{quad}}$,", "skewed loss,", "entrance-length adjustment"],
+    "stenosis_off_symmetric": [r"No $R_{\mathrm{quad}}$ (RI),", "Standard loss,", "Entrance-length adjustment"],
+    "stenosis_off_symmetric:bifurcations": [r"No $R_{\mathrm{quad}}$ (RI),", "Standard loss,", "No entrance-length adjustment"],
+    "stenosis_off_symmetric_gen_loss:bifurcations": [r"No $R_{\mathrm{quad}}$ (RI),", "Proximity-weighted loss,", "No entrance-length adjustment"],
+    "stenosis_off_symmetric_gen_loss": [r"No $R_{\mathrm{quad}}$ (RI),", "Proximity-weighted loss,", "Entrance-length adjustment"],
+    "penalty_off_symmetric_gen_loss": [r"$R_{\mathrm{quad}}$ (RRI),", "Proximity-weighted loss,", "Entrance-length adjustment"],
     # Config with different geometry variant: "config_suffix:variant" -> data from that config folder, that variant's CSV
-    "stenosis_off:bifurcations": [r"No $R_{\mathrm{quad}}$,", "asymmetric loss,", "no entrance-length adjustment"],
+    "stenosis_off:bifurcations": [r"No $R_{\mathrm{quad}}$ (RI),", "Proximity-weighted loss,", "No entrance-length adjustment"],
     "normalized": "Normalized",
     "normalized_clip": "Normalized + clip",
 }
@@ -64,7 +66,7 @@ CONFIG_DISPLAY_NAME = {
 # on the command line. None = require at least one set name as a positional argument.
 #DEFAULT_SET_NAMES = None
 # Example:
-DEFAULT_SET_NAMES = ["VMR_rigid_aorta_adults_all", "VMR_abdo", "VMR_pulmo_healthy"]
+DEFAULT_SET_NAMES = ["VMR_rigid_aorta_adults_all", "VMR_abdo", "VMR_pulmo_healthy", "VMR_all"]
 
 # Optional: run config subfolders to plot when --configs is not passed on the command line.
 # None = auto-discover every config under results/cross_validation/<first_set_name>/ that has the geometry CSV.
@@ -78,12 +80,32 @@ DEFAULT_RUN_CONFIGS = [
     "stenosis_off_symmetric_gen_loss:bifurcations",
 ]
 
-# Optional legend / axis labels for set names (defaults to the raw set_name string).
+# Legend labels for each set_name (internal folder name -> plot text). Use "\n" for a line break.
+# Names not listed fall back to _format_set_label (VMR_… split or raw set_name).
 SET_DISPLAY_NAME = {
-    # "VMR_rigid_aorta_adults": "Aorta (rigid)",
-    # "VMR_abdo": "Abdomen",
-    # "VMR_pulmo_healthy": "Pulmonary (healthy)",
+    "VMR_rigid_aorta_adults_all": "Aortic",
+    "VMR_abdo": "Aortofemoral ",
+    "VMR_pulmo": "Pulmonary",
+    "VMR_pulmo_healthy": "Pulmonary",
+    "VMR_all": "All",
+    "VMR_all_balanced": "Mixed",
 }
+
+
+def _format_set_label(set_name):
+    """Same rules as util.visualizations.cv_cross_set_summary_barchart."""
+    if set_name in SET_DISPLAY_NAME:
+        return SET_DISPLAY_NAME[set_name]
+    if set_name.startswith("VMR_"):
+        return set_name.replace("VMR_", "VMR\n", 1)
+    return set_name
+
+
+# Bar colors per CV set when multiple sets are plotted (cycles if more than four).
+SET_SERIES_COLORS = ["hotpink", "turquoise", "darkorange", "silver"]
+
+# Matplotlib text size for this figure (ticks, labels, legend, bar-end annotations).
+PLOT_FONT_SIZE = 18
 
 
 def _display_name_to_label(display_spec):
@@ -221,6 +243,13 @@ def main():
         metavar="CONFIG=Label",
         help="Override display names, e.g. base='Default' stenosis_off='No stenosis'. Use __ for line break (e.g. a='Line1__Line2').",
     )
+    parser.add_argument(
+        "--bar-thickness-scale",
+        type=float,
+        default=3.0,
+        metavar="S",
+        help="Multiply bar thickness (default: 1). E.g. 1.3 for thicker bars. Very large values can make grouped bars overlap between rows.",
+    )
     args = parser.parse_args()
 
     data_root = args.data_root.rstrip(os.sep)
@@ -278,9 +307,6 @@ def main():
         raw = display_name.get(display_key, display_key)
         return _display_name_to_label(raw)
 
-    def _set_legend_label(sn):
-        return SET_DISPLAY_NAME.get(sn, sn)
-
     # Load mean, std, n per (config, set); values[ci, si], ci_half_widths[ci, si]
     n_sets = len(set_names)
     rows = []
@@ -335,22 +361,51 @@ def main():
     # LaTeX formatting for text
     plt.rcParams["text.usetex"] = True
     plt.rcParams["font.family"] = "serif"
+    plt.rcParams.update(
+        {
+            "font.size": PLOT_FONT_SIZE,
+            "axes.titlesize": PLOT_FONT_SIZE,
+            "axes.labelsize": PLOT_FONT_SIZE,
+            "legend.fontsize": PLOT_FONT_SIZE,
+            "xtick.labelsize": PLOT_FONT_SIZE,
+            "ytick.labelsize": PLOT_FONT_SIZE,
+        }
+    )
 
     n_configs = len(config_labels)
-    # Horizontal bar chart: y = config labels, x = max percent error (NN junction+vessel); grouped by set
-    y_centers = np.arange(n_configs, dtype=float)
-    if n_sets == 1:
-        bar_height = 0.65
-        offsets = np.array([0.0])
-        colors = ["#b8b8b8"]
-    else:
-        bar_height = min(0.65 / max(n_sets, 1), 0.22)
-        offsets = (np.arange(n_sets) - (n_sets - 1) / 2.0) * (bar_height * 1.08)
-        cmap = plt.get_cmap("tab10")
-        colors = [cmap(i % 10) for i in range(n_sets)]
+    # Horizontal bar chart: y = config labels, x = max percent error (NN junction+vessel); grouped by set.
+    # bar_height: nominal step between bar centers within a group; patch height = bar_height * BAR_HEIGHT_INSET.
+    th = max(0.05, float(args.bar_thickness_scale))
+    BAR_HEIGHT_SINGLE_BASE = 0.65
+    BAR_HEIGHT_MULTI_CAP = 0.22
+    BAR_GAP_MULT = 1.08  # spacing between bar centers within a config group
+    BAR_HEIGHT_INSET = 0.92
+    ROW_GROUP_GAP = 0.08  # extra y-units between config groups (scaled with bar_height)
 
-    fig_w = 8.5 if n_sets > 1 else 7.0
-    fig, ax = plt.subplots(figsize=(fig_w, max(4, n_configs * 0.55)))
+    if n_sets == 1:
+        bar_height = BAR_HEIGHT_SINGLE_BASE * th
+        offsets = np.array([0.0])
+        colors = ["silver"]
+    else:
+        bar_height = min(BAR_HEIGHT_SINGLE_BASE / max(n_sets, 1), BAR_HEIGHT_MULTI_CAP) * th
+        offsets = (np.arange(n_sets) - (n_sets - 1) / 2.0) * (bar_height * BAR_GAP_MULT)
+        n_palette = len(SET_SERIES_COLORS)
+        colors = [SET_SERIES_COLORS[i % n_palette] for i in range(n_sets)]
+
+    patch_h = bar_height * BAR_HEIGHT_INSET
+    off_min = float(offsets.min())
+    off_max = float(offsets.max())
+    # Vertical span of one config row (all sets): offset spread + drawn bar height
+    group_extent = (off_max - off_min) + patch_h
+    row_pitch = group_extent + max(0.12 * bar_height, ROW_GROUP_GAP * th)
+
+    y_centers = np.arange(n_configs, dtype=float) * row_pitch
+
+    # Figure height scales with total y span in data coordinates
+    y_span = (n_configs - 1) * row_pitch + group_extent if n_configs else group_extent
+    fig_w =12 if n_sets > 1 else 7.0
+    fig_h = max(4.0, 0.5 * y_span + 2.5)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     # (patch, value, ci half-width) for fade overlay when xmax is set
     bar_value_ci = []
     for s in range(n_sets):
@@ -360,10 +415,10 @@ def main():
         valid = ~np.isnan(v_col)
         if not np.any(valid):
             continue
-        bh = ax.barh(
+        bars = ax.barh(
             y[valid],
             v_col[valid],
-            height=bar_height * 0.92,
+            height=patch_h,
             align="center",
             color=colors[s],
             edgecolor="black",
@@ -371,24 +426,34 @@ def main():
             xerr=ci_col[valid],
             capsize=2.5 if n_sets == 1 else 2.0,
             error_kw={"color": "black", "linewidth": 1},
-            label=_set_legend_label(set_names[s]),
+            label=_format_set_label(set_names[s]),
         )
-        for rect, vv, cih in zip(bh, v_col[valid], ci_col[valid]):
+        for rect, vv, cih in zip(bars, v_col[valid], ci_col[valid]):
             ci_plot = 0.0 if _isnan(cih) else cih
             bar_value_ci.append((rect, vv, ci_plot))
 
     ax.set_yticks(y_centers)
-    ax.set_yticklabels(config_labels, fontsize=11)
-    ax.set_xlabel(r"Max. Inlet Pressure Error over Cardiac Cycle (\%)", fontsize=12)
+    ax.set_yticklabels(config_labels, fontsize=PLOT_FONT_SIZE)
+    # Y limits: include full bar geometry so thickened bars do not overlap between groups
+    y_mins = [c * row_pitch + off_min - patch_h / 2.0 for c in range(n_configs)]
+    y_maxs = [c * row_pitch + off_max + patch_h / 2.0 for c in range(n_configs)]
+    y_lim_lo = min(y_mins) - 0.15 * row_pitch
+    y_lim_hi = max(y_maxs) + 0.15 * row_pitch
+    ax.set_ylim(y_lim_lo, y_lim_hi)
+
+    ax.set_xlabel(r"Max. Inlet Pressure Error over Cardiac Cycle (MPE) (\%)", fontsize=PLOT_FONT_SIZE)
     x_max = args.xmax
     ax.set_xlim(0, x_max if x_max is not None else None)
-    ax.set_title(r"Max. Inlet Pressure Error over Cardiac Cycle (\%) by Pipeline Configuration", fontsize=12)
+    # ax.set_title(
+    #     r"MPE by Pipeline Configuration",
+    #     fontsize=PLOT_FONT_SIZE,
+    # )
     ax.invert_yaxis()  # smallest (best) at top
     ax.grid(axis="x", alpha=0.3)
     for spine in ax.spines.values():
         spine.set_visible(False)
     if n_sets > 1:
-        ax.legend(loc="lower right", fontsize=9, framealpha=0.95)
+        ax.legend(loc="upper right", fontsize=PLOT_FONT_SIZE, framealpha=0)
 
     # Fade out clipped bars on the right when xmax is set (white overlay, alpha 0 -> 1 left to right)
     fade_n = 40
@@ -419,7 +484,6 @@ def main():
     label_offset = 0.3
     cap_label_offset = 0.8
     clip_labels = x_max is None
-    ann_fs = 12 if n_sets == 1 else 8
     for s in range(n_sets):
         y = y_centers + offsets[s]
         for i in range(n_configs):
@@ -434,8 +498,13 @@ def main():
             ci_show = 0.0 if _isnan(ci) else ci
             label_text = rf"{val:.1f}\% $\pm$ {ci_show:.1f}\%"
             ax.text(
-                x_text, y[i], label_text,
-                ha=ha, va="center", fontsize=ann_fs, clip_on=clip_labels,
+                x_text,
+                y[i],
+                label_text,
+                ha=ha,
+                va="center",
+                fontsize=PLOT_FONT_SIZE,
+                clip_on=clip_labels,
             )
 
     plt.tight_layout()

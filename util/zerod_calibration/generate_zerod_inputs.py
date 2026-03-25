@@ -150,8 +150,8 @@ def main():
     parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., tree_000)')
 
     parser.add_argument('--junction-types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
-                       default='BloodVesselJunction,NORMAL_JUNCTION',
-                       help='Comma-separated junction types for calibration (default: BloodVesselJunction,NORMAL_JUNCTION)')
+                       default='BloodVesselJunction',
+                       help='Comma-separated junction types for calibration (default: BloodVesselJunction only)')
     parser.add_argument('--zoom-start', type=int, default=None,
                        help='Start index for zoom window (shaded region in plots). Default: 599')
     parser.add_argument('--zoom-end', type=int, default=None,
@@ -375,6 +375,18 @@ def main():
             if not check_and_track_file(variant_geometric_input, f"geometric params extraction for {geo_variant_name}"):
                 extract_and_add_geometric_params(centerline_path, variant_geometric_input, variant_geometric_input)
                 print(f"  Geometric parameters extracted and added to {variant_geometric_input}")
+                # Match bifurcations_EL: multi-outlet junctions as BloodVesselJunction with junction_values
+                # from geometric_params (non-EL bifurcations skip EL adjustment, so convert here).
+                if geo_variant_name == 'bifurcations':
+                    with open(variant_geometric_input, 'r') as f:
+                        bif_cfg = json.load(f)
+                    convert_el_normal_junctions_to_blood_vessel_junction(bif_cfg)
+                    with open(variant_geometric_input, 'w') as f:
+                        json.dump(bif_cfg, f, indent=4)
+                    print(
+                        f"  Bifurcations: multi-outlet junctions -> BloodVesselJunction "
+                        f"in {variant_geometric_input}"
+                    )
 
     
     # Step 2: Extract observations and create calibration inputs for each junction type
