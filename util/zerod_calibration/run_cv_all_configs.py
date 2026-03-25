@@ -24,12 +24,10 @@ os.chdir(REPO_ROOT)  # ensure cwd is repo root for -m invocations
 # Order is the order of execution; barchart by-config will discover and sort by value.
 # Use --run-config SUFFIX as the single way to specify config.
 DEFAULT_CONFIGS = [
-    ("base", ["--run-config", "base"]),
-    ("stenosis_off", ["--run-config", "stenosis_off"]),
-    ("penalty_off", ["--run-config", "penalty_off"]),
+    ("stenosis_off_symmetric_gen_loss", ["--run-config", "stenosis_off_symmetric_gen_loss"]),
     ("stenosis_off_symmetric", ["--run-config", "stenosis_off_symmetric"]),
-    ("symmetric_penalty_off", ["--run-config", "symmetric_penalty_off"]),
-    ("stenosis_off:bifurcations", ["--run-config", "stenosis_off"]),
+    ("symmetric_penalty_off_gen_loss", ["--run-config", "symmetric_penalty_off_gen_loss"]),
+    ("stenosis_off_symmetric_gen_loss:bifurcations", ["--run-config", "stenosis_off_symmetric_gen_loss:bifurcations"]),
 ]
 
 # Valid for e.g. `--configs penalty_off_gen_loss` but not part of the default batch (extra data + training).
@@ -37,7 +35,31 @@ OPTIONAL_CONFIGS = {
     "penalty_off_gen_loss": ["--run-config", "penalty_off_gen_loss"],
     "symmetric_gen_loss": ["--run-config", "symmetric_gen_loss"],
     "symmetric_penalty_off_gen_loss": ["--run-config", "symmetric_penalty_off_gen_loss"],
+    "base": ["--run-config", "base"],
+    "stenosis_off": ["--run-config", "stenosis_off"],
+    "penalty_off": ["--run-config", "penalty_off"],
 }
+
+
+def _parse_config_entry(entry: str, default_geometry_variant: str):
+    """
+    Parse config entry syntax:
+      - "config_suffix" -> (entry_key, run_config_suffix, geometry_variant_override)
+      - "config_suffix:geometry_variant" -> (entry_key, run_config_suffix, geometry_variant_override)
+    """
+    raw = (entry or "").strip()
+    if not raw:
+        raise ValueError("Empty config entry.")
+    if ":" in raw:
+        run_cfg, geom_var = raw.split(":", 1)
+        run_cfg = run_cfg.strip()
+        geom_var = geom_var.strip()
+        if not run_cfg or not geom_var:
+            raise ValueError(
+                f"Invalid config entry {entry!r}. Use 'config' or 'config:geometry_variant'."
+            )
+        return raw, run_cfg, geom_var
+    return raw, raw, default_geometry_variant
 
 
 def main():
@@ -68,7 +90,7 @@ def main():
         nargs="*",
         default=None,
         metavar="CONFIG",
-        help="Config suffixes to run (default: base stenosis_off penalty_off stenosis_off_symmetric symmetric_penalty_off). Must match DEFAULT_CONFIGS keys.",
+        help="Config entries to run. Use 'config' or 'config:geometry_variant' (e.g. stenosis_off_symmetric_gen_loss:bifurcations).",
     )
     parser.add_argument(
         "--only-barcharts",
@@ -91,54 +113,77 @@ def main():
     geometry_variant = args.geometry_variant
     num_trials = args.num_trials
     config_list = args.configs or [c[0] for c in DEFAULT_CONFIGS]
-    # Build (suffix, cv_flags) for each requested config
+    # Build (entry_key, run_config_suffix, geometry_variant_to_use, cv_flags) for each requested config
     config_map = {**dict(DEFAULT_CONFIGS), **OPTIONAL_CONFIGS}
     configs_with_flags = []
     for c in config_list:
-        if c not in config_map:
-            print(f"Unknown config: {c}. Known: {list(config_map.keys())}", file=sys.stderr)
+        try:
+            entry_key, run_config_suffix, cfg_geometry_variant = _parse_config_entry(
+                c, geometry_variant
+            )
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
             sys.exit(1)
-        configs_with_flags.append((c, config_map[c]))
+        if run_config_suffix not in config_map:
+            print(
+                f"Unknown config: {run_config_suffix}. Known: {list(config_map.keys())}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        configs_with_flags.append(
+            (entry_key, run_config_suffix, cfg_geometry_variant, config_map[run_config_suffix])
+        )
 
     cv_script = os.path.join(REPO_ROOT, "util", "zerod_calibration", "run_cross_validation.py")
     barchart_per_config = os.path.join(REPO_ROOT, "util", "visualizations", "cv_pressure_max_pct_error_barchart.py")
     barchart_by_config = os.path.join(REPO_ROOT, "util", "visualizations", "cv_max_pct_error_by_config_barchart.py")
 
     if not args.only_barcharts:
-        for config_suffix, cv_flags in configs_with_flags:
+        for entry_key, run_config_suffix, cfg_geometry_variant, cv_flags in configs_with_flags:
             print(f"\n{'='*60}")
-            print(f"Running cross-validation: config = {config_suffix}")
+            print(
+                f"Running cross-validation: config = {entry_key} "
+                f"(run-config={run_config_suffix}, geometry={cfg_geometry_variant})"
+            )
             print(f"{'='*60}")
             cmd = [
                 sys.executable, "-m", "util.zerod_calibration.run_cross_validation",
-                set_name, geometry_variant, str(num_trials),
+                set_name, cfg_geometry_variant, str(num_trials),
                 "--data-root", args.data_root,
                 *cv_flags,
             ]
             ret = subprocess.run(cmd, cwd=REPO_ROOT)
             if ret.returncode != 0:
-                print(f"Cross-validation failed for config {config_suffix} (exit {ret.returncode}). Stopping.", file=sys.stderr)
+                print(
+                    f"Cross-validation failed for config {entry_key} "
+                    f"(exit {ret.returncode}). Stopping.",
+                    file=sys.stderr,
+                )
                 sys.exit(ret.returncode)
             if not args.skip_per_config_barchart:
-                print(f"\nRunning per-config barchart for {config_suffix}...")
+                print(f"\nRunning per-config barchart for {entry_key}...")
                 cmd_barchart = [
                     sys.executable, "-m", "util.visualizations.cv_pressure_max_pct_error_barchart",
-                    set_name, geometry_variant,
-                    "--run-config", config_suffix,
+                    set_name, cfg_geometry_variant,
+                    "--run-config", run_config_suffix,
                     "--data-root", "results",
                 ]
                 ret_b = subprocess.run(cmd_barchart, cwd=REPO_ROOT)
                 if ret_b.returncode != 0:
-                    print(f"Warning: per-config barchart failed for {config_suffix} (exit {ret_b.returncode}).", file=sys.stderr)
+                    print(
+                        f"Warning: per-config barchart failed for {entry_key} "
+                        f"(exit {ret_b.returncode}).",
+                        file=sys.stderr,
+                    )
     else:
         # Only barcharts: run per-config barchart for each config that has data
         if not args.skip_per_config_barchart:
-            for config_suffix, _ in configs_with_flags:
-                print(f"\nRunning per-config barchart for {config_suffix}...")
+            for entry_key, run_config_suffix, cfg_geometry_variant, _ in configs_with_flags:
+                print(f"\nRunning per-config barchart for {entry_key}...")
                 cmd_barchart = [
                     sys.executable, "-m", "util.visualizations.cv_pressure_max_pct_error_barchart",
-                    set_name, geometry_variant,
-                    "--run-config", config_suffix,
+                    set_name, cfg_geometry_variant,
+                    "--run-config", run_config_suffix,
                     "--data-root", "results",
                 ]
                 subprocess.run(cmd_barchart, cwd=REPO_ROOT)

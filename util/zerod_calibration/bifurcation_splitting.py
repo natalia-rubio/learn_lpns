@@ -1,3 +1,4 @@
+import re
 import numpy as np
 import copy
 import json
@@ -1204,6 +1205,23 @@ def generate_connector_observations(original_observations, original_geometric_in
     return new_observations
 
 
+def is_bifurcation_split_connector_vessel(vessel_name: str) -> bool:
+    """
+    True for vessels created by split_junctions: ``{inlet_vessel}_connector{N}`` (N integer).
+
+    These are zero- or short-length connectors between cascaded bifurcations; their
+    ``centerline_node_ids`` are the junction inlet GID from splitting and must not be
+    overwritten by entrance-length adjustment.
+
+    EL-created connectors use names ending in ``_connectorEL`` and are still adjusted.
+    """
+    if not vessel_name or "connector" not in vessel_name.lower():
+        return False
+    if "connectorEL" in vessel_name:
+        return False
+    return re.match(r".+_connector\d+$", vessel_name) is not None
+
+
 def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_data, verbose=False):
     """
     Adjust junction boundaries to extend a distance EL (entrance length) down each outlet vessel.
@@ -1212,6 +1230,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
     If an outlet vessel is shorter than EL, the full vessel is included in the junction,
     and an artificial connector_vessel is created to connect the junction outlet to the
     next junction or boundary condition.
+
+    Outlet vessels that are bifurcation-split connectors (``..._connector{N}`` from
+    :func:`split_junctions`) are skipped so their ``centerline_node_ids`` stay at the
+    original junction inlet GID assigned during splitting.
     
     Args:
         geometric_input: Dictionary with 0D model structure (vessels, junctions, boundary_conditions)
@@ -1495,7 +1517,15 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 continue
             
             outlet_vessel_name = outlet_vessel.get('vessel_name', '')
-            
+
+            if is_bifurcation_split_connector_vessel(outlet_vessel_name):
+                if verbose:
+                    print(
+                        f"\n    Skipping outlet vessel (bifurcation-split connector, EL not applied): "
+                        f"{outlet_vessel_name}"
+                    )
+                continue
+
             if verbose:
                 print(f"\n    Processing outlet vessel: {outlet_vessel_name}")
             

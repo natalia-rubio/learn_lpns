@@ -35,6 +35,7 @@ SET_NAMES_DEFAULT = [
     "VMR_rigid_aorta_adults_all",
     "VMR_abdo",
     "VMR_pulmo_healthy",
+    "VMR_all"
 ]
 
 # X-axis labels for each set_name (internal folder name -> plot text). Use "\n" for a line break.
@@ -44,7 +45,9 @@ SET_DISPLAY_NAME = {
     #"VMR_rigid_aorta_adults": "Rigid aorta\n(adults)",
     "VMR_abdo": "Aortofemoral ",
     "VMR_pulmo": "Pulmonary",
-    "VMR_pulmo_healthy": "Pulmonary"
+    "VMR_pulmo_healthy": "Pulmonary",
+    "VMR_all": "All",
+    "VMR_all_balanced": "Mixed"
 }
 
 RUN_CONFIG_FALLBACK_ORDER = [
@@ -70,8 +73,8 @@ MODALITY_LABEL = {
     "geometric": "Baseline\n(Poiseuille)",
     "BloodVesselJunction_NN": "Learned\nJunctions",
     "NN_vessel": "Learned\nVessels",
-    "BloodVesselJunction_NN_plus_Vessel_NN": "Learned Junctions\nand Vessels",
-    "BloodVesselJunction": "Optimal\nFit to 3D",
+    "BloodVesselJunction_NN_plus_Vessel_NN": "Learned \n Junctions\nand Vessels",
+    "BloodVesselJunction": "Optimal\n(Fit to 3D)",
 }
 
 METRIC_CONFIG = {
@@ -79,7 +82,7 @@ METRIC_CONFIG = {
         "csv_suffix": "_pressure_max_rel_error.csv",
         "col_prefix": "PressureMaxRelError_",
         "scale": 100.0,
-        "ylabel": r"Max. Inlet Pressure Error over Cardiac Cycle (\%)",
+        "ylabel": r"Max. Inlet Pressure Error over Cardiac Cycle (MPE) (\%)",
         "out_suffix": "pressure_max_rel_error",
     },
     "pressure_max_error": {
@@ -299,7 +302,7 @@ def main():
     width = 0.85 / n_mod
     offsets = np.linspace(-0.425 + width / 2, 0.425 - width / 2, n_mod)
 
-    fig, ax = plt.subplots(figsize=(11, 7))
+    fig, ax = plt.subplots(figsize=(12, 9))
 
     for i, modality in enumerate(MODALITY_ORDER):
         y = [means[s][i] for s in valid_sets]
@@ -358,10 +361,10 @@ def main():
     ax.set_ylim(0, 37)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([_format_set_label(s) for s in valid_sets], fontsize=16)
-    ax.set_ylabel(mcfg["ylabel"], fontsize=16)
+    ax.set_xticklabels([_format_set_label(s) for s in valid_sets], fontsize=18)
+    ax.set_ylabel(mcfg["ylabel"], fontsize=18)
     #ax.set_xlabel("Set Name", fontsize=16)
-    ax.tick_params(axis="y", labelsize=args.ytick_fontsize)
+    ax.tick_params(axis="y", labelsize=18)
     ax.grid(axis="y", alpha=0.3)
     for spine in ax.spines.values():
         spine.set_visible(False)
@@ -372,7 +375,7 @@ def main():
         bbox_to_anchor=(0.5, 1.18),
         ncol=n_legend,
         frameon=False,
-        fontsize=16,
+        fontsize=18,
     )
 
     plt.tight_layout(rect=(0, 0, 1, 0.88))

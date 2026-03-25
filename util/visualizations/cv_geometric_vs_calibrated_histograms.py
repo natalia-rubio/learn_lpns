@@ -44,7 +44,10 @@ except ImportError:
 def _extract_element_values(json_path):
     """
     Extract R_poiseuille and L from a 0D JSON (vessels and junctions).
-    Returns (vessel_R, vessel_L, junction_R, junction_L) as lists.
+    Returns (vessel_R, vessel_L, junction_R, junction_L,
+             vessel_names_R, vessel_names_L, junction_names_R, junction_names_L).
+    Names: vessel_name per sample; junctions use junction_name, with outlet key
+    (junction_name:outlet_key) when values are per-outlet lists aligned with outlet_vessel_ids.
     """
     with open(json_path, "r") as f:
         data = json.load(f)
@@ -52,27 +55,58 @@ def _extract_element_values(json_path):
     junctions = data.get("junctions", [])
 
     vessel_R, vessel_L = [], []
+    vessel_names_R, vessel_names_L = [], []
     for v in vessels:
         z = v.get("zero_d_element_values") or {}
+        vname = (v.get("vessel_name") or "").strip() or str(v.get("vessel_id", "?"))
         if "R_poiseuille" in z:
             vessel_R.append(float(z["R_poiseuille"]))
+            vessel_names_R.append(vname)
         if "L" in z:
             vessel_L.append(float(z["L"]))
+            vessel_names_L.append(vname)
 
     junction_R, junction_L = [], []
+    junction_names_R, junction_names_L = [], []
     for j in junctions:
         jv = j.get("junction_values") or {}
-        for key, container in [("R_poiseuille", junction_R), ("L", junction_L)]:
+        jname = (j.get("junction_name") or "").strip() or str(j.get("junction_id", "?"))
+        outlet_ids = (j.get("centerline_node_ids") or {}).get("outlet_vessel_ids")
+        if isinstance(outlet_ids, dict):
+            outlet_keys = list(outlet_ids.keys())
+        else:
+            outlet_keys = []
+
+        for key, container, name_container in [
+            ("R_poiseuille", junction_R, junction_names_R),
+            ("L", junction_L, junction_names_L),
+        ]:
             if key not in jv:
                 continue
             vals = jv[key]
             if isinstance(vals, list):
-                for x in vals:
-                    container.append(float(x))
+                if outlet_keys and len(outlet_keys) == len(vals):
+                    for ok, x in zip(outlet_keys, vals):
+                        container.append(float(x))
+                        name_container.append(f"{jname}:{ok}")
+                else:
+                    for i, x in enumerate(vals):
+                        container.append(float(x))
+                        name_container.append(f"{jname}[{i}]")
             else:
                 container.append(float(vals))
+                name_container.append(jname)
 
-    return vessel_R, vessel_L, junction_R, junction_L
+    return (
+        vessel_R,
+        vessel_L,
+        junction_R,
+        junction_L,
+        vessel_names_R,
+        vessel_names_L,
+        junction_names_R,
+        junction_names_L,
+    )
 
 
 def _get_validation_geometries(set_name, run_config, geometry_variant, results_root):
@@ -109,7 +143,9 @@ def _collect_differences(set_name, run_config, geometry_variant, data_root, resu
     R_poiseuille and L (vessels and junctions).
     Excludes elements where |calibrated| < min_abs_cal (so plots and reports use the same subset).
     Returns dict with keys junction_R, junction_L, vessel_R, vessel_L; each value is
-    a dict {"geo_minus_cal": [...], "nn_minus_cal": [...], "geo_pct_err": [...], "nn_pct_err": [...], "cal_values": [...]}.
+    a dict {"geo_minus_cal": [...], "nn_minus_cal": [...], "geo_pct_err": [...], "nn_pct_err": [...],
+    "cal_values": [...], "geometry": [...], "element_name": [...]}
+    (geometry = validation geometry id; element_name = vessel_name or junction outlet label from cal JSON).
     Percent error = (value - calibrated) / |calibrated|; stored as fraction (multiply by 100 for %).
     """
     prefix = "" if geometry_variant == "original" else f"{geometry_variant}_"
@@ -126,7 +162,15 @@ def _collect_differences(set_name, run_config, geometry_variant, data_root, resu
         set_name, run_config, geometry_variant, results_root
     )
     out = {
-        k: {"geo_minus_cal": [], "nn_minus_cal": [], "geo_pct_err": [], "nn_pct_err": [], "cal_values": []}
+        k: {
+            "geo_minus_cal": [],
+            "nn_minus_cal": [],
+            "geo_pct_err": [],
+            "nn_pct_err": [],
+            "cal_values": [],
+            "geometry": [],
+            "element_name": [],
+        }
         for k in ("junction_R", "junction_L", "vessel_R", "vessel_L")
     }
 
@@ -137,16 +181,25 @@ def _collect_differences(set_name, run_config, geometry_variant, data_root, resu
         cal_path = os.path.join(base, cal_name)
         if not all(os.path.exists(p) for p in (geo_path, nn_path, cal_path)):
             continue
-        vR_g, vL_g, jR_g, jL_g = _extract_element_values(geo_path)
-        vR_n, vL_n, jR_n, jL_n = _extract_element_values(nn_path)
-        vR_c, vL_c, jR_c, jL_c = _extract_element_values(cal_path)
-        for g_list, n_list, c_list, key in [
-            (jR_g, jR_n, jR_c, "junction_R"),
-            (jL_g, jL_n, jL_c, "junction_L"),
-            (vR_g, vR_n, vR_c, "vessel_R"),
-            (vL_g, vL_n, vL_c, "vessel_L"),
+        vR_g, vL_g, jR_g, jL_g, _, _, _, _ = _extract_element_values(geo_path)
+        vR_n, vL_n, jR_n, jL_n, _, _, _, _ = _extract_element_values(nn_path)
+        (
+            vR_c,
+            vL_c,
+            jR_c,
+            jL_c,
+            vnR_c,
+            vnL_c,
+            jnR_c,
+            jnL_c,
+        ) = _extract_element_values(cal_path)
+        for g_list, n_list, c_list, names_c, key in [
+            (jR_g, jR_n, jR_c, jnR_c, "junction_R"),
+            (jL_g, jL_n, jL_c, jnL_c, "junction_L"),
+            (vR_g, vR_n, vR_c, vnR_c, "vessel_R"),
+            (vL_g, vL_n, vL_c, vnL_c, "vessel_L"),
         ]:
-            n = min(len(g_list), len(n_list), len(c_list))
+            n = min(len(g_list), len(n_list), len(c_list), len(names_c))
             for i in range(n):
                 c = c_list[i]
                 if c == 0 or abs(c) < min_abs_cal:
@@ -157,6 +210,8 @@ def _collect_differences(set_name, run_config, geometry_variant, data_root, resu
                 out[key]["geo_pct_err"].append((g_list[i] - c) / abs_c)
                 out[key]["nn_pct_err"].append((n_list[i] - c) / abs_c)
                 out[key]["cal_values"].append(c)
+                out[key]["geometry"].append(geo)
+                out[key]["element_name"].append(names_c[i])
     return out
 
 
@@ -217,6 +272,110 @@ def _report_average_error(diffs, file=None):
         n_nn = len(nn_err)
         print(f"  {param_names[key]:25s}  geometric: {mean_geo:12.4e} (n={n_geo})   NN: {mean_nn:12.4e} (n={n_nn})", file=file)
     print(file=file)
+
+
+def _report_extreme_errors(diffs, file=None, min_abs_cal=5.0):
+    """
+    For each parameter group, print extremes of NN − cal and geometric − cal
+    (largest overprediction, largest underprediction, largest |error|), with validation
+    geometry id and element name (junction outlet or vessel from calibrated JSON).
+    Uses the same |calibrated| ≥ min_abs_cal subset as the histograms.
+    """
+    file = file or sys.stdout
+    param_names = {
+        "junction_R": "Junction R_poiseuille",
+        "junction_L": "Junction L",
+        "vessel_R": "Vessel R_poiseuille",
+        "vessel_L": "Vessel L",
+    }
+    print(
+        "Extreme errors (value − calibrated), with validation geometry "
+        f"(excluding |calibrated| < {min_abs_cal}):",
+        file=file,
+    )
+    print(file=file)
+
+    def _one_tail(label, err_arr, geo_list, cal_arr, elem_list, arg_idx_fn):
+        if err_arr.size == 0:
+            print(f"    {label}: (no data)", file=file)
+            return
+        idx = arg_idx_fn(err_arr)
+        e = float(err_arr[idx])
+        g = geo_list[idx]
+        el = elem_list[idx] if idx < len(elem_list) else "?"
+        c = float(cal_arr[idx]) if cal_arr.size == len(err_arr) else float("nan")
+        print(
+            f"    {label}: {e:+.6e}   geometry={g}   element={el}   cal={c:.6e}",
+            file=file,
+        )
+
+    for key in ("junction_R", "junction_L", "vessel_R", "vessel_L"):
+        nn_err = np.asarray(diffs[key].get("nn_minus_cal", []), dtype=float)
+        geo_err = np.asarray(diffs[key].get("geo_minus_cal", []), dtype=float)
+        cal_vals = np.asarray(diffs[key].get("cal_values", []), dtype=float)
+        geos_raw = diffs[key].get("geometry", [])
+        elems_raw = diffs[key].get("element_name", [])
+
+        n = nn_err.size
+        mask = np.isfinite(nn_err) & np.isfinite(geo_err)
+        if cal_vals.size == n:
+            mask = mask & (np.abs(cal_vals) >= min_abs_cal)
+        nn_err = nn_err[mask]
+        geo_err = geo_err[mask]
+        cal_vals = cal_vals[mask] if cal_vals.size == n else np.array([], dtype=float)
+        idx_keep = np.nonzero(mask)[0]
+        if len(geos_raw) == n:
+            geos = [geos_raw[i] for i in idx_keep]
+        else:
+            geos = ["?"] * int(nn_err.size)
+        if len(elems_raw) == n:
+            elems = [elems_raw[i] for i in idx_keep]
+        else:
+            elems = ["?"] * int(nn_err.size)
+
+        name = param_names[key]
+        print(f"  {name}:", file=file)
+        if nn_err.size == 0:
+            print("    NN: (no data)", file=file)
+        else:
+            cal_m = cal_vals if cal_vals.size == nn_err.size else np.array([], dtype=float)
+            _one_tail(
+                "NN  max (largest overprediction)",
+                nn_err,
+                geos,
+                cal_m,
+                elems,
+                np.argmax,
+            )
+            _one_tail(
+                "NN  min (largest underprediction)",
+                nn_err,
+                geos,
+                cal_m,
+                elems,
+                np.argmin,
+            )
+            idx_abs = int(np.argmax(np.abs(nn_err)))
+            c_abs = float(cal_m[idx_abs]) if cal_m.size == nn_err.size else float("nan")
+            el_abs = elems[idx_abs] if idx_abs < len(elems) else "?"
+            print(
+                f"    NN  max |error|: {float(nn_err[idx_abs]):+.6e}   geometry={geos[idx_abs]}   "
+                f"element={el_abs}   cal={c_abs:.6e}",
+                file=file,
+            )
+        if geo_err.size == 0:
+            print("    Geo (baseline) max |error|: (no data)", file=file)
+        else:
+            cal_g = cal_vals if cal_vals.size == geo_err.size else np.array([], dtype=float)
+            idx_g = int(np.argmax(np.abs(geo_err)))
+            c_g = float(cal_g[idx_g]) if cal_g.size == geo_err.size else float("nan")
+            el_g = elems[idx_g] if idx_g < len(elems) else "?"
+            print(
+                f"    Geo max |error|: {float(geo_err[idx_g]):+.6e}   geometry={geos[idx_g]}   "
+                f"element={el_g}   cal={c_g:.6e}",
+                file=file,
+            )
+        print(file=file)
 
 
 def _format_latex_num(x, is_pct=False):
@@ -297,7 +456,7 @@ def _plot_histograms(diffs, output_path, nbins=25, dpi=150):
     """
     Create 2x2 figure: row0 = junctions (R_poiseuille, L), row1 = vessels (R_poiseuille, L).
     Each subplot has two overlaid histograms: geometric − calibrated (indian red),
-    NN − calibrated (lime green), both with alpha=0.5.
+    NN − calibrated (lime green), both with alpha=0.5. Y-axis is log-scaled (count).
     """
     if not HAS_MPL:
         raise RuntimeError("matplotlib is required")
@@ -343,11 +502,13 @@ def _plot_histograms(diffs, output_path, nbins=25, dpi=150):
             if nn_data.size > 0:
                 ax.hist(nn_data, bins=bins, color=COLOR_NN_CAL, alpha=ALPHA, label="Neural Network", edgecolor="none")
             ax.axvline(0, color="gray", linestyle="--", linewidth=1)
+            ax.set_yscale("log")
+            ax.set_ylim(bottom=0.8)
             #ax.set_title(title)
             #ax.set_xlabel("Error (geometric − cal, NN − cal)")
             #ax.set_ylabel("Count")
     axes[1,0].legend(loc="upper left", fontsize=8)
-    axes[0,0].set_title("$R_{\mathrm{lin}}$ Error (dyne s cm$^{-3}$)")
+    axes[0, 0].set_title(r"$R_{\mathrm{lin}}$ Error (dyne s cm$^{-3}$)")
     axes[0,1].set_title("$L$ Error (dyne s$^2$ cm$^{-3}$)")
     axes[0,0].set_ylabel("Junctions")
     axes[1,0].set_ylabel("Vessels")
@@ -454,6 +615,7 @@ def main():
     )
     _report_average_pct_error(diffs)
     _report_average_error(diffs)
+    _report_extreme_errors(diffs)
     _print_latex_tables(diffs)
 
     if args.output:

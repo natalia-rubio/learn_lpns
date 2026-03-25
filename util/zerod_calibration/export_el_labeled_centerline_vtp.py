@@ -17,9 +17,11 @@ paths.
 Original BranchId and BifurcationId are copied to BranchId_orig and
 BifurcationId_orig before overwriting (skipped if *_orig already exist).
 
-BifurcationId values are the zero-based index of that junction in the JSON
-``junctions`` list. Points on junction paths get that index; branch-only points
-use -1. Unused points remain -1 for both arrays.
+``NORMAL_JUNCTION`` entries are not treated as spatial bifurcation regions (no
+paths, no ``BifurcationId``). Other junction types use sequential
+``BifurcationId`` 0, 1, … in JSON ``junctions`` order among non-``NORMAL_JUNCTION``
+junctions that have a valid inlet. Points on those junction paths get that
+index; branch-only points use -1. Unused points remain -1 for both arrays.
 """
 
 from __future__ import annotations
@@ -218,6 +220,9 @@ def _assign_el_labels(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Returns (branch_id_el, bifurcation_id_el) int32 arrays, length n_points.
+
+    Junctions with ``junction_type == "NORMAL_JUNCTION"`` are skipped for spatial
+    bifurcation labeling (0D pressure node only).
     """
     gid_arr = np.asarray(centerline_arrays["GlobalNodeId"])
     n_points = len(gid_arr)
@@ -232,8 +237,11 @@ def _assign_el_labels(
 
     junction_point_to_jidx: Dict[int, int] = {}
 
-    # --- Junction regions (sequential index j matches junctions list order) ---
-    for j, junc in enumerate(junctions):
+    # --- Junction regions (non-NORMAL only; bif_region_idx sequential among those) ---
+    bif_region_idx = 0
+    for junc in junctions:
+        if junc.get("junction_type") == "NORMAL_JUNCTION":
+            continue
         cn = junc.get("centerline_node_ids") or {}
         inlet_gid = cn.get("inlet")
         if inlet_gid is None:
@@ -252,7 +260,8 @@ def _assign_el_labels(
                 continue
             for pt in path:
                 if pt not in junction_point_to_jidx:
-                    junction_point_to_jidx[pt] = j
+                    junction_point_to_jidx[pt] = bif_region_idx
+        bif_region_idx += 1
 
     junction_indices: Set[int] = set(junction_point_to_jidx.keys())
 
@@ -347,7 +356,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Write centerline VTP with BranchId/BifurcationId from EL geometric_input. "
-            "Junction index j is the index of that junction in the JSON junctions list."
+            "BifurcationId is sequential among non-NORMAL_JUNCTION junctions only."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
