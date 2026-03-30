@@ -510,10 +510,10 @@ Examples:
         print("-" * 70)
         
         # Check if geometry has CORONARY boundary conditions
-        if has_coronary_bc(set_name, geo_name):
-            print(f"  ⊘ Skipping {geo_name} (has CORONARY boundary conditions)")
-            results['skipped'].append(geo_name)
-            continue
+        # if has_coronary_bc(set_name, geo_name):
+        #     print(f"  ⊘ Skipping {geo_name} (has CORONARY boundary conditions)")
+        #     results['skipped'].append(geo_name)
+        #     continue
         
         # Check if geometry already exists
         if args.skip_existing:

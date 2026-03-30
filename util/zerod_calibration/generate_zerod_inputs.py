@@ -472,23 +472,34 @@ def main():
             # Get geo_dir
             geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
 
-            # Determine timestep from 1D solution for BC fitting
-            try:
-                time_step_size = timestep_from_1D(soln_path, geo_dir)
-            except Exception:
-                time_step_size = None
+            # Coronary sets: keep outlet BCs already in geometric input (e.g. from reference 0D);
+            # inlet still comes from 1D via calibration input / update_geometric_input_with_calibration_bc.
+            skip_outlet_bc_fitting = 'coro' in args.set_name.lower()
+
+            time_step_size = None
+            if not skip_outlet_bc_fitting:
+                try:
+                    time_step_size = timestep_from_1D(soln_path, geo_dir)
+                except Exception:
+                    time_step_size = None
             
-            # Fit outlet resistances from 3D solution (skip for VMR cases)
-            if args.set_name != "VMR":
+            # Fit outlet resistances from observations (skip for VMR and coro)
+            if args.set_name != "VMR" and not skip_outlet_bc_fitting:
                 fitted_resistances = fit_outlet_resistances_from_3d(geometric_input_path, observations)
             else:
                 fitted_resistances = None
 
-            # Fit RCR boundary conditions from observations (1D-derived)
             fitted_rcr = {}
-            if time_step_size is not None:
+            if skip_outlet_bc_fitting:
+                print(
+                    "\n  Set name contains 'coro': skipping outlet BC fitting "
+                    "(using values already in geometric input); inlet remains from 1D."
+                )
+            elif time_step_size is not None:
                 try:
-                    fitted_rcr = fit_outlet_rcr_from_observations(geometric_input_path, observations, dt=time_step_size)
+                    fitted_rcr = fit_outlet_rcr_from_observations(
+                        geometric_input_path, observations, dt=time_step_size
+                    )
                 except Exception as e:
                     print(f"  Warning: RCR fitting failed on original geometry: {e}")
             else:

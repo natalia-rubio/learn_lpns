@@ -1,0 +1,30 @@
+## Bundled NN checkpoints
+
+Place trial-0 junction and vessel models under `src/learnedzerod/models/{VMR_*}/stenosis_off_symmetric_gen_loss/`:
+
+- `bifurcations_EL_trial_0/rri_{set_name}_pred_{0,1,2}_model`
+- `bifurcations_EL_vessel_trial_0/rri_{set_name}_vessel_pred_{0,1,2}_model`
+
+If you have a `learn_lpns` checkout with trained weights:
+
+```bash
+python scripts/sync_bundled_models.py --learn-lpns-root /path/to/learn_lpns
+```
+
+## CLI
+
+
+# learnedZeroD (`learnedzerod`)
+
+Pipeline: **Richter-style 0D JSON** + **centerline VTP** → bifurcation splitting → entrance-length adjustment → **junction + vessel neural networks** → `{geo_name}_learned.json` (default output name).
+
+Intermediate files are written under `{output_dir}/tmp/`; the final JSON is copied to `{output_dir}/`.
+
+## Note on the `util` package
+
+This distribution installs a small top-level **`util`** package (`util.neural_network.nn_model`, etc.) so **dill** checkpoints trained in `learn_lpns` unpickle without `ModuleNotFoundError`. Use a dedicated environment if that conflicts with another project.
+
+
+Options: `--geo-name` (default: stem of `--zerod-json`), `--output-filename` (default: `[geo_name]_learned.json`), `--no-keep-tmp` (delete `tmp` after success), `--verbose`.
+
+You need the **svZeroDSolver** binary (same CLI as in `learn_lpns`: `svzerod input.json output.csv`). The pipeline runs it on `bifurcations_geometric_input.json` and `bifurcations_EL_geometric_input.json` to produce `*_geometric_results.csv` for junction flow-split features before the NNs run.
