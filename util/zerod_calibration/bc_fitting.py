@@ -25,7 +25,6 @@ def fit_outlet_rcr_from_observations(geometric_input_path, observations, dt=None
     Returns:
         Dict mapping bc_name -> (Rp, C, Rd, Pd) for fitted outlets.
     """
-    import copy
     from math import isfinite
 
     try:
@@ -186,6 +185,7 @@ def fit_outlet_rcr_from_observations(geometric_input_path, observations, dt=None
         print("  No RCR parameters were fitted.")
 
     return outlet_params
+
 
 def read_zerod_csv(csv_path):
     """
