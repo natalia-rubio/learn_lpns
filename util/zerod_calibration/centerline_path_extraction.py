@@ -364,7 +364,7 @@ def add_centerline_paths_to_config(geometric_input, junction_paths):
     return geometric_input
 
 
-def process_geometric_input(centerline_path, geometric_input_path, output_path=None):
+def process_geometric_input(centerline_path, geometric_input_path, output_path=None, verbose=False):
     """
     Read a geometric_input.json and its centerline VTP, extract per-junction
     centerline paths using BranchIdTmp, and save the augmented config as
@@ -379,6 +379,8 @@ def process_geometric_input(centerline_path, geometric_input_path, output_path=N
     output_path : str or None
         Output path.  If None, replaces the extension with
         '_centerline_input.json' in the same directory.
+    verbose : bool
+        If True, print per-outlet BranchIdTmp / connector / GID path summary (very chatty).
     """
     print(f"Reading centerline from: {centerline_path}")
     centerline_data, _ = read_centerline_vtp(centerline_path)
@@ -387,15 +389,19 @@ def process_geometric_input(centerline_path, geometric_input_path, output_path=N
     with open(geometric_input_path, 'r') as f:
         geometric_input = json.load(f)
 
-    print("Extracting junction centerline paths using BranchIdTmp ...")
+    if verbose:
+        print("Extracting junction centerline paths using BranchIdTmp ...")
     junction_paths = extract_junction_centerline_paths(centerline_data, geometric_input)
 
-    for jname, outlets in junction_paths.items():
-        for vname, info in outlets.items():
-            n_gids = len(info['path_gids'])
-            conn = info['connector_branch_id_tmps']
-            print(f"  {jname} -> {vname}: BranchIdTmp={info['outlet_branch_id_tmp']}, "
-                  f"connectors={conn}, {n_gids} GIDs")
+    if verbose:
+        for jname, outlets in junction_paths.items():
+            for vname, info in outlets.items():
+                n_gids = len(info['path_gids'])
+                conn = info['connector_branch_id_tmps']
+                print(
+                    f"  {jname} -> {vname}: BranchIdTmp={info['outlet_branch_id_tmp']}, "
+                    f"connectors={conn}, {n_gids} GIDs"
+                )
 
     add_centerline_paths_to_config(geometric_input, junction_paths)
 

@@ -5,6 +5,10 @@ import csv
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from util.zerod_calibration.file_io import get_time_period
+from util.zerod_calibration.bifurcation_splitting import (
+    junction_uses_block_connectivity,
+    junction_outlet_count,
+)
 
 HAS_SCIPY_INTERP = False
 def read_zerod_csv(csv_path):
@@ -307,32 +311,33 @@ def plot_junction_pressure_differences(calibration_input_path, geometric_input_p
         if not junc_name:
             continue
         
-        inlet_vessels = junc.get('inlet_vessels', [])
-        outlet_vessels = junc.get('outlet_vessels', [])
-        
-        if not inlet_vessels or not outlet_vessels:
-            if verbose:
-                print(f"  ⚠ Skipping junction {junc_name}: missing inlet or outlet vessels")
-            continue
-        
-        # Get inlet vessel (assuming single inlet for now)
-        inlet_vessel_idx = inlet_vessels[0] if inlet_vessels else None
-        if inlet_vessel_idx is None:
-            continue
-        
-        # Find inlet vessel name
+        inlet_vessels = junc.get('inlet_vessels', []) or []
+        outlet_vessels = junc.get('outlet_vessels', []) or []
+        inlet_blocks = junc.get('inlet_blocks') or []
+        outlet_blocks = junc.get('outlet_blocks') or []
+
         vessels = geo_input.get('vessels', [])
-        if inlet_vessel_idx >= len(vessels):
-            continue
-        
-        inlet_vessel = vessels[inlet_vessel_idx]
-        inlet_vessel_name = inlet_vessel.get('vessel_name', '')
-        
-        if not inlet_vessel_name:
-            continue
-        
-        # Get inlet pressure at junction: "pressure:inlet_vessel_name:junction_name"
-        inlet_key = f"pressure:{inlet_vessel_name}:{junc_name}"
+        if junction_uses_block_connectivity(junc):
+            if not inlet_blocks or not outlet_blocks:
+                if verbose:
+                    print(f"  ⚠ Skipping junction {junc_name}: missing inlet_blocks or outlet_blocks")
+                continue
+            inlet_key_part = inlet_blocks[0]
+        else:
+            if not inlet_vessels or not outlet_vessels:
+                if verbose:
+                    print(f"  ⚠ Skipping junction {junc_name}: missing inlet or outlet vessels")
+                continue
+            inlet_vessel_idx = inlet_vessels[0]
+            if inlet_vessel_idx is None or inlet_vessel_idx >= len(vessels):
+                continue
+            inlet_vessel = vessels[inlet_vessel_idx]
+            inlet_key_part = inlet_vessel.get('vessel_name', '')
+            if not inlet_key_part:
+                continue
+
+        # Get inlet pressure at junction: "pressure:<inlet_block_or_vessel>:junction_name"
+        inlet_key = f"pressure:{inlet_key_part}:{junc_name}"
         if inlet_key not in obs_3d:
             if verbose:
                 print(f"  ⚠ Junction {junc_name}: inlet pressure observation not found ({inlet_key})")
@@ -352,8 +357,8 @@ def plot_junction_pressure_differences(calibration_input_path, geometric_input_p
                 indices = np.linspace(0, len(inlet_pressure) - 1, len(time_array)).astype(int)
                 inlet_pressure = inlet_pressure[indices]
         
-        # Get inlet flow at junction: "flow:inlet_vessel_name:junction_name"
-        inlet_flow_key = f"flow:{inlet_vessel_name}:{junc_name}"
+        # Get inlet flow at junction: "flow:<inlet_block_or_vessel>:junction_name"
+        inlet_flow_key = f"flow:{inlet_key_part}:{junc_name}"
         inlet_flow = None
         if inlet_flow_key in obs_3d:
             inlet_flow = np.array(obs_3d[inlet_flow_key])
@@ -374,17 +379,16 @@ def plot_junction_pressure_differences(calibration_input_path, geometric_input_p
         outlet_pressures = {}
         outlet_vessel_names = []
         
-        for outlet_vessel_idx in outlet_vessels:
-            if outlet_vessel_idx >= len(vessels):
-                continue
-            
-            outlet_vessel = vessels[outlet_vessel_idx]
-            outlet_vessel_name = outlet_vessel.get('vessel_name', '')
-            
+        outlet_labels = list(outlet_blocks) if outlet_blocks else [
+            vessels[i].get('vessel_name', '')
+            for i in outlet_vessels
+            if isinstance(i, int) and i < len(vessels) and vessels[i].get('vessel_name')
+        ]
+        for outlet_vessel_name in outlet_labels:
             if not outlet_vessel_name:
                 continue
-            
-            # Get outlet pressure at junction: "pressure:junction_name:outlet_vessel_name"
+
+            # Get outlet pressure at junction: "pressure:junction_name:<outlet_block_or_vessel>"
             outlet_key = f"pressure:{junc_name}:{outlet_vessel_name}"
             if outlet_key not in obs_3d:
                 if verbose:
@@ -583,21 +587,26 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         jname = j.get('junction_name')
         if not jname or jname not in junctions_to_include:
             continue
-        outlets = j.get('outlet_vessels', [])
-        # outlets are indices into vessels array; create label for each outlet
-        for oi, vidx in enumerate(outlets):
-            try:
-                vidx_int = int(vidx)
-            except Exception:
-                continue
-            if 0 <= vidx_int < len(vessels):
-                out_vname = vessels[vidx_int].get('vessel_name')
-            else:
-                out_vname = None
+        outlets = j.get("outlet_blocks")
+        if outlets:
+            outlet_entries = [(oi, blk) for oi, blk in enumerate(outlets)]
+        else:
+            outlet_entries = []
+            for oi, vidx in enumerate(j.get("outlet_vessels", []) or []):
+                try:
+                    vidx_int = int(vidx)
+                except Exception:
+                    continue
+                if 0 <= vidx_int < len(vessels):
+                    out_vname = vessels[vidx_int].get("vessel_name")
+                else:
+                    out_vname = None
+                outlet_entries.append((oi, out_vname))
+        for oi, out_vname in outlet_entries:
             # Exclude only outlets to non-EL connector vessels (connector0, connector1, etc.)
             if _is_non_el_connector(out_vname):
                 continue
-            # Include outlets to regular vessels or to EL connectors (connectorEL)
+            # Include outlets to regular vessels, EL connectors, or downstream junction blocks
             label = f"{jname}:out{oi}"
             junction_outlet_labels.append(label)
             junction_outlet_map[label] = (jname, oi, out_vname)
@@ -719,6 +728,7 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         # Same color scheme as location comparison plots (plot_location_comparison.py LINE_STYLES)
         color_map = {
             'geometric': 'green',
+            'stenosis_zero': '#c62828',
             'NORMAL_JUNCTION': 'red',
             'BloodVesselJunction': 'orange',
             'BloodVesselJunction_NN': 'dodgerblue',
@@ -727,6 +737,7 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         }
         style_map = {
             'geometric': {"color": "green", "label": "0D Poiseuille"},
+            'stenosis_zero': {"color": "black", "label": "0D (stenosis=0)"},
             'NORMAL_JUNCTION': {"color": "red", "label": "0D $\\Delta P = 0$ Junction (Calibrated)"},
             'BloodVesselJunction': {"color": "orange", "label": "0D RRI Junction (Calibrated)"},
             'BloodVesselJunction_NN': {"color": "dodgerblue", "label": "0D RRI Junction (NN)"},
@@ -746,7 +757,20 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         for mod in modalities:
             if mpatches is not None:
                 style = style_map.get(mod, {"color": "gray", "label": mod})
-                legend_patches.append(mpatches.Patch(color=style["color"], label=style["label"]))
+                if mod == "stenosis_zero":
+                    legend_patches.append(
+                        mpatches.Patch(
+                            facecolor="#c62828",
+                            edgecolor="#ffb6c1",
+                            hatch="////",
+                            linewidth=0.75,
+                            label=style["label"],
+                        )
+                    )
+                else:
+                    legend_patches.append(
+                        mpatches.Patch(color=style["color"], label=style["label"])
+                    )
         # for idx, mod in enumerate(modalities):
         #     col = color_map.get(mod)
         #     if col is None:
@@ -762,7 +786,19 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
                 col = color_map.get(mod, None)
                 if col is None:
                     col = cycle_colors[j % len(cycle_colors)]
-                ax.bar(offsets, vals, width=width, label=mod, color=col)
+                if mod == "stenosis_zero":
+                    ax.bar(
+                        offsets,
+                        vals,
+                        width=width,
+                        label=mod,
+                        facecolor="#c62828",
+                        edgecolor="black",
+                        linewidth=0.75,
+                        hatch="////",
+                    )
+                else:
+                    ax.bar(offsets, vals, width=width, label=mod, color=col)
 
             # set larger font size for y-axis label
             ax.set_ylabel(p_label, fontsize=20)
@@ -796,7 +832,7 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         return None
 
 
-def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, output_csv_path=None, verbose=False, set_name=None, downsample_0d=True, downsample_method='linear', downsample_save_dir=None):
+def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, geometric_input_path=None, zoom_start_idx=None, zoom_end_idx=None, output_csv_path=None, verbose=False, set_name=None, downsample_0d=True, downsample_method='linear', downsample_save_dir=None, artifact_base_dir=None):
     """
     Calculate and print Mean Squared Error (MSE) between 3D observations and 0D solutions.
     Optionally saves results to a CSV file.
@@ -812,6 +848,8 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         output_csv_path: Optional path to save MSE results CSV (default: auto-generate based on calibration_input_path)
         verbose: If True, print detailed comparison table. If False, only print summary.
         set_name: Optional set name (e.g., 'VMR') for set-specific defaults
+        artifact_base_dir: If set, MSE plot directories and default output_csv_path use this
+            instead of dirname(calibration_input_path).
     
     Returns:
         Dictionary mapping modality names to MSE results
@@ -843,6 +881,19 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
         print("  ✗ No 3D observations found in calibration input")
         return {}
     print(f"  Using normalized time grid for downsampling")
+
+    max_3d_length = 0
+    for obs_values_3d in obs_3d.values():
+        if isinstance(obs_values_3d, list):
+            max_3d_length = max(max_3d_length, len(obs_values_3d))
+        elif hasattr(obs_values_3d, "__len__"):
+            max_3d_length = max(max_3d_length, len(obs_values_3d))
+
+    artifact_root = (
+        artifact_base_dir
+        if artifact_base_dir is not None
+        else os.path.dirname(calibration_input_path)
+    )
     
     # Read geometric input to understand vessel/junction structure
 
@@ -853,7 +904,11 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             geo_input = json.load(f)
         vessels = geo_input.get('vessels', [])
         junctions = geo_input.get('junctions', [])
-    
+
+    junction_name_set_mse = frozenset(
+        j.get("junction_name") for j in junctions if j.get("junction_name")
+    )
+
     # Calculate zoom window automatically if not provided (same logic as plot_location_comparison)
     # We'll calculate it based on the first CSV file's time array
     zoom_window_calculated = False
@@ -957,10 +1012,18 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 zoom_end_idx = min(zoom_end_idx, len(times_0d_sorted))
                 
                 if zoom_start_idx >= zoom_end_idx:
-                    # Fallback: use last 20% of indices
-                    zoom_start_idx = int(0.6 * len(times_0d_sorted))
-                    zoom_end_idx = int(0.8 * len(times_0d_sorted))
-                
+                    n_t = len(times_0d_sorted)
+                    if n_t >= 2:
+                        if n_t == 2:
+                            # Two samples: use the second timestep only (index 1) for MSE/plots
+                            zoom_start_idx, zoom_end_idx = 1, 2
+                        else:
+                            zs = int(0.6 * (n_t - 1))
+                            ze = max(zs + 1, min(int(0.8 * (n_t - 1)) + 1, n_t))
+                            zoom_start_idx, zoom_end_idx = zs, ze
+                    else:
+                        zoom_start_idx, zoom_end_idx = 0, max(1, n_t)
+
                 zoom_window_calculated = True
                 print(f"    Auto-calculated zoom window: {zoom_time_start:.4f}s to {zoom_time_end:.4f}s (indices {zoom_start_idx} to {zoom_end_idx})")
             else:
@@ -979,16 +1042,25 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             elif hasattr(obs_values_3d, '__len__'):
                 max_3d_length = max(max_3d_length, len(obs_values_3d))
         
-        # Validate zoom window (ensure it doesn't exceed 3D observation length)
+        # Validate zoom window against both 3D length and 0D time count (end index is exclusive).
         if zoom_start_idx is not None and zoom_end_idx is not None:
-            zoom_start_idx = min(zoom_start_idx, max_3d_length)
-            zoom_end_idx = min(zoom_end_idx, max_3d_length)
-            if zoom_start_idx >= zoom_end_idx:
-                # Fallback: use last 20% of 3D observation length
-                zoom_start_idx = int(0.6 * max_3d_length)
-                zoom_end_idx = int(0.8 * max_3d_length)
-            
-        
+            n_0d = len(times_0d)
+            n_cap = min(max_3d_length, n_0d) if max_3d_length > 0 and n_0d > 0 else max(max_3d_length, n_0d)
+            if n_cap <= 0:
+                zoom_start_idx, zoom_end_idx = 0, 0
+            else:
+                zoom_start_idx = max(0, min(int(zoom_start_idx), n_cap - 1))
+                zoom_end_idx = int(zoom_end_idx)
+                zoom_end_idx = max(zoom_start_idx + 1, min(zoom_end_idx, n_cap))
+                if zoom_start_idx >= zoom_end_idx:
+                    if n_cap >= 2:
+                        if n_cap == 2:
+                            zoom_start_idx, zoom_end_idx = 1, 2
+                        else:
+                            zoom_start_idx, zoom_end_idx = n_cap - 1, n_cap
+                    else:
+                        zoom_start_idx, zoom_end_idx = 0, 1
+
         num_zoom_timesteps = zoom_end_idx - zoom_start_idx
         print(f"    Using zoom window: timesteps {zoom_start_idx} to {zoom_end_idx-1} ({num_zoom_timesteps} timesteps)")
         
@@ -1043,12 +1115,11 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             obs_type = parts[0]  # 'pressure' or 'flow'
             part1 = parts[1]     # e.g., 'INFLOW', 'branch0_seg0', or 'J0'
             part2 = parts[2]     # e.g., 'branch0_seg0' or 'J0'
-            
-            # Filter to only INFLOW locations by default
-            if part1 != 'INFLOW':
-                locations_skipped.append(f"{obs_key} (not INFLOW)")
+
+            if part1 in junction_name_set_mse and part2 in junction_name_set_mse:
+                locations_skipped.append(f"{obs_key} (junction-to-junction; no vessel 0D series)")
                 continue
-            
+
             # Determine vessel name and field (pressure_in/out, flow_in/out)
             vessel_name = None
             field_name = None
@@ -1058,12 +1129,16 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 vessel_name = part2
                 field_name = f"{obs_type}_in"
             # Handle outlet observations at junctions: "pressure:branch0_seg0:J0" or "flow:branch0_seg0:J0"
-            elif part1.startswith('branch') and part2.startswith('J'):
+            elif part1.startswith('branch') and part2 in junction_name_set_mse:
                 vessel_name = part1
                 field_name = f"{obs_type}_out"
             # Handle inlet observations at junctions: "pressure:J0:branch1_seg0" or "flow:J0:branch1_seg0"
-            elif part1.startswith('J') and part2.startswith('branch'):
+            elif part1 in junction_name_set_mse and part2.startswith('branch'):
                 vessel_name = part2
+                field_name = f"{obs_type}_in"
+            # Inlet-side observation keyed by upstream vessel block (same 0D series as that vessel)
+            elif part2 in junction_name_set_mse and part1 in results_0d:
+                vessel_name = part1
                 field_name = f"{obs_type}_in"
             else:
                 # Try to find vessel name in parts
@@ -1214,7 +1289,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 import matplotlib.pyplot as plt
                 
                 # Create output directory for debug plots
-                base_dir = os.path.dirname(calibration_input_path)
+                base_dir = artifact_root
                 debug_plots_dir = os.path.join(base_dir, 'mse_debug_plots')
                 os.makedirs(debug_plots_dir, exist_ok=True)
                 
@@ -1346,7 +1421,7 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
             import matplotlib.pyplot as plt
             
             # Create output directory for MSE comparison plots
-            base_dir = os.path.dirname(calibration_input_path)
+            base_dir = artifact_root
             mse_plots_dir = os.path.join(base_dir, 'mse_comparison_plots')
             os.makedirs(mse_plots_dir, exist_ok=True)
             
@@ -1371,30 +1446,42 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
                 # Plot 3D observations (reference)
                 ax.plot(times_3d, values_3d, 'k-', linewidth=2.5, label='3D (reference)', alpha=0.9, zorder=10)
                 
-                # Plot each 0D modality
+                # Plot each 0D modality (include any keys produced from csv_results_dict)
                 modality_colors = {
                     'geometric': 'blue',
+                    'stenosis_zero': '#c62828',
                     'NORMAL_JUNCTION': 'green',
                     'BloodVesselJunction': 'red',
-                    'BloodVesselJunction_NN': 'orange'
+                    'BloodVesselJunction_NN': 'orange',
                 }
                 modality_styles = {
                     'geometric': '-',
+                    'stenosis_zero': '-',
                     'NORMAL_JUNCTION': '--',
                     'BloodVesselJunction': '-.',
-                    'BloodVesselJunction_NN': ':'
+                    'BloodVesselJunction_NN': ':',
                 }
-                
-                for mod_name in ['geometric', 'NORMAL_JUNCTION', 'BloodVesselJunction', 'BloodVesselJunction_NN']:
-                    if mod_name in plot_data:
-                        mod_data = plot_data[mod_name]
-                        color = modality_colors.get(mod_name, 'gray')
-                        style = modality_styles.get(mod_name, '-')
-                        mse_val = mod_data.get('mse', np.nan)
-                        label = f"{mod_name} (MSE={mse_val:.3E})"
-                        ax.plot(mod_data['times'], mod_data['values'], 
-                               color=color, linestyle=style, linewidth=2, 
-                               label=label, alpha=0.8)
+                meta_keys = {
+                    '3d_times', '3d_values', 'obs_type', 'vessel_name', 'field_name',
+                }
+                for mod_name, mod_data in plot_data.items():
+                    if mod_name in meta_keys or not isinstance(mod_data, dict):
+                        continue
+                    if 'times' not in mod_data or 'values' not in mod_data:
+                        continue
+                    color = modality_colors.get(mod_name, 'gray')
+                    style = modality_styles.get(mod_name, '-')
+                    mse_val = mod_data.get('mse', np.nan)
+                    label = f"{mod_name} (MSE={mse_val:.3E})"
+                    ax.plot(
+                        mod_data['times'],
+                        mod_data['values'],
+                        color=color,
+                        linestyle=style,
+                        linewidth=2,
+                        label=label,
+                        alpha=0.8,
+                    )
                 
                 # Formatting
                 ax.set_xlabel('Time (normalized)', fontsize=14)
@@ -1510,10 +1597,9 @@ def calculate_mse_between_3d_and_0d(calibration_input_path, csv_results_dict, ge
     
     # Save results to CSV file
     if output_csv_path is None:
-        # Auto-generate CSV path based on calibration input path
-        base_dir = os.path.dirname(calibration_input_path)
+        # Auto-generate CSV path based on calibration input path (or artifact_root)
         base_name = os.path.basename(calibration_input_path).replace('.json', '')
-        output_csv_path = os.path.join(base_dir, f'{base_name}_mse_comparison.csv')
+        output_csv_path = os.path.join(artifact_root, f'{base_name}_mse_comparison.csv')
     
     try:
         os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)

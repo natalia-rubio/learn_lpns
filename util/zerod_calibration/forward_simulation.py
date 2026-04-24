@@ -81,21 +81,23 @@ else:
     solve_casadi_unsteady = None
     HAS_CASADI = False
 
+from util.zerod_calibration.zerod_handling import normalize_junction_types_for_svzerodsolver
 
 
-def run_forward_simulation(input_json_path, output_csv_path):
+def run_forward_simulation(input_json_path, output_csv_path, strict: bool = False):
     """
     Run forward 0D simulation and save results to CSV.
     Uses svzerodsolver executable at /Users/natalia/cursor_access/svZeroDPlus/Release/svzerodsolver.
-    Falls back to CasADi solver if it fails.
-    Verifies that inlet flow matches the boundary condition.
-    
+    On solver failure, optionally raises instead of writing an all-zeros placeholder CSV.
+
     Args:
         input_json_path: Path to 0D input JSON file
         output_csv_path: Path to save CSV results
-        
+        strict: If True, re-raise when svzerodsolver fails (nonzero exit, timeout, missing output).
+            If False (default), write an all-zeros CSV and continue (legacy behavior).
+
     Returns:
-        Simulation results dictionary (or None if using CasADi fallback)
+        None (results written to ``output_csv_path``).
     """
     import subprocess
     import copy
@@ -133,9 +135,16 @@ def run_forward_simulation(input_json_path, output_csv_path):
                 del input_data_sim['y']
             if 'dy' in input_data_sim:
                 del input_data_sim['dy']
-            
+
+            n_internal_fixed = normalize_junction_types_for_svzerodsolver(input_data_sim)
+
             # Write temporary input file for svzerodsolver (use original input path if it's already clean)
-            use_temp = ('calibration_parameters' in input_data or 'y' in input_data or 'dy' in input_data)
+            use_temp = (
+                'calibration_parameters' in input_data
+                or 'y' in input_data
+                or 'dy' in input_data
+                or n_internal_fixed > 0
+            )
             if use_temp:
                 temp_input_path = input_json_path_str + '.temp'
                 with open(temp_input_path, 'w') as f:
@@ -223,6 +232,8 @@ def run_forward_simulation(input_json_path, output_csv_path):
             # Return None since we're using CSV output, not a results dictionary
             return None
         except Exception as e:
+            if strict:
+                raise
             print(f"  ✗ svzerodsolver simulation failed: {e}")
             print(f"  Creating all-zeros solution instead of falling back to CasADi...")
             

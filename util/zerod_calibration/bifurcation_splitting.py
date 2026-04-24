@@ -7,8 +7,43 @@ from util.zerod_calibration.file_io import read_centerline_vtp
 from util.zerod_calibration.centerline_path_extraction import get_path_length_from_gid_list
 
 
+def junction_uses_block_connectivity(junc):
+    """
+    True if this junction uses ``inlet_blocks`` / ``outlet_blocks`` (svZeroDPlus: mutually
+    exclusive with ``inlet_vessels`` / ``outlet_vessels`` for the same junction).
+    """
+    ib = junc.get("inlet_blocks")
+    ob = junc.get("outlet_blocks")
+    return bool(ib) and bool(ob)
 
-def split_junctions(geometric_input, centerline_data):
+
+def junction_outlet_count(junc):
+    ov = junc.get("outlet_vessels")
+    if ov:
+        return len(ov)
+    ob = junc.get("outlet_blocks")
+    return len(ob) if ob else 0
+
+
+def junction_inlet_count(junc):
+    iv = junc.get("inlet_vessels")
+    if iv:
+        return len(iv)
+    ib = junc.get("inlet_blocks")
+    return len(ib) if ib else 0
+
+
+def find_junction_with_vessel_inlet(vessel_id, vessel_name, junction_list):
+    """First junction that lists the vessel as an inlet (IDs or block names)."""
+    for scan in junction_list or []:
+        iv = scan.get("inlet_vessels") or []
+        ib = scan.get("inlet_blocks") or []
+        if vessel_id in iv or vessel_name in ib:
+            return scan
+    return None
+
+
+def split_junctions(geometric_input, centerline_data, verbose=False):
     """
     Split junctions with more than 2 outlets into cascading bifurcations.
     
@@ -17,10 +52,14 @@ def split_junctions(geometric_input, centerline_data):
     - A connecting vessel runs from inlet to main outlet
     - Other outlets branch off along this connecting vessel
     - Order of branching is determined by centerline geometry (Path coordinate)
+
+    Cascaded bifurcations use ``inlet_blocks`` / ``outlet_blocks`` so each trunk attaches the
+    downstream ``BloodVesselJunction`` directly to the upstream one (no ``*_connectorN`` vessels).
     
     Args:
         geometric_input: Dictionary with 0D model structure (vessels, junctions, boundary_conditions)
         centerline_data: Dictionary with centerline arrays (Points, BranchId, Path, etc.)
+        verbose: If True, print per-junction splitting progress (very chatty).
     
     Returns:
         Modified geometric_input with only bifurcations (2-outlet junctions)
@@ -256,7 +295,8 @@ def split_junctions(geometric_input, centerline_data):
         junction_paths = path_array[junction_mask]
         junction_points = points_array[junction_mask]
         
-        print(f"    Found {len(junction_paths)} points in junction region (BifurcationId={junction_bif_id})")
+        if verbose:
+            print(f"    Found {len(junction_paths)} points in junction region (BifurcationId={junction_bif_id})")
         
         # Sort by Path to identify segments
         sort_order = np.argsort(junction_paths)
@@ -323,18 +363,24 @@ def split_junctions(geometric_input, centerline_data):
                 outlet_inlet = branch_inlet_point[outlet_branch_id]
                 
                 distance = np.linalg.norm(endpoint - outlet_inlet)
-                print(f"    Outlet inlet: {outlet_inlet},  Endpoint: {endpoint}, Distance: {distance}")
+                if verbose:
+                    print(f"    Outlet inlet: {outlet_inlet},  Endpoint: {endpoint}, Distance: {distance}")
                 if distance < best_distance:
                     best_distance = distance
                     best_outlet = outlet_branch_id
             
             if best_outlet is not None and best_distance < 2.0:  # Matching threshold
                 # Only keep the longest path if we already have one for this outlet
-                print(f"    Best outlet: {best_outlet}, path length: {path_length:.4f} (segment: {segment_path_length:.4f} + inlet dist: {distance_to_inlet:.4f})")
+                if verbose:
+                    print(
+                        f"    Best outlet: {best_outlet}, path length: {path_length:.4f} "
+                        f"(segment: {segment_path_length:.4f} + inlet dist: {distance_to_inlet:.4f})"
+                    )
                 if best_outlet not in outlet_path_lengths or path_length > outlet_path_lengths[best_outlet]:
                     outlet_path_lengths[best_outlet] = path_length
         
-        print(f"    Outlet path lengths: {outlet_path_lengths}")
+        if verbose:
+            print(f"    Outlet path lengths: {outlet_path_lengths}")
         return outlet_path_lengths
     
     # Legacy: also keep branch bifurcation path for fallback
@@ -343,7 +389,6 @@ def split_junctions(geometric_input, centerline_data):
     # Process junctions
     new_junctions = []
     new_vessels = list(vessels)  # Start with existing vessels
-    next_vessel_id = max(v['vessel_id'] for v in vessels) + 1
     next_junction_id = 0
     
     # First pass: find max junction ID
@@ -392,7 +437,11 @@ def split_junctions(geometric_input, centerline_data):
             new_junctions.append(junc)
             continue
         
-        print(f"  Splitting junction {junc_name}: inlet={inlet_vessel['vessel_name']} (branch {inlet_branch_id}), {len(outlet_vessels)} outlets")
+        if verbose:
+            print(
+                f"  Splitting junction {junc_name}: inlet={inlet_vessel['vessel_name']} "
+                f"(branch {inlet_branch_id}), {len(outlet_vessels)} outlets"
+            )
         
         # Get branch IDs for all outlets
         outlet_branch_ids = []
@@ -421,7 +470,8 @@ def split_junctions(geometric_input, centerline_data):
         outlet_cl_paths = geo_params.get('outlet_centerline_paths', {})
 
         if outlet_cl_paths:
-            print(f"    Using pre-computed centerline paths for path lengths")
+            if verbose:
+                print(f"    Using pre-computed centerline paths for path lengths")
             for outlet_id in outlet_vessels:
                 ov = vessel_by_id.get(outlet_id)
                 if ov is None:
@@ -442,10 +492,14 @@ def split_junctions(geometric_input, centerline_data):
             # in_junction_path_lengths = compute_in_junction_path_lengths(inlet_branch_id, outlet_branch_ids, junction_bif_id)
 
         if in_junction_path_lengths:
-            print(f"    In-junction path lengths:")
-            for branch_id, path_len in sorted(in_junction_path_lengths.items(), key=lambda x: -x[1]):
-                vessel_name = next((v['vessel_name'] for v in vessels if get_branch_id(v['vessel_name']) == branch_id), f"branch{branch_id}")
-                print(f"      {vessel_name}: {path_len:.4f}")
+            if verbose:
+                print(f"    In-junction path lengths:")
+                for branch_id, path_len in sorted(in_junction_path_lengths.items(), key=lambda x: -x[1]):
+                    vessel_name = next(
+                        (v['vessel_name'] for v in vessels if get_branch_id(v['vessel_name']) == branch_id),
+                        f"branch{branch_id}",
+                    )
+                    print(f"      {vessel_name}: {path_len:.4f}")
         
         # Identify main outlet (longest in-junction path length)
         main_outlet_id = None
@@ -471,7 +525,11 @@ def split_junctions(geometric_input, centerline_data):
             if main_outlet_id is not None:
                 main_vessel = vessel_by_id.get(main_outlet_id)
                 main_branch_id = outlet_id_to_branch.get(main_outlet_id)
-                print(f"    Main outlet (longest path): {main_vessel['vessel_name']} (branch {main_branch_id}, path length: {max_path_length:.4f})")
+                if verbose:
+                    print(
+                        f"    Main outlet (longest path): {main_vessel['vessel_name']} "
+                        f"(branch {main_branch_id}, path length: {max_path_length:.4f})"
+                    )
         else:
             # Fallback: use branchId = inlet_branch_id + 1
             for outlet_id in outlet_vessels:
@@ -482,7 +540,11 @@ def split_junctions(geometric_input, centerline_data):
                 outlet_branch_id = get_branch_id(outlet_vessel['vessel_name'])
                 if outlet_branch_id == inlet_branch_id + 1:
                     main_outlet_id = outlet_id
-                    print(f"    Main outlet (by branchId): {outlet_vessel['vessel_name']} (branch {outlet_branch_id})")
+                    if verbose:
+                        print(
+                            f"    Main outlet (by branchId): {outlet_vessel['vessel_name']} "
+                            f"(branch {outlet_branch_id})"
+                        )
                 else:
                     side_outlets.append(outlet_id)
         # If no main outlet found, use the first outlet as main
@@ -505,27 +567,31 @@ def split_junctions(geometric_input, centerline_data):
             outlet_vessel = vessel_by_id.get(outlet_id)
             outlet_branch_id = outlet_id_to_branch.get(outlet_id) if outlet_vessel else None
             path_len = in_junction_path_lengths.get(outlet_branch_id, float('inf')) if outlet_branch_id else float('inf')
-            print(f"    Side outlet {i+1}: {outlet_vessel['vessel_name'] if outlet_vessel else outlet_id} (in-junction path length: {path_len:.4f})")
+            if verbose:
+                print(
+                    f"    Side outlet {i+1}: {outlet_vessel['vessel_name'] if outlet_vessel else outlet_id} "
+                    f"(in-junction path length: {path_len:.4f})"
+                )
         
         # Create cascading bifurcations
         # Each bifurcation has:
-        # - Inlet from previous connector (or original inlet for first)
-        # - One side outlet
-        # - One outlet to next connector (or main outlet for last)
+        # - Inlet from upstream vessel (first bif) or upstream junction (later bif)
+        # - One side outlet (vessel)
+        # - One outlet to the next cascade junction (or main outlet vessel on last bif)
         #
         # Naming convention:
         # - New junctions: {original_junction}_bif{i} (e.g., J0_bif0, J0_bif1)
-        # - Connector vessels: {inlet_vessel}_connector{i} (e.g., branch0_seg0_connector0)
-        
-        current_inlet_id = inlet_vessel_id
-        inlet_vessel_name = inlet_vessel['vessel_name']
-        
+        #
+        # Cascaded trunks attach **junction-to-junction** via ``inlet_blocks`` /
+        # ``outlet_blocks`` (no artificial ``{inlet_vessel}_connector{N}`` BloodVessels).
+        trunk_anchor_gid = inlet_gid  # outlet GID of original inlet vessel at this split
+
         for i, side_outlet_id in enumerate(side_outlets):
             is_last = (i == len(side_outlets) - 1)
-            
+
             # Create new junction with name derived from original junction
             new_junc_name = f"{junc_name}_bif{i}"
-            
+
             if is_last:
                 # Last bifurcation: connects to main outlet
                 side_outlet_vessel_obj = vessel_by_id.get(side_outlet_id)
@@ -533,11 +599,16 @@ def split_junctions(geometric_input, centerline_data):
                 side_name_for_gp = side_outlet_vessel_obj['vessel_name'] if side_outlet_vessel_obj else str(side_outlet_id)
                 main_name_for_gp = main_outlet_vessel_obj['vessel_name'] if main_outlet_vessel_obj else str(main_outlet_id)
 
+                inlet_blocks = (
+                    [inlet_vessel['vessel_name']]
+                    if i == 0
+                    else [f"{junc_name}_bif{i - 1}"]
+                )
                 new_junc = {
-                    "inlet_vessels": [current_inlet_id],
+                    "inlet_blocks": inlet_blocks,
                     "junction_name": new_junc_name,
                     "junction_type": junc_type,
-                    "outlet_vessels": [side_outlet_id, main_outlet_id],
+                    "outlet_blocks": [side_name_for_gp, main_name_for_gp],
                     "geometric_params": {
                         "outlet_L": {side_name_for_gp: 0.0, main_name_for_gp: 0.0},
                         "outlet_R_poiseuille": {side_name_for_gp: 0.0, main_name_for_gp: 0.0},
@@ -548,121 +619,110 @@ def split_junctions(geometric_input, centerline_data):
                 # Add GIDs to junction: inlet GID from inlet vessel outlet, outlet GIDs from outlet vessel inlets,
                 
                 if gid_array is not None:
-                    inlet_vessel = vessel_by_id.get(current_inlet_id)
                     side_outlet_vessel = vessel_by_id.get(side_outlet_id)
                     main_outlet_vessel = vessel_by_id.get(main_outlet_id)
-                    
+
                     centerline_node_ids = {}
-                    if inlet_vessel:
-                        inlet_gid = get_vessel_gid(inlet_vessel, 'outlet')
-                        if inlet_gid is not None:
-                            centerline_node_ids['inlet'] = inlet_gid
-                    
+                    junc_inlet_gid = (
+                        get_vessel_gid(inlet_vessel, "outlet")
+                        if i == 0
+                        else trunk_anchor_gid
+                    )
+                    if junc_inlet_gid is not None:
+                        centerline_node_ids["inlet"] = junc_inlet_gid
+
                     outlet_gids = {}
                     outlet_vid_map = {}
                     if side_outlet_vessel:
-                        side_name = side_outlet_vessel['vessel_name']
-                        side_gid = get_vessel_gid(side_outlet_vessel, 'inlet')
+                        side_name = side_outlet_vessel["vessel_name"]
+                        side_gid = get_vessel_gid(side_outlet_vessel, "inlet")
                         if side_gid is not None:
                             outlet_gids[side_name] = side_gid
                         outlet_vid_map[side_name] = side_outlet_id
-                    
+
                     if main_outlet_vessel:
-                        main_name = main_outlet_vessel['vessel_name']
-                        main_gid = get_vessel_gid(main_outlet_vessel, 'inlet')
+                        main_name = main_outlet_vessel["vessel_name"]
+                        main_gid = get_vessel_gid(main_outlet_vessel, "inlet")
                         if main_gid is not None:
                             outlet_gids[main_name] = main_gid
                         outlet_vid_map[main_name] = main_outlet_id
-                    
+
                     if centerline_node_ids or outlet_gids:
-                        new_junc['centerline_node_ids'] = centerline_node_ids
+                        new_junc["centerline_node_ids"] = centerline_node_ids
                         if outlet_gids:
-                            new_junc['centerline_node_ids']['outlets'] = outlet_gids
+                            new_junc["centerline_node_ids"]["outlets"] = outlet_gids
                         if outlet_vid_map:
-                            new_junc['centerline_node_ids']['outlet_vessel_ids'] = outlet_vid_map
-                
-                print(f"    Created {new_junc_name}: inlet={current_inlet_id}, outlets=[{side_outlet_id}, {main_outlet_id}] (final)")
+                            new_junc["centerline_node_ids"]["outlet_vessel_ids"] = outlet_vid_map
+
+                if verbose:
+                    print(
+                        f"    Created {new_junc_name}: inlet_blocks={new_junc['inlet_blocks']}, "
+                        f"outlet_blocks={new_junc['outlet_blocks']} (final)"
+                    )
             else:
-                # Create connector vessel to next bifurcation
-                # Name derived from inlet vessel name
-                connector_name = f"{inlet_vessel_name}_connector{i}"
-                
-                # Connector vessels are artificial constructs - set R, L, stenosis to 0
-                # Keep small non-zero capacitance for numerical stability
-                connector_vessel = {
-                    "vessel_id": next_vessel_id,
-                    "vessel_length": inlet_vessel['vessel_length'] * 0.01,  # Small connector
-                    "vessel_name": connector_name,
-                    "zero_d_element_type": "BloodVessel",
-                    "zero_d_element_values": {
-                        #"C":inlet_vessel['zero_d_element_values'].get('C', 1e-),
-                        "C": inlet_vessel['zero_d_element_values'].get('C', 1e-10) * 0.01,
-                        "L": 0.0,  # No inductance for artificial connector
-                        "R_poiseuille": 0.0,  # No resistance for artificial connector
-                        "stenosis_coefficient": 0.0  # No stenosis for artificial connector
-                    },
-                    "centerline_node_ids": {
-                        "inlet": inlet_gid,
-                        "outlet": inlet_gid
-                    }
-
-                }
-                
-                new_vessels.append(connector_vessel)
-                vessel_by_id[next_vessel_id] = connector_vessel
-                vessel_by_name[connector_name] = connector_vessel
-                
-                # Create bifurcation junction
+                # Intermediate bifurcation: side vessel + outlet to next cascade junction (no connector vessel)
+                next_junc_name = f"{junc_name}_bif{i + 1}"
                 side_outlet_vessel_obj2 = vessel_by_id.get(side_outlet_id)
-                side_name_for_gp = side_outlet_vessel_obj2['vessel_name'] if side_outlet_vessel_obj2 else str(side_outlet_id)
+                side_name_for_gp = (
+                    side_outlet_vessel_obj2["vessel_name"]
+                    if side_outlet_vessel_obj2
+                    else str(side_outlet_id)
+                )
 
+                inlet_blocks = (
+                    [inlet_vessel["vessel_name"]]
+                    if i == 0
+                    else [f"{junc_name}_bif{i - 1}"]
+                )
                 new_junc = {
-                    "inlet_vessels": [current_inlet_id],
+                    "inlet_blocks": inlet_blocks,
                     "junction_name": new_junc_name,
                     "junction_type": junc_type,
-                    "outlet_vessels": [side_outlet_id, next_vessel_id],
+                    "outlet_blocks": [side_name_for_gp, next_junc_name],
                     "geometric_params": {
-                        "outlet_L": {side_name_for_gp: 0.0, connector_name: 0.0},
-                        "outlet_R_poiseuille": {side_name_for_gp: 0.0, connector_name: 0.0},
-                        "outlet_stenosis_coefficient": {side_name_for_gp: 0.0, connector_name: 0.0},
+                        "outlet_L": {side_name_for_gp: 0.0, next_junc_name: 0.0},
+                        "outlet_R_poiseuille": {side_name_for_gp: 0.0, next_junc_name: 0.0},
+                        "outlet_stenosis_coefficient": {side_name_for_gp: 0.0, next_junc_name: 0.0},
                     },
                 }
-                
-                # Add GIDs to junction: inlet GID from inlet vessel outlet, outlet GIDs from outlet vessel inlets
+
                 if gid_array is not None:
-                    inlet_vessel_obj = vessel_by_id.get(current_inlet_id)
                     side_outlet_vessel = vessel_by_id.get(side_outlet_id)
-                    
+
                     centerline_node_ids = {}
-                    if inlet_vessel_obj:
-                        inlet_gid = get_vessel_gid(inlet_vessel_obj, 'outlet')
-                        if inlet_gid is not None:
-                            centerline_node_ids['inlet'] = inlet_gid
-                    
+                    junc_inlet_gid = (
+                        get_vessel_gid(inlet_vessel, "outlet")
+                        if i == 0
+                        else trunk_anchor_gid
+                    )
+                    if junc_inlet_gid is not None:
+                        centerline_node_ids["inlet"] = junc_inlet_gid
+
                     outlet_gids = {}
                     outlet_vid_map = {}
                     if side_outlet_vessel:
-                        side_name = side_outlet_vessel['vessel_name']
-                        side_gid = get_vessel_gid(side_outlet_vessel, 'inlet')
+                        side_name = side_outlet_vessel["vessel_name"]
+                        side_gid = get_vessel_gid(side_outlet_vessel, "inlet")
                         if side_gid is not None:
                             outlet_gids[side_name] = side_gid
                         outlet_vid_map[side_name] = side_outlet_id
-                    # Connector vessel doesn't have GIDs yet, will be set after annotation
-                    outlet_gids[connector_name] = None  # Placeholder, updated after annotation
-                    outlet_vid_map[connector_name] = next_vessel_id
-                    
+                    # Trunk to next BloodVesselJunction: same anchor as legacy zero-length connector
+                    if trunk_anchor_gid is not None:
+                        outlet_gids[next_junc_name] = trunk_anchor_gid
+
                     if centerline_node_ids or outlet_gids:
-                        new_junc['centerline_node_ids'] = centerline_node_ids
+                        new_junc["centerline_node_ids"] = centerline_node_ids
                         if outlet_gids:
-                            new_junc['centerline_node_ids']['outlets'] = outlet_gids
+                            new_junc["centerline_node_ids"]["outlets"] = outlet_gids
                         if outlet_vid_map:
-                            new_junc['centerline_node_ids']['outlet_vessel_ids'] = outlet_vid_map
-                
-                print(f"    Created {new_junc_name}: inlet={current_inlet_id}, outlets=[{side_outlet_id}, {next_vessel_id}] (connector: {connector_name})")
-                
-                current_inlet_id = next_vessel_id
-                next_vessel_id += 1
-            
+                            new_junc["centerline_node_ids"]["outlet_vessel_ids"] = outlet_vid_map
+
+                if verbose:
+                    print(
+                        f"    Created {new_junc_name}: inlet_blocks={new_junc['inlet_blocks']}, "
+                        f"outlet_blocks={new_junc['outlet_blocks']} (trunk -> {next_junc_name})"
+                    )
+
             new_junctions.append(new_junc)
     
     # Update result
@@ -679,41 +739,93 @@ def split_junctions(geometric_input, centerline_data):
             if "connector" not in vessel['vessel_name']:
                 annotate_vessel_node_ids(vessel)
         
-        # Update junction GIDs now that all vessels (including connectors) are annotated
-        for junc in result['junctions']:
-            outlet_vessels = junc.get('outlet_vessels', [])
-            inlet_vessels = junc.get('inlet_vessels', [])
+        # Update junction GIDs now that all vessels are annotated
+        vessel_by_name_res = {v["vessel_name"]: v for v in result["vessels"]}
+        junc_by_name = {j["junction_name"]: j for j in result["junctions"]}
 
-            centerline_node_ids = junc.get('centerline_node_ids', {}) or {}
+        def _fill_block_junction_inlet_gid(j):
+            """Set centerline_node_ids['inlet'] for a block-style junction if missing."""
+            cn = j.get("centerline_node_ids", {}) or {}
+            if cn.get("inlet") is not None:
+                return
+            ib = j.get("inlet_blocks") or []
+            if not ib:
+                return
+            up = ib[0]
+            up_v = vessel_by_name_res.get(up)
+            if up_v is not None:
+                ig = get_vessel_gid(up_v, "outlet")
+                if ig is not None:
+                    cn["inlet"] = ig
+                    j["centerline_node_ids"] = cn
+                return
+            up_j = junc_by_name.get(up)
+            if up_j is not None:
+                uj = (up_j.get("centerline_node_ids") or {}).get("inlet")
+                if uj is not None:
+                    cn["inlet"] = uj
+                    j["centerline_node_ids"] = cn
+
+        for junc in result["junctions"]:
+            centerline_node_ids = junc.get("centerline_node_ids", {}) or {}
+
+            if junction_uses_block_connectivity(junc):
+                _fill_block_junction_inlet_gid(junc)
+                centerline_node_ids = junc.get("centerline_node_ids", {}) or {}
+                outlet_gids = dict(centerline_node_ids.get("outlets") or {})
+                outlet_vid_map = dict(centerline_node_ids.get("outlet_vessel_ids") or {})
+                for blk in junc.get("outlet_blocks") or []:
+                    out_v = vessel_by_name_res.get(blk)
+                    if out_v is not None:
+                        out_gid = get_vessel_gid(out_v, "inlet")
+                        if out_gid is not None:
+                            outlet_gids[out_v["vessel_name"]] = out_gid
+                        outlet_vid_map[out_v["vessel_name"]] = out_v["vessel_id"]
+                if outlet_gids:
+                    centerline_node_ids["outlets"] = outlet_gids
+                if outlet_vid_map:
+                    centerline_node_ids["outlet_vessel_ids"] = outlet_vid_map
+                if centerline_node_ids:
+                    junc["centerline_node_ids"] = centerline_node_ids
+                continue
+
+            outlet_vessels = junc.get("outlet_vessels", [])
+            inlet_vessels = junc.get("inlet_vessels", [])
 
             # Get inlet GID from inlet vessel outlet (first inlet)
             if inlet_vessels:
                 inlet_vid = inlet_vessels[0]
-                inlet_v = next((v for v in result['vessels'] if v['vessel_id'] == inlet_vid), None)
+                inlet_v = next((v for v in result["vessels"] if v["vessel_id"] == inlet_vid), None)
                 if inlet_v is not None:
-                    inlet_gid = get_vessel_gid(inlet_v, 'outlet')
+                    inlet_gid = get_vessel_gid(inlet_v, "outlet")
                     if inlet_gid is not None:
-                        centerline_node_ids['inlet'] = inlet_gid
+                        centerline_node_ids["inlet"] = inlet_gid
 
             # Get outlet GIDs and vessel ID mapping from outlet vessel inlets
             outlet_gids = {}
             outlet_vid_map = {}
             for outlet_id in outlet_vessels:
-                out_v = next((v for v in result['vessels'] if v['vessel_id'] == outlet_id), None)
+                out_v = next((v for v in result["vessels"] if v["vessel_id"] == outlet_id), None)
                 if out_v is not None:
-                    out_name = out_v['vessel_name']
-                    out_gid = get_vessel_gid(out_v, 'inlet')
+                    out_name = out_v["vessel_name"]
+                    out_gid = get_vessel_gid(out_v, "inlet")
                     if out_gid is not None:
                         outlet_gids[out_name] = out_gid
                     outlet_vid_map[out_name] = outlet_id
 
             if outlet_gids:
-                centerline_node_ids['outlets'] = outlet_gids
+                centerline_node_ids["outlets"] = outlet_gids
             if outlet_vid_map:
-                centerline_node_ids['outlet_vessel_ids'] = outlet_vid_map
+                centerline_node_ids["outlet_vessel_ids"] = outlet_vid_map
 
             if centerline_node_ids:
-                junc['centerline_node_ids'] = centerline_node_ids
+                junc["centerline_node_ids"] = centerline_node_ids
+
+        # Second pass: cascade inlets that reference upstream junctions by name
+        for junc in result["junctions"]:
+            if not junction_uses_block_connectivity(junc):
+                continue
+            _fill_block_junction_inlet_gid(junc)
     
     # Update vessel references in junctions to match new IDs
     vessel_name_to_new_id = {v['vessel_name']: v['vessel_id'] for v in result['vessels']}
@@ -722,13 +834,14 @@ def split_junctions(geometric_input, centerline_data):
         # Since we kept original vessels and only added new ones, this should be OK
         pass
     
-    print(f"  Split complete: {len(junctions)} junctions -> {len(new_junctions)} junctions")
-    print(f"  Vessels: {len(vessels)} -> {len(new_vessels)}")
+    if verbose:
+        print(f"  Split complete: {len(junctions)} junctions -> {len(new_junctions)} junctions")
+        print(f"  Vessels: {len(vessels)} -> {len(new_vessels)}")
     
     return result
 
 
-def split_junctions_from_files(geometric_input_path, centerline_path, output_path=None):
+def split_junctions_from_files(geometric_input_path, centerline_path, output_path=None, verbose=False):
     """
     Load geometry and centerline files, split multi-outlet junctions, and save result.
     
@@ -740,10 +853,11 @@ def split_junctions_from_files(geometric_input_path, centerline_path, output_pat
     Returns:
         Modified geometric input dictionary
     """
-    print(f"\nSplitting multi-outlet junctions...")
-    print(f"  Geometric input: {geometric_input_path}")
-    print(f"  Centerline: {centerline_path}")
-    
+    if verbose:
+        print(f"\nSplitting multi-outlet junctions...")
+        print(f"  Geometric input: {geometric_input_path}")
+        print(f"  Centerline: {centerline_path}")
+
     # Load geometric input
     with open(geometric_input_path, 'r') as f:
         geometric_input = json.load(f)
@@ -752,7 +866,7 @@ def split_junctions_from_files(geometric_input_path, centerline_path, output_pat
     centerline_data, _ = read_centerline_vtp(centerline_path)
     
     # Split junctions
-    result = split_junctions(geometric_input, centerline_data)
+    result = split_junctions(geometric_input, centerline_data, verbose=verbose)
     
     # Save result
     if output_path is None:
@@ -760,9 +874,10 @@ def split_junctions_from_files(geometric_input_path, centerline_path, output_pat
     
     with open(output_path, 'w') as f:
         json.dump(result, f, indent=4)
-    
-    print(f"  Saved to: {output_path}")
-    
+
+    if verbose:
+        print(f"  Saved to: {output_path}")
+
     return result
 
 
@@ -780,7 +895,12 @@ def convert_el_normal_junctions_to_blood_vessel_junction(config):
         # if junc.get("junction_type") != "NORMAL_JUNCTION":
         #     continue
         outlet_vessels = junc.get("outlet_vessels", [])
-        if len(outlet_vessels) < 2:
+        outlet_blocks = junc.get("outlet_blocks", [])
+        if outlet_blocks:
+            outlet_names = list(outlet_blocks)
+        else:
+            outlet_names = [vessel_id_to_name.get(vid, "") for vid in outlet_vessels]
+        if len(outlet_names) < 2:
             if junc.get("junction_type") == "internal_junction":
                 junc["junction_type"] = "NORMAL_JUNCTION"
             continue
@@ -789,8 +909,6 @@ def convert_el_normal_junctions_to_blood_vessel_junction(config):
         outlet_L = gp.get("outlet_L", {})
         outlet_R = gp.get("outlet_R_poiseuille", {})
         outlet_S = gp.get("outlet_stenosis_coefficient", {})
-
-        outlet_names = [vessel_id_to_name.get(vid, "") for vid in outlet_vessels]
         L_vals = [outlet_L.get(name, 0.0) for name in outlet_names]
         R_vals = [outlet_R.get(name, 0.0) for name in outlet_names]
         S_vals = [outlet_S.get(name, 0.0) for name in outlet_names]
@@ -825,11 +943,11 @@ def adjust_junction_boundaries_by_entrance_length_from_files(geometric_input_pat
     Returns:
         Modified geometric input dictionary
     """
-    if not verbose:
+    if verbose:
         print(f"\nAdjusting junction boundaries by entrance length...")
         print(f"  Geometric input: {geometric_input_path}")
         print(f"  Centerline: {centerline_path}")
-    
+
     # Load geometric input
     with open(geometric_input_path, 'r') as f:
         geometric_input = json.load(f)
@@ -850,11 +968,11 @@ def adjust_junction_boundaries_by_entrance_length_from_files(geometric_input_pat
     
     with open(output_path, 'w') as f:
         json.dump(result, f, indent=4)
-    
-    print(f"  Saved to: {output_path}")
-    
-    return result
 
+    if verbose:
+        print(f"  Saved to: {output_path}")
+
+    return result
 
 
 def rename_observations_for_bifurcations(original_observations, bifurcated_geometric_input):
@@ -883,21 +1001,29 @@ def rename_observations_for_bifurcations(original_observations, bifurcated_geome
     y_dict = new_observations.get('y', {})
     dy_dict = new_observations.get('dy', {})
 
+    bif_junction_names = {j.get("junction_name") for j in bif_junctions if j.get("junction_name")}
+
     # Build mapping from vessel names to their junction connections in bifurcated geometry
     vessel_to_outlet_junction = {}  # vessel_name -> junction_name (where vessel is inlet)
     for junc in bif_junctions:
-        for inlet_id in junc.get('inlet_vessels', []):
+        for inlet_id in junc.get("inlet_vessels", []):
             inlet_vessel = bif_vessel_by_id.get(inlet_id)
             if inlet_vessel:
-                vessel_to_outlet_junction[inlet_vessel['vessel_name']] = junc['junction_name']
+                vessel_to_outlet_junction[inlet_vessel["vessel_name"]] = junc["junction_name"]
+        for inlet_block in junc.get("inlet_blocks") or []:
+            if inlet_block not in bif_junction_names:
+                vessel_to_outlet_junction[inlet_block] = junc["junction_name"]
 
     # Build mapping from outlet vessel names to their inlet junction in bifurcated geometry
     vessel_to_inlet_junction = {}  # vessel_name -> junction_name (where vessel is outlet)
     for junc in bif_junctions:
-        for outlet_id in junc.get('outlet_vessels', []):
+        for outlet_id in junc.get("outlet_vessels", []):
             outlet_vessel = bif_vessel_by_id.get(outlet_id)
             if outlet_vessel:
-                vessel_to_inlet_junction[outlet_vessel['vessel_name']] = junc['junction_name']
+                vessel_to_inlet_junction[outlet_vessel["vessel_name"]] = junc["junction_name"]
+        for outlet_block in junc.get("outlet_blocks") or []:
+            if outlet_block not in bif_junction_names:
+                vessel_to_inlet_junction[outlet_block] = junc["junction_name"]
 
     # Rename keys in y/dy
     print(f"  Renaming observation keys to match bifurcated junction names...")
@@ -976,6 +1102,13 @@ def generate_connector_observations(original_observations, original_geometric_in
     # Get y and dy dicts (post-rename)
     y_dict = new_observations.get('y', {})
     dy_dict = new_observations.get('dy', {})
+    max_obs_len = max((len(v) for v in y_dict.values()), default=0) if y_dict else 0
+    # Single time point => steady: force all dy to zero before adding connector observations.
+    if max_obs_len <= 1:
+        for k in list(dy_dict.keys()):
+            ys = y_dict.get(k)
+            n = len(ys) if ys is not None else len(dy_dict[k])
+            dy_dict[k] = [0.0] * n
     
     # Helper to extract branchId from vessel name
     def get_branch_id(vessel_name):
@@ -1157,7 +1290,7 @@ def generate_connector_observations(original_observations, original_geometric_in
             # Observation at connector's outlet (connector -> outlet_junction)
             flow_key_outlet = f"flow:{connector_name}:{outlet_junction_name}"
             y_dict[flow_key_outlet] = connector_flow.tolist()
-            if len(connector_flow) > 2:
+            if len(connector_flow) > 2 and max_obs_len > 1:
                 dy = np.gradient(connector_flow)
                 dy_dict[flow_key_outlet] = dy.tolist()
             else:
@@ -1166,7 +1299,7 @@ def generate_connector_observations(original_observations, original_geometric_in
             # Observation at connector's inlet (inlet_junction -> connector)
             flow_key_inlet = f"flow:{inlet_junction_name}:{connector_name}"
             y_dict[flow_key_inlet] = connector_flow.tolist()  # Same flow at inlet and outlet
-            if len(connector_flow) > 2:
+            if len(connector_flow) > 2 and max_obs_len > 1:
                 dy = np.gradient(connector_flow)
                 dy_dict[flow_key_inlet] = dy.tolist()
             else:
@@ -1179,7 +1312,7 @@ def generate_connector_observations(original_observations, original_geometric_in
             # Same as inlet pressure since R=0, L=0 means no pressure drop
             pressure_key_outlet = f"pressure:{connector_name}:{outlet_junction_name}"
             y_dict[pressure_key_outlet] = connector_pressure.tolist()
-            if len(connector_pressure) > 2:
+            if len(connector_pressure) > 2 and max_obs_len > 1:
                 dy = np.gradient(connector_pressure)
                 dy_dict[pressure_key_outlet] = dy.tolist()
             else:
@@ -1189,7 +1322,7 @@ def generate_connector_observations(original_observations, original_geometric_in
             # Same pressure as outlet (no drop)
             pressure_key_inlet = f"pressure:{inlet_junction_name}:{connector_name}"
             y_dict[pressure_key_inlet] = connector_pressure.tolist()
-            if len(connector_pressure) > 2:
+            if len(connector_pressure) > 2 and max_obs_len > 1:
                 dy = np.gradient(connector_pressure)
                 dy_dict[pressure_key_inlet] = dy.tolist()
             else:
@@ -1207,9 +1340,10 @@ def generate_connector_observations(original_observations, original_geometric_in
 
 def is_bifurcation_split_connector_vessel(vessel_name: str) -> bool:
     """
-    True for vessels created by split_junctions: ``{inlet_vessel}_connector{N}`` (N integer).
+    True for legacy vessels from older ``split_junctions`` output: ``{inlet_vessel}_connector{N}`` (N integer).
 
-    These are zero- or short-length connectors between cascaded bifurcations; their
+    Current splitting wires cascaded ``BloodVesselJunction`` blocks with ``inlet_blocks`` /
+    ``outlet_blocks`` instead of these connectors. When such vessels are present, their
     ``centerline_node_ids`` are the junction inlet GID from splitting and must not be
     overwritten by entrance-length adjustment.
 
@@ -1227,13 +1361,17 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
     Adjust junction boundaries to extend a distance EL (entrance length) down each outlet vessel.
     
     EL = 10 * MaximumInscribedSphereRadius of the outlet vessel at its inlet.
-    If an outlet vessel is shorter than EL, the full vessel is included in the junction,
-    and an artificial connector_vessel is created to connect the junction outlet to the
-    next junction or boundary condition.
+    If an outlet vessel is shorter than EL, the full vessel is included in the junction.
+    When the absorbed chain ends at another **block** junction and the leg has no outlet
+    boundary condition, the parent junction is wired directly to that child junction
+    (no ``*_connectorEL`` stub). When the chain ends at an outlet Windkessel / BC, a
+    zero-length ``*_connectorEL`` vessel is kept so ``boundary_conditions`` stay on a
+    ``BloodVessel``.
 
-    Outlet vessels that are bifurcation-split connectors (``..._connector{N}`` from
-    :func:`split_junctions`) are skipped so their ``centerline_node_ids`` stay at the
-    original junction inlet GID assigned during splitting.
+    Outlets that are **junction names** (cascade trunks from :func:`split_junctions` using
+    ``outlet_blocks``) skip EL on that leg—there is no vessel segment. Legacy bifurcation-split
+    connectors (``..._connector{N}``) are also skipped so their ``centerline_node_ids`` stay
+    at the original junction inlet GID assigned during splitting.
     
     Args:
         geometric_input: Dictionary with 0D model structure (vessels, junctions, boundary_conditions)
@@ -1244,7 +1382,6 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
         Modified geometric_input with adjusted junction boundaries and connector vessels where needed
     """
     import copy
-    verbose = True
     if verbose:
         print("\n" + "="*60)
         print("Adjusting junction boundaries by entrance length (EL)")
@@ -1440,16 +1577,20 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
         gp = junc.setdefault('geometric_params', {})
         zvals = vessel.get('zero_d_element_values', {})
         jname = junc.get('junction_name', '?')
-        print(f"    _absorb_vessel_params: junc={jname}, outlet={outlet_vessel_name}, "
-              f"fraction={fraction}, zvals_L={zvals.get('L', 'MISSING')}, "
-              f"zvals_R={zvals.get('R_poiseuille', 'MISSING')}, "
-              f"zvals_S={zvals.get('stenosis_coefficient', 'MISSING')}")
+        if verbose:
+            print(
+                f"    _absorb_vessel_params: junc={jname}, outlet={outlet_vessel_name}, "
+                f"fraction={fraction}, zvals_L={zvals.get('L', 'MISSING')}, "
+                f"zvals_R={zvals.get('R_poiseuille', 'MISSING')}, "
+                f"zvals_S={zvals.get('stenosis_coefficient', 'MISSING')}"
+            )
         for key in _EL_PARAM_KEYS:
             outlet_dict = gp.setdefault(f'outlet_{key}', {})
             old_val = outlet_dict.get(outlet_vessel_name, 0.0)
             new_val = old_val + fraction * zvals.get(key, 0.0)
             outlet_dict[outlet_vessel_name] = new_val
-            print(f"      outlet_{key}[{outlet_vessel_name}]: {old_val} -> {new_val}")
+            if verbose:
+                print(f"      outlet_{key}[{outlet_vessel_name}]: {old_val} -> {new_val}")
 
     def _reduce_vessel_params(vessel, fraction_remaining):
         """Scale a vessel's L/R_poiseuille/stenosis_coefficient by the remaining fraction after absorption."""
@@ -1461,12 +1602,14 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
         """Rename an outlet vessel key in the junction's geometric_params dicts."""
         gp = junc.get('geometric_params', {})
         jname = junc.get('junction_name', '?')
-        print(f"    _rename_outlet_in_gp: junc={jname}, {old_name} -> {new_name}")
+        if verbose:
+            print(f"    _rename_outlet_in_gp: junc={jname}, {old_name} -> {new_name}")
         for key in _EL_PARAM_KEYS:
             outlet_dict = gp.get(f'outlet_{key}', {})
             if old_name in outlet_dict:
                 outlet_dict[new_name] = outlet_dict.pop(old_name)
-                print(f"      Renamed outlet_{key}[{old_name}] -> outlet_{key}[{new_name}]")
+                if verbose:
+                    print(f"      Renamed outlet_{key}[{old_name}] -> outlet_{key}[{new_name}]")
             else:
                 print(f"      WARNING: outlet_{key} has no key '{old_name}', keys={list(outlet_dict.keys())}")
 
@@ -1474,49 +1617,139 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
     vessels_to_remove = []
     # Track vessels converted to connectors (renamed and modified in-place)
     new_connector_vessels = []
-    
+
+    def _try_el_short_chain_junction_junction(child_junc, vessel_drop, vid_drop, primary_slot_name):
+        """
+        If EL leaves a short chain ending at another block junction (no outlet BC on the
+        dropped vessel), rewire parent junc -> child_junc and remove the vessel.
+        """
+        nonlocal vessel_by_id
+        if vessel_drop.get("boundary_conditions", {}).get("outlet"):
+            return False
+        if child_junc is None:
+            return False
+        if not junction_uses_block_connectivity(junc) or not junction_uses_block_connectivity(child_junc):
+            return False
+        child_nm = child_junc.get("junction_name")
+        if not child_nm:
+            return False
+        vnm = vessel_drop.get("vessel_name", "")
+        ib_child = child_junc.get("inlet_blocks") or []
+        if vnm not in ib_child and primary_slot_name not in ib_child:
+            return False
+
+        gp = junc.setdefault("geometric_params", {})
+        outlet_l = gp.get("outlet_L") or {}
+        if vnm in outlet_l:
+            cur_key = vnm
+        elif primary_slot_name in outlet_l:
+            cur_key = primary_slot_name
+        else:
+            cur_key = primary_slot_name
+
+        _absorb_vessel_params(junc, cur_key, vessel_drop, fraction=1.0)
+        if child_nm != cur_key:
+            _rename_outlet_in_gp(junc, cur_key, child_nm)
+
+        ob = junc.setdefault("outlet_blocks", [])
+        for i in range(len(ob)):
+            if ob[i] in (vnm, primary_slot_name):
+                ob[i] = child_nm
+
+        ibc = child_junc.get("inlet_blocks")
+        if ibc:
+            for i in range(len(ibc)):
+                if ibc[i] in (vnm, primary_slot_name):
+                    ibc[i] = junction_name
+
+        vessels_to_remove.append(vid_drop)
+        if vessel_drop in vessels:
+            vessels.remove(vessel_drop)
+        vessel_by_name.pop(vnm, None)
+        if vessel_by_name.get(primary_slot_name) is vessel_drop:
+            vessel_by_name.pop(primary_slot_name, None)
+        vessel_by_id.pop(vid_drop, None)
+        vessel_by_id = {v["vessel_id"]: v for v in vessels if v["vessel_id"] not in vessels_to_remove}
+        if verbose:
+            print(
+                f"      → EL short chain: connect {junction_name} -> {child_nm} directly "
+                f"(removed vessel {vnm!r}, no connectorEL)"
+            )
+        return True
+
     if verbose:
         print(f"\n  Processing {len(junctions)} junctions...")
-    
+
+    junction_name_set = {j.get("junction_name") for j in junctions if j.get("junction_name")}
+
     # Process each junction
     for junc in junctions:
-        junction_name = junc.get('junction_name', '')
-        inlet_vessels = junc.get('inlet_vessels', [])
-        outlet_vessels = junc.get('outlet_vessels', [])
-        
-        if len(inlet_vessels) == 0 or len(outlet_vessels) == 0:
-            if verbose:
-                print(f"  Skipping {junction_name}: missing inlet or outlet vessels")
-            continue
-        
-        # Only adjust junctions with at least 2 outlet vessels
-        # Junctions with 1 outlet are just straight connections and don't need entrance length adjustment
-        if len(outlet_vessels) < 2:
-            if verbose:
-                print(f"  Skipping {junction_name}: only {len(outlet_vessels)} outlet(s), need at least 2 for entrance length adjustment")
-            continue
-        
+        junction_name = junc.get("junction_name", "")
+
+        if junction_uses_block_connectivity(junc):
+            inlet_blocks = junc.get("inlet_blocks") or []
+            outlet_blocks = junc.get("outlet_blocks") or []
+            if len(inlet_blocks) == 0 or len(outlet_blocks) < 2:
+                if verbose:
+                    print(f"  Skipping {junction_name}: missing inlet_blocks or fewer than 2 outlet_blocks")
+                continue
+            inlet_vessel_id = None
+            inlet_vessel = None
+            if inlet_blocks[0] not in junction_name_set:
+                inlet_vessel = vessel_by_name.get(inlet_blocks[0])
+            outlet_vessel_ids_to_process = []
+            for blk in outlet_blocks:
+                if blk in junction_name_set:
+                    if verbose:
+                        print(
+                            f"\n    Skipping outlet neighbor (junction-to-junction trunk, no EL segment): {blk}"
+                        )
+                    continue
+                ov = vessel_by_name.get(blk)
+                if ov is None:
+                    if verbose:
+                        print(f"    Warning: outlet_blocks entry {blk!r} is not a known vessel, skipping")
+                    continue
+                outlet_vessel_ids_to_process.append(ov["vessel_id"])
+        else:
+            inlet_vessels = junc.get("inlet_vessels", [])
+            outlet_vessels = junc.get("outlet_vessels", [])
+
+            if len(inlet_vessels) == 0 or len(outlet_vessels) == 0:
+                if verbose:
+                    print(f"  Skipping {junction_name}: missing inlet or outlet vessels")
+                continue
+
+            # Only adjust junctions with at least 2 outlet vessels
+            # Junctions with 1 outlet are just straight connections and don't need entrance length adjustment
+            if len(outlet_vessels) < 2:
+                if verbose:
+                    print(
+                        f"  Skipping {junction_name}: only {len(outlet_vessels)} outlet(s), "
+                        f"need at least 2 for entrance length adjustment"
+                    )
+                continue
+
+            inlet_vessel_id = inlet_vessels[0]
+            inlet_vessel = vessel_by_id.get(inlet_vessel_id)
+            if inlet_vessel is None:
+                if verbose:
+                    print(f"    Warning: Inlet vessel ID {inlet_vessel_id} not found")
+                continue
+            outlet_vessel_ids_to_process = list(outlet_vessels)
+
         if verbose:
             print(f"\n  Processing junction: {junction_name}")
-            print(f"    Inlets: {len(inlet_vessels)}, Outlets: {len(outlet_vessels)}")
-        
-        # Get inlet vessel (assuming single inlet)
-        inlet_vessel_id = inlet_vessels[0]
-        inlet_vessel = vessel_by_id.get(inlet_vessel_id)
-        if inlet_vessel is None:
-            if verbose:
-                print(f"    Warning: Inlet vessel ID {inlet_vessel_id} not found")
-            continue
-        
+
         # Process each outlet vessel
-        for outlet_vessel_id in outlet_vessels:
+        for outlet_vessel_id in outlet_vessel_ids_to_process:
             outlet_vessel = vessel_by_id.get(outlet_vessel_id)
             if outlet_vessel is None:
                 if verbose:
                     print(f"    Warning: Outlet vessel ID {outlet_vessel_id} not found")
                 continue
-            
-            outlet_vessel_name = outlet_vessel.get('vessel_name', '')
+
+            outlet_vessel_name = outlet_vessel.get("vessel_name", "")
 
             if is_bifurcation_split_connector_vessel(outlet_vessel_name):
                 if verbose:
@@ -1581,32 +1814,38 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # Find downstream junction for merged vessel
                     downstream_junction = None
                     for scan_junc in junctions:
-                        inlet_vessel_ids = scan_junc.get('inlet_vessels', [])
-                        if merged_vessel_id in inlet_vessel_ids:
+                        iv = scan_junc.get("inlet_vessels", [])
+                        ib = scan_junc.get("inlet_blocks") or []
+                        if merged_vessel_id in iv or merged_vessel_name in ib:
                             downstream_junction = scan_junc
                             break
-                    
+
                     # Check if downstream junction exists and has only 1 outlet
                     if downstream_junction is None:
                         if verbose:
                             print(f"      → No downstream junction found for {merged_vessel_name}, stopping chain extension")
                         break
-                    
-                    downstream_outlet_vessels = downstream_junction.get('outlet_vessels', [])
-                    if len(downstream_outlet_vessels) != 1:
-                        if verbose:
-                            print(f"      → Downstream junction {downstream_junction.get('junction_name', 'unknown')} has {len(downstream_outlet_vessels)} outlets, stopping chain extension")
-                        break
-                    
-                    # Get next vessel in chain
-                    next_vessel_id = downstream_outlet_vessels[0]
-                    next_vessel = vessel_by_id.get(next_vessel_id)
-                    
+
+                    dov = downstream_junction.get("outlet_vessels") or []
+                    dob = downstream_junction.get("outlet_blocks") or []
+                    next_vessel = None
+                    next_vessel_id = None
+                    if len(dov) == 1:
+                        next_vessel_id = dov[0]
+                        next_vessel = vessel_by_id.get(next_vessel_id)
+                    elif len(dob) == 1 and dob[0] not in junction_name_set:
+                        next_vessel = vessel_by_name.get(dob[0])
+                        if next_vessel is not None:
+                            next_vessel_id = next_vessel["vessel_id"]
                     if next_vessel is None:
+                        n_out = len(dov) or len(dob)
                         if verbose:
-                            print(f"      → Next vessel ID {next_vessel_id} not found, stopping chain extension")
+                            print(
+                                f"      → Downstream junction {downstream_junction.get('junction_name', 'unknown')} "
+                                f"has {n_out} outlet(s) or non-vessel outlet, stopping chain extension"
+                            )
                         break
-                    
+
                     next_vessel_name = next_vessel.get('vessel_name', '')
                     
                     # Check if next vessel has an outlet boundary condition
@@ -1734,8 +1973,11 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                             merged_vessel['zero_d_element_values']['stenosis_coefficient'] = 0.0
                                             set_vessel_node_ids(merged_vessel, merged_outlet_idx, merged_outlet_idx)
                                             new_connector_vessels.append(merged_vessel)
-                                            print(f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
-                                                  f"fully absorbed by EL, converted to {connector_name}")
+                                            if verbose:
+                                                print(
+                                                    f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
+                                                    f"fully absorbed by EL, converted to {connector_name}"
+                                                )
                                             extension_successful = True
                                             break
                                         # Else: remainder length is positive, shorten merged vessel by EL
@@ -1756,9 +1998,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
 
                                         if verbose:
                                             print(f"      → Shortened merged vessel to reach EL: {merged_length:.6f} → {new_merged_length:.6f} cm")
-
-                                        print(f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
-                                              f"into {merged_vessel_name} and extended to reach EL={EL:.4f} with outlet BC {next_vessel_outlet_bc}")
+                                            print(
+                                                f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
+                                                f"into {merged_vessel_name} and extended to reach EL={EL:.4f} with outlet BC {next_vessel_outlet_bc}"
+                                            )
                                         extension_successful = True
                                         break
                                 # If we couldn't find a suitable centerline point, fall through and
@@ -1853,8 +2096,9 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # Find what next_vessel connects to downstream
                     next_vessel_downstream_junction = None
                     for scan_junc in junctions:
-                        inlet_vessel_ids = scan_junc.get('inlet_vessels', [])
-                        if next_vessel_id in inlet_vessel_ids:
+                        iv = scan_junc.get("inlet_vessels", [])
+                        ib = scan_junc.get("inlet_blocks") or []
+                        if next_vessel_id in iv or next_vessel_name in ib:
                             next_vessel_downstream_junction = scan_junc
                             break
                     
@@ -1874,14 +2118,27 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     
                     if next_vessel_downstream_junction is not None:
                         # Update the downstream junction to use merged_vessel_id instead of next_vessel_id
-                        inlet_vessel_ids = next_vessel_downstream_junction.get('inlet_vessels', [])
-                        if next_vessel_id in inlet_vessel_ids:
+                        inlet_vessel_ids = next_vessel_downstream_junction.get("inlet_vessels")
+                        if inlet_vessel_ids is not None and next_vessel_id in inlet_vessel_ids:
                             inlet_vessel_ids.remove(next_vessel_id)
                             if merged_vessel_id not in inlet_vessel_ids:
                                 inlet_vessel_ids.append(merged_vessel_id)
                             if verbose:
-                                print(f"      → Updated downstream junction {next_vessel_downstream_junction.get('junction_name', 'unknown')}: "
-                                      f"replaced vessel ID {next_vessel_id} with merged vessel ID {merged_vessel_id}")
+                                print(
+                                    f"      → Updated downstream junction "
+                                    f"{next_vessel_downstream_junction.get('junction_name', 'unknown')}: "
+                                    f"replaced vessel ID {next_vessel_id} with merged vessel ID {merged_vessel_id}"
+                                )
+                        inlet_blocks = next_vessel_downstream_junction.get("inlet_blocks")
+                        if inlet_blocks is not None and next_vessel_name in inlet_blocks:
+                            idx = inlet_blocks.index(next_vessel_name)
+                            inlet_blocks[idx] = merged_vessel_name
+                            if verbose:
+                                print(
+                                    f"      → Updated downstream junction "
+                                    f"{next_vessel_downstream_junction.get('junction_name', 'unknown')}: "
+                                    f"replaced inlet_blocks {next_vessel_name!r} with {merged_vessel_name!r}"
+                                )
                     
                     if verbose:
                         print(f"      → Removed merged vessel: {next_vessel_name} (ID: {next_vessel_id})")
@@ -1932,9 +2189,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                     
                                     if verbose:
                                         print(f"      → Shortened merged vessel to reach EL: {merged_length:.6f} → {new_merged_length:.6f} cm")
-                                    
-                                    print(f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
-                                          f"into {merged_vessel_name} and extended to reach EL={EL:.4f}")
+                                        print(
+                                            f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
+                                            f"into {merged_vessel_name} and extended to reach EL={EL:.4f}"
+                                        )
                                     extension_successful = True
                                     break
                         else:
@@ -1946,8 +2204,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
 
                             if verbose:
                                 print(f"      → Merged vessel length exactly equals EL: {merged_length:.6f} cm")
-                            print(f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
-                                  f"into {merged_vessel_name} (length={merged_length:.4f} = EL={EL:.4f})")
+                                print(
+                                    f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
+                                    f"into {merged_vessel_name} (length={merged_length:.4f} = EL={EL:.4f})"
+                                )
                             extension_successful = True
                             break
                     
@@ -1961,10 +2221,27 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 
                 if extension_successful:
                     continue  # Skip the default connector logic below
-                
+
+                if not vessels_merged:
+                    child_jj = find_junction_with_vessel_inlet(
+                        outlet_vessel_id, outlet_vessel_name, junctions
+                    )
+                    if _try_el_short_chain_junction_junction(
+                        child_jj, outlet_vessel, outlet_vessel_id, outlet_vessel_name
+                    ):
+                        continue
+
                 # If vessels were merged but we didn't reach EL, convert the merged vessel to a connector
                 # This handles cases where chain extension stopped due to multi-outlet junction, boundary condition, etc.
                 if vessels_merged:
+                    child_jj = find_junction_with_vessel_inlet(
+                        merged_vessel_id, merged_vessel.get("vessel_name", ""), junctions
+                    )
+                    if _try_el_short_chain_junction_junction(
+                        child_jj, merged_vessel, merged_vessel_id, outlet_vessel_name
+                    ):
+                        continue
+
                     if verbose:
                         print(f"      → Vessels were merged but didn't reach EL, converting merged vessel to connector")
                     
@@ -2002,10 +2279,11 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     if verbose:
                         print(f"      → Set merged vessel length to 0.0 cm")
                         print(f"      → Set parameters: R=0, C=1e-10, L=0 (minimal resistance)")
-                    
-                    print(f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
-                          f"into {connector_name} but didn't reach EL={EL:.4f}, converted to connector")
-                    
+                        print(
+                            f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
+                            f"into {connector_name} but didn't reach EL={EL:.4f}, converted to connector"
+                        )
+
                     new_connector_vessels.append(merged_vessel)
                     continue  # Skip the default connector logic below
                 
@@ -2013,10 +2291,11 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 # Rename to connector and set length to zero
                 if verbose:
                     print(f"      → Converting vessel to connector (standard case)")
-                
-                print(f"  Junction {junction_name}: Outlet vessel {outlet_vessel_name} (length={outlet_vessel_length:.4f}) "
-                      f"is shorter than EL={EL:.4f}, converting to connector vessel")
-                
+                    print(
+                        f"  Junction {junction_name}: Outlet vessel {outlet_vessel_name} (length={outlet_vessel_length:.4f}) "
+                        f"is shorter than EL={EL:.4f}, converting to connector vessel"
+                    )
+
                 # Append "_connector" to vessel name (if not already a connector)
                 old_name = outlet_vessel.get('vessel_name', '')
                 if 'connector' in old_name.lower():
@@ -2058,8 +2337,9 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 
                 # For connector created here: both inlet and outlet at vessel endpoint (endpoint of extended junction)
                 set_vessel_node_ids(outlet_vessel, outlet_outlet_idx, outlet_outlet_idx)
-                
-                print(f"    Converted vessel to connector: {connector_name} (ID: {outlet_vessel_id})")
+
+                if verbose:
+                    print(f"    Converted vessel to connector: {connector_name} (ID: {outlet_vessel_id})")
             else:
                 # Case 2: Vessel is longer than EL - extend junction boundary by EL distance
                 if verbose:
@@ -2112,10 +2392,17 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                         print(f"      → Length included in junction: {new_junction_boundary_path - outlet_vessel_path_start:.6f} cm")
                     
                     # If the new length is zero or negligible, the whole vessel was absorbed into the junction:
-                    # convert to connectorEL (same as "vessel shorter than EL" case) so downstream code treats it as a connector.
+                    # Prefer direct block junction->junction wiring when there is no outlet BC; else connectorEL.
                     if new_vessel_length <= length_epsilon:
                         if verbose:
-                            print(f"      → New vessel length is ~0, converting to connector (fully absorbed into junction)")
+                            print(f"      → New vessel length is ~0 (fully absorbed into junction by EL)")
+                        child_jj = find_junction_with_vessel_inlet(
+                            outlet_vessel_id, outlet_vessel.get("vessel_name", ""), junctions
+                        )
+                        if _try_el_short_chain_junction_junction(
+                            child_jj, outlet_vessel, outlet_vessel_id, outlet_vessel_name
+                        ):
+                            continue
                         old_name = outlet_vessel.get('vessel_name', '')
                         connector_name = old_name if 'connector' in old_name.lower() else f"{old_name}_connectorEL"
                         outlet_vessel['vessel_name'] = connector_name
@@ -2131,7 +2418,11 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                         outlet_vessel['zero_d_element_values']['stenosis_coefficient'] = 0.0
                         set_vessel_node_ids(outlet_vessel, outlet_outlet_idx, outlet_outlet_idx)
                         new_connector_vessels.append(outlet_vessel)
-                        print(f"  Junction {junction_name}: Outlet {outlet_vessel_name} fully absorbed by EL, converted to {connector_name}")
+                        if verbose:
+                            print(
+                                f"  Junction {junction_name}: Outlet {outlet_vessel_name} fully absorbed by EL, "
+                                f"converted to {connector_name}"
+                            )
                         continue
                     
                     # Absorb proportional params into the junction
@@ -2152,9 +2443,12 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # - New inlet is at target_centerline_idx
                     # - Outlet remains at original outlet_outlet_idx
                     set_vessel_node_ids(outlet_vessel, target_centerline_idx, outlet_outlet_idx)
-                    
-                    print(f"  Junction {junction_name}: Extended boundary by EL={EL:.4f} for outlet {outlet_vessel_name}, "
-                          f"new vessel length={new_vessel_length:.4f}")
+
+                    if verbose:
+                        print(
+                            f"  Junction {junction_name}: Extended boundary by EL={EL:.4f} for outlet {outlet_vessel_name}, "
+                            f"new vessel length={new_vessel_length:.4f}"
+                        )
                 else:
                     # Edge case: EL extends beyond the vessel (shouldn't happen if logic is correct)
                     # This means target_path > outlet_vessel_path_end
@@ -2189,23 +2483,29 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
     # Update junctions: remove references to deleted vessels and remap remaining IDs
     cleaned_junctions = []
     for junc in junctions:
+        if junction_uses_block_connectivity(junc):
+            cleaned_junctions.append(junc)
+            continue
         # Clean up and remap inlet_vessels list
         cleaned_inlets = []
-        if 'inlet_vessels' in junc:
-            cleaned_inlets = [old_id_to_new_id[vid] for vid in junc['inlet_vessels'] if vid in old_id_to_new_id]
-            junc['inlet_vessels'] = cleaned_inlets
-        
+        if "inlet_vessels" in junc:
+            cleaned_inlets = [old_id_to_new_id[vid] for vid in junc["inlet_vessels"] if vid in old_id_to_new_id]
+            junc["inlet_vessels"] = cleaned_inlets
+
         # Clean up and remap outlet_vessels list
         cleaned_outlets = []
-        if 'outlet_vessels' in junc:
-            cleaned_outlets = [old_id_to_new_id[vid] for vid in junc['outlet_vessels'] if vid in old_id_to_new_id]
-            junc['outlet_vessels'] = cleaned_outlets
-        
+        if "outlet_vessels" in junc:
+            cleaned_outlets = [old_id_to_new_id[vid] for vid in junc["outlet_vessels"] if vid in old_id_to_new_id]
+            junc["outlet_vessels"] = cleaned_outlets
+
         # Only keep junctions that have at least one inlet and one outlet after cleanup
         if len(cleaned_inlets) > 0 and len(cleaned_outlets) > 0:
             cleaned_junctions.append(junc)
-        elif verbose:
-            print(f"  Warning: Removed junction {junc.get('junction_name', 'unknown')} - no valid vessels after cleanup")
+        else:
+            print(
+                f"  Warning: Removed junction {junc.get('junction_name', 'unknown')} - "
+                f"no valid vessels after cleanup"
+            )
     
     result['junctions'] = cleaned_junctions
     
@@ -2219,42 +2519,92 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     set_vessel_node_ids(vessel, inlet_idx, outlet_idx)
         
         # Add/update GIDs for all junctions: inlet GID from inlet vessel outlet, outlet GIDs from outlet vessel inlets
-        for junc in result['junctions']:
-            inlet_vessels = junc.get('inlet_vessels', [])
-            outlet_vessels = junc.get('outlet_vessels', [])
-            
+        vessel_by_name_el = {v["vessel_name"]: v for v in result["vessels"]}
+        junc_by_name_el = {j["junction_name"]: j for j in result["junctions"]}
+
+        def _fill_el_block_junction_inlet(j):
+            cn = j.get("centerline_node_ids", {}) or {}
+            if cn.get("inlet") is not None:
+                return
+            ib = j.get("inlet_blocks") or []
+            if not ib:
+                return
+            up = ib[0]
+            up_v = vessel_by_name_el.get(up)
+            if up_v is not None:
+                ig = get_vessel_gid(up_v, "outlet")
+                if ig is not None:
+                    cn["inlet"] = ig
+                    j["centerline_node_ids"] = cn
+                return
+            up_j = junc_by_name_el.get(up)
+            if up_j is not None:
+                uj = (up_j.get("centerline_node_ids") or {}).get("inlet")
+                if uj is not None:
+                    cn["inlet"] = uj
+                    j["centerline_node_ids"] = cn
+
+        for junc in result["junctions"]:
             centerline_node_ids = {}
-            
+
+            if junction_uses_block_connectivity(junc):
+                _fill_el_block_junction_inlet(junc)
+                centerline_node_ids = junc.get("centerline_node_ids", {}) or {}
+                outlet_gids = dict(centerline_node_ids.get("outlets") or {})
+                outlet_vid_map = dict(centerline_node_ids.get("outlet_vessel_ids") or {})
+                for blk in junc.get("outlet_blocks") or []:
+                    out_v = vessel_by_name_el.get(blk)
+                    if out_v is not None:
+                        outlet_vessel_name = out_v.get("vessel_name", "")
+                        outlet_gid = get_vessel_gid(out_v, "inlet")
+                        if outlet_gid is not None:
+                            outlet_gids[outlet_vessel_name] = outlet_gid
+                        outlet_vid_map[outlet_vessel_name] = out_v["vessel_id"]
+                if outlet_gids:
+                    centerline_node_ids["outlets"] = outlet_gids
+                if outlet_vid_map:
+                    centerline_node_ids["outlet_vessel_ids"] = outlet_vid_map
+                if centerline_node_ids:
+                    junc["centerline_node_ids"] = centerline_node_ids
+                continue
+
+            inlet_vessels = junc.get("inlet_vessels", [])
+            outlet_vessels = junc.get("outlet_vessels", [])
+
             # Get inlet GID from inlet vessel outlet
             if inlet_vessels:
                 inlet_vessel_id = inlet_vessels[0]
                 inlet_vessel = vessel_by_id.get(inlet_vessel_id)
                 if inlet_vessel:
-                    inlet_gid = get_vessel_gid(inlet_vessel, 'outlet')
+                    inlet_gid = get_vessel_gid(inlet_vessel, "outlet")
                     if inlet_gid is not None:
-                        centerline_node_ids['inlet'] = inlet_gid
-            
+                        centerline_node_ids["inlet"] = inlet_gid
+
             # Get outlet GIDs and vessel ID mapping from outlet vessel inlets
             outlet_gids = {}
             outlet_vid_map = {}
             for outlet_id in outlet_vessels:
                 outlet_vessel = vessel_by_id.get(outlet_id)
                 if outlet_vessel:
-                    outlet_vessel_name = outlet_vessel.get('vessel_name', '')
-                    outlet_gid = get_vessel_gid(outlet_vessel, 'inlet')
+                    outlet_vessel_name = outlet_vessel.get("vessel_name", "")
+                    outlet_gid = get_vessel_gid(outlet_vessel, "inlet")
                     if outlet_gid is not None:
                         outlet_gids[outlet_vessel_name] = outlet_gid
                     outlet_vid_map[outlet_vessel_name] = outlet_id
-            
+
             if centerline_node_ids or outlet_gids:
-                if 'centerline_node_ids' not in junc:
-                    junc['centerline_node_ids'] = {}
-                if 'inlet' in centerline_node_ids:
-                    junc['centerline_node_ids']['inlet'] = centerline_node_ids['inlet']
+                if "centerline_node_ids" not in junc:
+                    junc["centerline_node_ids"] = {}
+                if "inlet" in centerline_node_ids:
+                    junc["centerline_node_ids"]["inlet"] = centerline_node_ids["inlet"]
                 if outlet_gids:
-                    junc['centerline_node_ids']['outlets'] = outlet_gids
+                    junc["centerline_node_ids"]["outlets"] = outlet_gids
                 if outlet_vid_map:
-                    junc['centerline_node_ids']['outlet_vessel_ids'] = outlet_vid_map
+                    junc["centerline_node_ids"]["outlet_vessel_ids"] = outlet_vid_map
+
+        for junc in result["junctions"]:
+            if junction_uses_block_connectivity(junc):
+                _fill_el_block_junction_inlet(junc)
     
     # Note: Converted connector vessels are already in result['vessels'] since they were
     # modified in-place (not removed and recreated)
@@ -2280,11 +2630,5 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
             print(f"    Removed vessels: {', '.join(removed_names)}")
         print(f"  Total vessels after adjustment: {len(result['vessels'])} (was {len(vessels)})")
         print("="*60)
-    else:
-        print(f"  Adjusted {len(junctions)} junctions based on entrance length")
-        if new_connector_vessels:
-            print(f"  Converted {len(new_connector_vessels)} vessels to connectors (length=0)")
-        if vessels_to_remove:
-            print(f"  Removed {len(vessels_to_remove)} vessels")
-    
+
     return result

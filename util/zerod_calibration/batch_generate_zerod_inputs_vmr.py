@@ -241,6 +241,8 @@ def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, time
         cmd.append('--symmetric-loss')
     if args_dict.get('clip_predictions', False):
         cmd.append('--clip-predictions')
+    if args_dict.get('strict_forward', False):
+        cmd.append('--strict-forward')
     rc = args_dict.get('run_config')
     if rc:
         cmd.extend(['--run-config', rc])
@@ -358,6 +360,12 @@ Examples:
     parser.add_argument('--clip-predictions', action='store_true', dest='clip_predictions',
                        help='Clip R/S/L to training set min/max (run-config)')
     parser.add_argument(
+        '--strict-forward',
+        action='store_true',
+        dest='strict_forward',
+        help='Pass to generate_zerod_inputs: abort on svzerodsolver failure (no all-zeros CSV).',
+    )
+    parser.add_argument(
         '--run-config',
         default=None,
         metavar='SUFFIX',
@@ -404,6 +412,7 @@ Examples:
         'symmetric_loss': getattr(args, 'symmetric_loss', False),
         'clip_predictions': getattr(args, 'clip_predictions', False),
         'run_config': (getattr(args, 'run_config', None) or '').strip() or None,
+        'strict_forward': getattr(args, 'strict_forward', False),
     }
     
     if getattr(args, 'stenosis_off', False) and getattr(args, 'penalty_off', False):
@@ -482,6 +491,7 @@ Examples:
     print(f"  Stenosis-off: {getattr(args, 'stenosis_off', False)}")
     print(f"  Symmetric-loss: {getattr(args, 'symmetric_loss', False)}")
     print(f"  Clip-predictions: {getattr(args, 'clip_predictions', False)}")
+    print(f"  Strict-forward: {getattr(args, 'strict_forward', False)}")
     print(f"  Run-config (path suffix): {getattr(args, 'run_config', None) or '(from flags only)'}")
     print(f"  Timeout per geometry: {args.timeout}s ({args.timeout/60:.1f} minutes)")
     print(f"  Max failures: {args.max_failures if args.max_failures else 'unlimited'}")

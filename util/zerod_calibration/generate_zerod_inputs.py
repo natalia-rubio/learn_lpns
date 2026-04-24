@@ -22,6 +22,7 @@ from typing import Optional
 import csv
 from collections import defaultdict, OrderedDict
 from util.zerod_calibration.run_config_canonical import canonical_run_config_for_data_paths
+from util.zerod_calibration.verbose_flags import VERBOSE_ZERO_D_PIPELINE
 from util.zerod_calibration.oned_to_zerod import *
 from util.zerod_calibration.post_processing import *
 from util.zerod_calibration.bifurcation_splitting import *
@@ -207,6 +208,39 @@ def main():
         'extra variant (own jax/splits paths + gen-weighted loss) and is ignored only when '
         'checking flag parity.',
     )
+    parser.add_argument(
+        '--strict-forward',
+        action='store_true',
+        dest='strict_forward',
+        help='Abort if svzerodsolver fails (nonzero exit, timeout, missing output); do not write all-zeros CSV.',
+    )
+    parser.add_argument(
+        '--simvascular-path',
+        default=None,
+        dest='simvascular_path',
+        metavar='PATH',
+        help='SimVascular executable for Step 1 ROM workflow (non-Richter sets). Default: auto-detect.',
+    )
+    parser.add_argument(
+        '--dt',
+        type=float,
+        default=0.2,
+        help='Time step (s) for Step 1 ROM workflow when not using Richter JSON (default: 0.2).',
+    )
+    parser.add_argument(
+        '--num-time-steps',
+        type=int,
+        default=5,
+        dest='num_time_steps',
+        help='Number of time steps for Step 1 ROM workflow (default: 5).',
+    )
+    parser.add_argument(
+        '--num-cardiac-cycles',
+        type=int,
+        default=1,
+        dest='num_cardiac_cycles',
+        help='Number of cardiac cycles for Step 1 ROM workflow (default: 1).',
+    )
 
     args = parser.parse_args(); verbose = args.verbose
     if args.normalize:
@@ -292,8 +326,19 @@ def main():
                 skip_base = True
         
         if not skip_base:
-            if 'VMR' in args.set_name:
-                richter_0d_path = os.path.join('data', 'zeroD', args.set_name, 'richter-0d', args.geo_name+'.json')
+            richter_0d_path = os.path.join(
+                'data', 'zeroD', args.set_name, 'richter-0d', f'{args.geo_name}.json'
+            )
+            use_richter = os.path.isfile(richter_0d_path)
+            if 'VMR' in args.set_name and not use_richter:
+                raise FileNotFoundError(
+                    f"VMR set requires Richter 0D JSON (missing): {richter_0d_path}"
+                )
+            if use_richter:
+                print("\n" + "="*60)
+                print("Step 1: Geometric 0D input from Richter JSON")
+                print("="*60)
+                print(f"  Source: {richter_0d_path}")
                 zerod_input = load_from_json(richter_0d_path)
                 zerod_input['simulation_parameters']['output_all_cycles'] = True
                 zerod_input['simulation_parameters']['number_of_cardiac_cycles'] = 1
@@ -323,12 +368,22 @@ def main():
             
             print(f"\n  Adding centerline parameters to geometric input...")
             geometric_centerline_input_path = geometric_input_path.replace('geometric_input', 'geometric_centerline_input')
-            process_geometric_input(centerline_path, geometric_input_path, geometric_centerline_input_path)
+            process_geometric_input(
+                centerline_path,
+                geometric_input_path,
+                geometric_centerline_input_path,
+                verbose=verbose,
+            )
             print(f"  Centerline parameters added to geometric input saved to: {geometric_centerline_input_path}")
 
             # Generate bifurcations-only version of the geometric input
             print(f"\n  Creating bifurcations-only geometric input...")
-            split_junctions_from_files(geometric_centerline_input_path, centerline_path, bifurcations_geometric_input_path)
+            split_junctions_from_files(
+                geometric_centerline_input_path,
+                centerline_path,
+                bifurcations_geometric_input_path,
+                verbose=verbose,
+            )
             generated_files.append(bifurcations_geometric_input_path)
             print(f"  Bifurcations-only geometric input saved to: {bifurcations_geometric_input_path}")
             
@@ -364,16 +419,19 @@ def main():
             # For EL-adjusted geometry, use EL-adjusted structure for parameter extraction
             if not check_and_track_file(variant_geometric_input, f"geometric params extraction for {geo_variant_name}"):
                 extract_and_add_geometric_params(
-                    centerline_path, 
+                    centerline_path,
                     geometry_variants['bifurcations']['geometric_input'],  # Base geometric input (for reference)
                     variant_geometric_input,  # EL-adjusted config to update
-                    el_adjusted_geometric_input_path=variant_geometric_input  # Use EL-adjusted structure
+                    el_adjusted_geometric_input_path=variant_geometric_input,  # Use EL-adjusted structure
+                    verbose=verbose,
                 )
                 print(f"  Geometric parameters extracted and added to {variant_geometric_input}")
         else:
             # For other variants, standard parameter extraction
             if not check_and_track_file(variant_geometric_input, f"geometric params extraction for {geo_variant_name}"):
-                extract_and_add_geometric_params(centerline_path, variant_geometric_input, variant_geometric_input)
+                extract_and_add_geometric_params(
+                    centerline_path, variant_geometric_input, variant_geometric_input, verbose=verbose
+                )
                 print(f"  Geometric parameters extracted and added to {variant_geometric_input}")
                 # Match bifurcations_EL: multi-outlet junctions as BloodVesselJunction with junction_values
                 # from geometric_params (non-EL bifurcations skip EL adjustment, so convert here).
@@ -474,7 +532,14 @@ def main():
 
             # Coronary sets: keep outlet BCs already in geometric input (e.g. from reference 0D);
             # inlet still comes from 1D via calibration input / update_geometric_input_with_calibration_bc.
-            skip_outlet_bc_fitting = 'coro' in args.set_name.lower()
+            # Richter 0D JSON: geometry/outlet BCs already defined there — do not refit from 1D observations.
+            _richter_zerod_path = os.path.join(
+                'data', 'zeroD', args.set_name, 'richter-0d', f'{args.geo_name}.json'
+            )
+            geometric_from_richter_zerod = os.path.isfile(_richter_zerod_path)
+            skip_outlet_bc_fitting = (
+                'coro' in args.set_name.lower() or geometric_from_richter_zerod
+            )
 
             time_step_size = None
             if not skip_outlet_bc_fitting:
@@ -483,7 +548,7 @@ def main():
                 except Exception:
                     time_step_size = None
             
-            # Fit outlet resistances from observations (skip for VMR and coro)
+            # Fit outlet resistances from observations (skip for VMR, coro, and Richter-sourced geometry)
             if args.set_name != "VMR" and not skip_outlet_bc_fitting:
                 fitted_resistances = fit_outlet_resistances_from_3d(geometric_input_path, observations)
             else:
@@ -491,9 +556,20 @@ def main():
 
             fitted_rcr = {}
             if skip_outlet_bc_fitting:
+                reasons = []
+                if 'coro' in args.set_name.lower():
+                    reasons.append(
+                        "set name contains 'coro' (keep outlet BCs from geometric input)"
+                    )
+                if geometric_from_richter_zerod:
+                    reasons.append(
+                        f"Richter 0D entry present ({_richter_zerod_path}); "
+                        "outlet resistance / distal pressure and RCR fitting skipped"
+                    )
                 print(
-                    "\n  Set name contains 'coro': skipping outlet BC fitting "
-                    "(using values already in geometric input); inlet remains from 1D."
+                    "\n  Skipping outlet BC fitting from observations: "
+                    + "; ".join(reasons)
+                    + ". Inlet still comes from 1D via calibration input."
                 )
             elif time_step_size is not None:
                 try:
@@ -588,6 +664,27 @@ def main():
                                     augmented_observations = rename_observations_for_bifurcations(
                                         observations, bifurcated_geometric_input
                                     )
+                                # Direct parent→child junction edges (no connector vessel) never appear
+                                # in the original 1D rename map; merge node-id extraction for missing keys.
+                                print(
+                                    "    Merging node-id 1D observations for missing keys "
+                                    "(e.g. junction–junction interfaces)..."
+                                )
+                                from util.zerod_calibration.oned_to_zerod import (
+                                    extract_observations_from_1d_with_node_ids,
+                                )
+
+                                _node_obs = extract_observations_from_1d_with_node_ids(
+                                    centerline_path,
+                                    variant_geometric_input,
+                                    geo_dir=geo_dir,
+                                    start_idx=0,
+                                    derivative_method="central",
+                                )
+                                for _side in ("y", "dy"):
+                                    _tgt = augmented_observations.setdefault(_side, {})
+                                    for _k, _v in (_node_obs.get(_side) or {}).items():
+                                        _tgt.setdefault(_k, _v)
                             else:  # bifurcations_EL
                                 # Extract observations directly from 1D solution using centerline_node_ids
                                 print(f"    Extracting observations from 1D solution using centerline_node_ids...")
@@ -838,7 +935,7 @@ def main():
                     X_full, feature_names_full, junction_names, outlet_primary_names = load_junction_geometric_features(
                         variant_geometric_input,
                         require_two_outlets=True,
-                        verbose=True
+                        verbose=VERBOSE_ZERO_D_PIPELINE,
                     )
                     # Add flow_split from geometric results when available (same as run_data_processing)
                     geometric_results_path = variant_geometric_input.replace(
@@ -890,8 +987,9 @@ def main():
                     # Count unique junction names (some may have been skipped for swapped row)
                     unique_junction_names = list(set(junction_names))
                     print(f"  Loaded {len(X)} feature rows for {len(unique_junction_names)} unique junctions")
-                    print(f"  Junction names in feature extraction: {unique_junction_names}")
-                    print(f"  Selected {len(feature_names)} features (matching training data): {feature_names}")
+                    if VERBOSE_ZERO_D_PIPELINE:
+                        print(f"  Junction names in feature extraction: {unique_junction_names}")
+                        print(f"  Selected {len(feature_names)} features (matching training data): {feature_names}")
                     
                     # --- Conditionally apply z-normalization ---
                     norm_suffix = "_normalized" if args.normalize else ""
@@ -946,7 +1044,8 @@ def main():
                     # Load models and get predictions
                     raw_predictions = []
                     for i, model_path in enumerate(model_paths):
-                        print(f"      Loading model {i+1}/3: {model_path}")
+                        if VERBOSE_ZERO_D_PIPELINE:
+                            print(f"      Loading model {i+1}/3: {model_path}")
                         model = dill_load(model_path)
                         use_leaky = getattr(model, "use_leaky_relu", False)
                         pred = predict(X_jax, model.weights, use_leaky)
@@ -959,14 +1058,20 @@ def main():
                         for coef_idx, pred_norm in enumerate(raw_predictions):
                             pred_original = pred_norm * output_std[coef_idx] + output_mean[coef_idx]
                             predictions.append(pred_original)
-                            print(f"      Unnormalized {output_names[coef_idx]}: "
-                                  f"mean={output_mean[coef_idx]:.4f}, std={output_std[coef_idx]:.4f}, "
-                                  f"pred range=[{pred_original.min():.4f}, {pred_original.max():.4f}]")
+                            if VERBOSE_ZERO_D_PIPELINE:
+                                print(
+                                    f"      Unnormalized {output_names[coef_idx]}: "
+                                    f"mean={output_mean[coef_idx]:.4f}, std={output_std[coef_idx]:.4f}, "
+                                    f"pred range=[{pred_original.min():.4f}, {pred_original.max():.4f}]"
+                                )
                     else:
                         predictions = raw_predictions
-                        for coef_idx, pred in enumerate(predictions):
-                            print(f"      {output_names[coef_idx]}: "
-                                  f"pred range=[{pred.min():.4f}, {pred.max():.4f}]")
+                        if VERBOSE_ZERO_D_PIPELINE:
+                            for coef_idx, pred in enumerate(predictions):
+                                print(
+                                    f"      {output_names[coef_idx]}: "
+                                    f"pred range=[{pred.min():.4f}, {pred.max():.4f}]"
+                                )
                     
                     # predictions[0] = R_poiseuille (one value per row)
                     # predictions[1] = stenosis_coefficient (one value per row)
@@ -1009,10 +1114,13 @@ def main():
                         pred_R = np.clip(pred_R, out_min[0], out_max[0])
                         pred_S = np.clip(pred_S, out_min[1], out_max[1])
                         pred_L = np.clip(pred_L, out_min[2], out_max[2])
-                        print(f"  Predictions clipped to training range: "
-                              f"R [{out_min[0]:.4f}, {out_max[0]:.4f}], "
-                              f"S [{out_min[1]:.4f}, {out_max[1]:.4f}], "
-                              f"L [{out_min[2]:.4f}, {out_max[2]:.4f}]")
+                        if VERBOSE_ZERO_D_PIPELINE:
+                            print(
+                                f"  Predictions clipped to training range: "
+                                f"R [{out_min[0]:.4f}, {out_max[0]:.4f}], "
+                                f"S [{out_min[1]:.4f}, {out_max[1]:.4f}], "
+                                f"L [{out_min[2]:.4f}, {out_max[2]:.4f}]"
+                            )
 
                     # Verify prediction array sizes match input
                      # Note: junction_names may have duplicates (same junction appears twice for swapped rows)
@@ -1036,10 +1144,11 @@ def main():
                             junction_name_to_row_indices[junc_name] = []
                         junction_name_to_row_indices[junc_name].append(row_idx)
                     
-                    print(f"      Built prediction mapping: {len(primary_outlet_to_row)} (junction, outlet) entries")
-                    for (jn, on), ri in primary_outlet_to_row.items():
-                        vid = int(X_full[ri, 0])  # outlet_vessel_id is first column
-                        print(f"        ({jn}, {on}) -> row {ri}, vessel_id={vid}")
+                    if VERBOSE_ZERO_D_PIPELINE:
+                        print(f"      Built prediction mapping: {len(primary_outlet_to_row)} (junction, outlet) entries")
+                        for (jn, on), ri in primary_outlet_to_row.items():
+                            vid = int(X_full[ri, 0])  # outlet_vessel_id is first column
+                            print(f"        ({jn}, {on}) -> row {ri}, vessel_id={vid}")
                 
                     # Map predictions back to junction_values
                     vessels = nn_config.get('vessels', [])
@@ -1082,7 +1191,10 @@ def main():
                         for file_idx, (vid, vname) in enumerate(zip(outlet_vessel_ids, outlet_vessel_names)):
                             # Skip non-EL connectors (zero parameters)
                             if 'connector' in vname and 'connectorEL' not in vname:
-                                print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> connector, set to 0")
+                                if VERBOSE_ZERO_D_PIPELINE:
+                                    print(
+                                        f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> connector, set to 0"
+                                    )
                                 continue
                             
                             # Look up the row where this outlet was the primary outlet
@@ -1101,8 +1213,11 @@ def main():
                                 R_values[file_idx] = float(pred_R[row_idx])
                                 S_values[file_idx] = float(pred_S[row_idx])
                                 L_values[file_idx] = float(pred_L[row_idx])
-                                print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
-                                      f"row {row_idx}: R={R_values[file_idx]:.4f}, S={S_values[file_idx]:.4f}, L={L_values[file_idx]:.4f}")
+                                if VERBOSE_ZERO_D_PIPELINE:
+                                    print(
+                                        f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
+                                        f"row {row_idx}: R={R_values[file_idx]:.4f}, S={S_values[file_idx]:.4f}, L={L_values[file_idx]:.4f}"
+                                    )
                             else:
                                 # No dedicated prediction row for this outlet (e.g., it was
                                 # only in the secondary/outlet1 position). Fall back to the
@@ -1115,12 +1230,18 @@ def main():
                                     R_values[file_idx] = float(pred_R[fallback_row])
                                     S_values[file_idx] = float(pred_S[fallback_row])
                                     L_values[file_idx] = float(pred_L[fallback_row])
-                                    print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
-                                          f"fallback from row {fallback_row} (primary={other_outlet[0]}): "
-                                          f"R={R_values[file_idx]:.4f}, S={S_values[file_idx]:.4f}, L={L_values[file_idx]:.4f}")
+                                    if VERBOSE_ZERO_D_PIPELINE:
+                                        print(
+                                            f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
+                                            f"fallback from row {fallback_row} (primary={other_outlet[0]}): "
+                                            f"R={R_values[file_idx]:.4f}, S={S_values[file_idx]:.4f}, L={L_values[file_idx]:.4f}"
+                                        )
                                 else:
-                                    print(f"        ⚠ {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
-                                          f"no prediction row found, keeping zeros")
+                                    if VERBOSE_ZERO_D_PIPELINE:
+                                        print(
+                                            f"        ⚠ {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
+                                            f"no prediction row found, keeping zeros"
+                                        )
                         
                         junc['junction_values']['R_poiseuille'] = R_values
                         junc['junction_values']['stenosis_coefficient'] = S_values
@@ -1128,8 +1249,7 @@ def main():
                     
                     # Vessels already geometric (nn_config was loaded from variant_geometric_input)
                     # Save the NN-modified config (already checked at start of block)
-                    with open(nn_output_path, 'w') as f:
-                        json.dump(nn_config, f, indent=4)
+                    dump_json_svzerod(nn_config, nn_output_path)
                     generated_files.append(nn_output_path)
                     print(f"      ✓ Neural network predictions applied and saved to {nn_output_path}")
                 
@@ -1291,8 +1411,7 @@ def main():
                             z['stenosis_coefficient'] = float(pred_S_v[row])
                             z['L'] = float(pred_L_v[row])
                             v['zero_d_element_values'] = z
-                        with open(nn_jv_path, 'w') as f:
-                            json.dump(jv_config, f, indent=4)
+                        dump_json_svzerod(jv_config, nn_jv_path)
                         generated_files.append(nn_jv_path)
                         print(f"      ✓ Vessel NN predictions applied and saved to {nn_jv_path}")
                         # NN_vessel modality: geometric junctions + NN vessel params (default when --NN-vessel)
@@ -1311,8 +1430,7 @@ def main():
                             v['zero_d_element_values']['R_poiseuille'] = float(pred_R_v[row])
                             v['zero_d_element_values']['stenosis_coefficient'] = float(pred_S_v[row])
                             v['zero_d_element_values']['L'] = float(pred_L_v[row])
-                        with open(nn_vessel_only_path, 'w') as f:
-                            json.dump(vessel_only_config, f, indent=4)
+                        dump_json_svzerod(vessel_only_config, nn_vessel_only_path)
                         generated_files.append(nn_vessel_only_path)
                         print(f"      ✓ NN_vessel (geometric junctions + NN vessels) saved to {nn_vessel_only_path}")
                     except Exception as e:
@@ -1382,7 +1500,7 @@ def main():
                                     )
                                 print(f"    Refining inlet BC for forward simulation with input: {bvj_input_path}")
                                 refine_inlet_bc_for_forward_simulation(nn_output_path, calibration_input_path=bvj_input_path)
-                                run_forward_simulation(nn_output_path, nn_results_csv)
+                                run_forward_simulation(nn_output_path, nn_results_csv, strict=args.strict_forward)
                                 generated_files.append(nn_results_csv)
                                 print(f"      ✓ NN-modified {geo_variant_name}/BloodVesselJunction simulation completed successfully")
                             except Exception as e:
@@ -1403,7 +1521,7 @@ def main():
                                     if not os.path.exists(bvj_input_path):
                                         bvj_input_path = geo_variant_paths['geometric_input']
                                     refine_inlet_bc_for_forward_simulation(nn_jv_path, calibration_input_path=bvj_input_path)
-                                    run_forward_simulation(nn_jv_path, nn_jv_results_csv)
+                                    run_forward_simulation(nn_jv_path, nn_jv_results_csv, strict=args.strict_forward)
                                     generated_files.append(nn_jv_results_csv)
                                     print(f"      ✓ NN Junction+Vessel {geo_variant_name} simulation completed successfully")
                                 except Exception as e:
@@ -1421,7 +1539,7 @@ def main():
                                         if not os.path.exists(bvj_input_path):
                                             bvj_input_path = geo_variant_paths['geometric_input']
                                         refine_inlet_bc_for_forward_simulation(nn_vessel_only_path, calibration_input_path=bvj_input_path)
-                                        run_forward_simulation(nn_vessel_only_path, nn_vessel_only_results_csv)
+                                        run_forward_simulation(nn_vessel_only_path, nn_vessel_only_results_csv, strict=args.strict_forward)
                                         generated_files.append(nn_vessel_only_results_csv)
                                         print(f"      ✓ NN_vessel {geo_variant_name} simulation completed successfully")
                                     except Exception as e:
@@ -1450,7 +1568,7 @@ def main():
                         try:
                             # For geometric input, use the variant's calibration input as source
                             refine_inlet_bc_for_forward_simulation(variant_geometric_input, calibration_input_path=variant_calibration_input)
-                            run_forward_simulation(variant_geometric_input, variant_geometric_results)
+                            run_forward_simulation(variant_geometric_input, variant_geometric_results, strict=args.strict_forward)
                             generated_files.append(variant_geometric_results)
                             print(f"      ✓ Geometric simulation completed successfully")
                         except Exception as e:
@@ -1475,7 +1593,7 @@ def main():
                     try:
                         # Read BC from calibration input, write refined BC to calibrated output
                         refine_inlet_bc_for_forward_simulation(jtype_output_path, calibration_input_path=jtype_input_path)
-                        run_forward_simulation(jtype_output_path, calibrated_results_csv)
+                        run_forward_simulation(jtype_output_path, calibrated_results_csv, strict=args.strict_forward)
                         generated_files.append(calibrated_results_csv)
                         print(f"      ✓ Calibrated {geo_variant_name}/{jtype} simulation completed successfully")
                     except Exception as e:
@@ -1495,7 +1613,7 @@ def main():
                                 # Use BloodVesselJunction calibration input as source
                                 bvj_input_path = variant_junction_paths['BloodVesselJunction']['calibration_input']
                                 refine_inlet_bc_for_forward_simulation(nn_output_path, calibration_input_path=bvj_input_path)
-                                run_forward_simulation(nn_output_path, nn_results_csv)
+                                run_forward_simulation(nn_output_path, nn_results_csv, strict=args.strict_forward)
                                 generated_files.append(nn_results_csv)
                                 print(f"      ✓ NN-modified {geo_variant_name}/BloodVesselJunction simulation completed successfully")
                             except Exception as e:
@@ -1514,7 +1632,7 @@ def main():
                                     if not os.path.exists(bvj_input_path):
                                         bvj_input_path = variant_geometric_input
                                     refine_inlet_bc_for_forward_simulation(nn_jv_path, calibration_input_path=bvj_input_path)
-                                    run_forward_simulation(nn_jv_path, nn_jv_results_csv)
+                                    run_forward_simulation(nn_jv_path, nn_jv_results_csv, strict=args.strict_forward)
                                     generated_files.append(nn_jv_results_csv)
                                     print(f"      ✓ NN Junction+Vessel {geo_variant_name} simulation completed successfully")
                                 except Exception as e:
@@ -1532,7 +1650,7 @@ def main():
                                         if not os.path.exists(bvj_input_path):
                                             bvj_input_path = variant_geometric_input
                                         refine_inlet_bc_for_forward_simulation(nn_vessel_only_path, calibration_input_path=bvj_input_path)
-                                        run_forward_simulation(nn_vessel_only_path, nn_vessel_only_results_csv)
+                                        run_forward_simulation(nn_vessel_only_path, nn_vessel_only_results_csv, strict=args.strict_forward)
                                         generated_files.append(nn_vessel_only_results_csv)
                                         print(f"      ✓ NN_vessel {geo_variant_name} simulation completed successfully")
                                     except Exception as e:
