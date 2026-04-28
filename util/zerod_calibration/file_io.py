@@ -319,6 +319,26 @@ def convert_numpy_to_list(obj):
         return obj
 
 
+def dump_json_svzerod(obj, path, indent=4):
+    """
+    Write JSON for svzerodsolver / nlohmann-json.
+
+    Uses ``allow_nan=False`` so nan/inf are rejected (strict JSON); otherwise invalid
+    literals like ``NaN`` would be emitted and the C++ parser would fail at load time.
+    """
+    try:
+        text = json.dumps(obj, indent=indent, allow_nan=False)
+    except ValueError as e:
+        raise ValueError(
+            f"Cannot write JSON to {path!r}: nan/inf are not allowed in svZeroD JSON "
+            f"(strict JSON). Fix upstream predictions or parameters. Underlying error: {e}"
+        ) from e
+    out_dir = os.path.dirname(path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    with open(path, "w") as f:
+        f.write(text)
+
 
 def convert_simulation_results_to_csv(sim_results, output_csv_path):
     """
@@ -378,67 +398,80 @@ def convert_simulation_results_to_csv(sim_results, output_csv_path):
 
 def timestep_from_1D(centerline_soln_path, geo_dir):
     """
-    Extract timestep information from 1D centerline solution and XML file.
-    
+    Scalar time step (seconds) between consecutive 1D samples for BC scheduling:
+    ``time_increment * threeD_time_step_size`` (same convention as observation extraction).
+
+    Reads SimVascular XML when present; otherwise uses path-based fallbacks (VMR dict,
+    Priya, TST-cohort) aligned with ``oned_to_zerod.extract_observations_from_1d``.
+
     Args:
         centerline_soln_path: Path to 1D centerline solution VTP file
-        geo_dir: Geometry directory containing XML file
-        
+        geo_dir: Geometry directory that may contain ``fluid_simulation_0-0.xml``
+
     Returns:
-        tuple: (num_timesteps, time_step_size, bc_time) where:
-            - num_timesteps: Number of timesteps in the solution
-            - time_step_size: Time step size from XML (or None if not found)
-            - bc_time: List of time values (or None if time_step_size not found)
+        float: time step in seconds between adjacent samples in the 1D series
     """
-    # Read centerline solution
     centerline_data, _ = read_centerline_vtp(centerline_soln_path)
-    flow_timesteps = [key for key in centerline_data.keys() if key.startswith('velocity_') or key.startswith('flow_')]
-    
+    flow_timesteps = [
+        key
+        for key in centerline_data.keys()
+        if key.startswith('velocity_') or key.startswith('flow_')
+    ]
+
     def extract_timestep(name):
         try:
             return int(name.split('_')[-1])
-        except:
+        except Exception:
             return 0
-    
+
     flow_timesteps.sort(key=extract_timestep)
     num_timesteps = len(flow_timesteps)
-    time_increment = extract_timestep(flow_timesteps[1]) - extract_timestep(flow_timesteps[0])
+    if num_timesteps == 0:
+        raise ValueError(f"No flow/velocity timestep arrays in {centerline_soln_path}")
+    if num_timesteps == 1:
+        time_increment = 1
+    else:
+        time_increment = (
+            extract_timestep(flow_timesteps[1]) - extract_timestep(flow_timesteps[0])
+        )
 
-    # Get timestep size from XML (if geo_dir is available)
+    threeD_time_step_size = None
+
     if geo_dir is not None and os.path.exists(geo_dir):
         xml_path = os.path.join(geo_dir, 'fluid_simulation_0-0.xml')
+        if os.path.exists(xml_path):
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            gen_params = root.find('GeneralSimulationParameters')
+            if gen_params is None:
+                gen_params = root.find('General_Parameters')
+            if gen_params is not None:
+                time_step_size_elem = gen_params.find('Time_step_size')
+                if time_step_size_elem is not None and time_step_size_elem.text is not None:
+                    threeD_time_step_size = float(time_step_size_elem.text)
+                    print(f"  Found XML time_step_size: {threeD_time_step_size:.6f} s")
 
-        if not os.path.exists(xml_path):
-            # If no XML found, use default
-            raise ValueError("No XML file found in {geo_dir}")
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
-        
-        # Find GeneralSimulationParameters
-        gen_params = root.find('GeneralSimulationParameters')
-        if gen_params is None:
-            gen_params = root.find('General_Parameters')
-        
-        threeD_time_step_size = None
-        if gen_params is not None:
-            time_step_size_elem = gen_params.find('Time_step_size')
-            if time_step_size_elem is not None:
-                threeD_time_step_size = float(time_step_size_elem.text)
-
-    # if we are using a VMR type geometry, get the dt from dictionary
-    if "priya" in centerline_soln_path:
+    path_norm = (centerline_soln_path or "").replace("\\", "/")
+    if "priya" in path_norm:
         threeD_time_step_size = 0.001
-        print(f"Assume Priya always uses a time step size of 0.001 s")
-    elif 'VMR' in centerline_soln_path:
-        geometry_name = centerline_soln_path.split('/')[-2]
+        print("  Assume Priya time_step_size = 0.001 s")
+    elif "VMR" in path_norm:
+        geometry_name = centerline_soln_path.split("/")[-2]
         threeD_time_step_size = VMR_time_step_dict[geometry_name]
         print(f"  Found time_step_size in VMR dictionary: {threeD_time_step_size:.6f} s")
+    elif "TST-cohort" in path_norm:
+        threeD_time_step_size = 1.0
+        print("  TST-cohort: nominal time_step_size=1.0 s (no XML)")
 
     if threeD_time_step_size is None:
-        raise ValueError("Could not extract time step size from XML")
-    else:
-        time_step_size = time_increment * threeD_time_step_size
-    
+        raise ValueError(
+            "Could not determine time step size: no XML in geo_dir, and path is not "
+            "priya/VMR/TST-cohort. Add fluid_simulation_0-0.xml or use geometric "
+            "simulation_parameters.time_step_size in create_calibration_input."
+        )
+
+    time_step_size = time_increment * threeD_time_step_size
+    print(f"  timestep_from_1D: dt = {time_step_size:.6f} s (increment={time_increment})")
     return time_step_size
 
 def get_paths(base_dir, args):

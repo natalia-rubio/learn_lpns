@@ -312,8 +312,18 @@ def fit_outlet_resistances_from_3d(geometric_input_path, observations):
         
         if not np.any(valid_mask):
             print(f"  Warning: No valid data points for {vessel_name}:{bc_name}")
-            print(f"    Pressure range: [{np.min(pressures):.2f}, {np.max(pressures):.2f}]")
-            print(f"    Flow range: [{np.min(flows):.2f}, {np.max(flows):.2f}]")
+            if pressures.size:
+                print(
+                    f"    Pressure range: [{np.nanmin(pressures):.2f}, {np.nanmax(pressures):.2f}]"
+                )
+            else:
+                print("    Pressure: (empty array)")
+            if flows.size:
+                print(
+                    f"    Flow range: [{np.nanmin(flows):.2f}, {np.nanmax(flows):.2f}]"
+                )
+            else:
+                print("    Flow: (empty array)")
             continue
         
         valid_pressures = pressures[valid_mask]

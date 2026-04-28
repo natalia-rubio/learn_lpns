@@ -164,9 +164,8 @@ def main():
                 flow_split_col = []
                 for i, jname in enumerate(junction_names):
                     if jname not in flow_splits:
-                        raise ValueError(
-                            f"Junction {jname!r} not in flow splits (expected for two-outlet junctions from {geometric_results_path})."
-                        )
+                        flow_split_col.append(np.nan)
+                        continue
                     (out0_name, out1_name), (fs0, fs1) = flow_splits[jname]
                     primary = outlet_primary_names[i]
                     if primary == out0_name:
@@ -174,9 +173,7 @@ def main():
                     elif primary == out1_name:
                         val = fs1
                     else:
-                        raise ValueError(
-                            f"Primary outlet {primary!r} for junction {jname!r} does not match outlets ({out0_name!r}, {out1_name!r})."
-                        )
+                        val = np.nan
                     flow_split_col.append(val)
                 X = np.column_stack([X, flow_split_col])
                 feature_names = feature_names + ["flow_split"]

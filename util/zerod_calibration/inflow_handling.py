@@ -4,6 +4,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from util.zerod_calibration.file_io import read_centerline_vtp
 from util.zerod_calibration.file_io import parse_simulation_xml
+from util.zerod_calibration.file_io import dump_json_svzerod
 
 
 # def replace_inlet_bc_in_calibrated_output(calibrated_output_path, calibration_input_path):
@@ -252,8 +253,7 @@ def sync_nn_config_bcs_from_calibration(nn_config_paths, source_bc_path, verbose
             with open(path, 'r') as f:
                 nn_config = json.load(f)
             nn_config['boundary_conditions'] = copy.deepcopy(bcs)
-            with open(path, 'w') as f:
-                json.dump(nn_config, f, indent=4)
+            dump_json_svzerod(nn_config, path)
             updated += 1
             if verbose:
                 print(f"  ✓ Synced BCs from calibration into {os.path.basename(path)}")
@@ -269,6 +269,10 @@ def refine_inlet_bc_for_forward_simulation(output_path, max_reasonable_points=10
     
     Reads the BC from the calibration input (to avoid multiple refinements) and writes
     the refined BC to the output file.
+
+    For paths containing ``TST-cohort``, temporal refinement is skipped: the calibration
+    ``t``/``Q`` are copied onto ``output_path`` so steady or single-point BCs are not
+    upsampled with cubic interpolation.
     
     Args:
         output_path: Path to output JSON file (calibrated output or geometric input)
@@ -307,7 +311,40 @@ def refine_inlet_bc_for_forward_simulation(output_path, max_reasonable_points=10
     bc_flow = calib_input['boundary_conditions'][0]['bc_values']['Q']
     
     original_n_pts = len(bc_time)
-    
+    n_flow = len(bc_flow)
+    if original_n_pts == 0 or n_flow == 0:
+        raise ValueError(
+            f"INFLOW boundary condition has empty t or Q in {calibration_input_path} "
+            f"(len(t)={original_n_pts}, len(Q)={n_flow})."
+        )
+    if original_n_pts != n_flow:
+        raise ValueError(
+            f"INFLOW t and Q length mismatch in {calibration_input_path}: "
+            f"len(t)={original_n_pts}, len(Q)={n_flow}."
+        )
+
+    path_blob = f"{calibration_input_path or ''} {output_path or ''}".replace("\\", "/")
+    if "TST-cohort" in path_blob:
+        # Steady / sparse TST: cubic upsampling is undefined; keep calibration BC as-is on the forward file.
+        with open(output_path, "r") as f:
+            output_data = json.load(f)
+        output_data["boundary_conditions"][0]["bc_values"]["t"] = [float(x) for x in bc_time]
+        output_data["boundary_conditions"][0]["bc_values"]["Q"] = [float(x) for x in bc_flow]
+        sp_out = output_data.setdefault("simulation_parameters", {})
+        sp_out["number_of_time_pts_per_cardiac_cycle"] = original_n_pts
+        csp = calib_input.get("simulation_parameters") or {}
+        for key in ("number_of_cardiac_cycles", "output_all_cycles", "num_cardiac_cycles"):
+            if key in csp:
+                sp_out[key if key != "num_cardiac_cycles" else "number_of_cardiac_cycles"] = csp[key]
+        output_data["refinement_factor"] = 1
+        with open(output_path, "w") as f:
+            json.dump(output_data, f, indent=4)
+        print(
+            f"  TST-cohort: skipped inlet BC refinement; synced {original_n_pts} inflow points "
+            f"from {calibration_input_path} -> {output_path}"
+        )
+        return
+
     # Check if the original number of points is unreasonably high
     if original_n_pts > max_reasonable_points:
         raise ValueError(
@@ -317,18 +354,27 @@ def refine_inlet_bc_for_forward_simulation(output_path, max_reasonable_points=10
             f"Please check the 1D solution file and the observation extraction process."
         )
 
-
     # add a key to the output data with the refinement factor
-
-    if len(bc_flow) > 1000:
+    if n_flow > 1000:
+        refinement_factor = 1
+    elif n_flow == 1:
         refinement_factor = 1
     else:
-        refinement_factor = int(np.ceil(1000/len(bc_flow)))
-    
+        refinement_factor = int(np.ceil(1000 / n_flow))
+
     refined_n_pts = original_n_pts * refinement_factor
-    
-    bc_time_refined = np.linspace(0, bc_time[-1], refined_n_pts, endpoint=True).tolist()
-    bc_flow_refined = interp1d(bc_time, bc_flow, kind='cubic')(bc_time_refined)
+
+    if original_n_pts < 2:
+        bc_time_refined = [float(x) for x in bc_time]
+        bc_flow_refined = [float(x) for x in bc_flow]
+    else:
+        bc_time_refined = np.linspace(
+            0, bc_time[-1], refined_n_pts, endpoint=True
+        ).tolist()
+        interp_kind = "cubic" if original_n_pts >= 4 else "linear"
+        bc_flow_refined = interp1d(
+            bc_time, bc_flow, kind=interp_kind, fill_value="extrapolate"
+        )(bc_time_refined)
     
     # Read output file to update it
     with open(output_path, 'r') as f:

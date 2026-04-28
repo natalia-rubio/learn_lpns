@@ -126,6 +126,14 @@ LINE_STYLES = {
         'label': '0D Poiseuille',
         'alpha': 0.75,
     },
+    # Empirical stenosis-off forward (same network, stenosis coefficients set to zero)
+    'stenosis_zero': {
+        'color': '#c62828',
+        'linestyle': '-',
+        'linewidth': 4,
+        'label': '0D (stenosis=0)',
+        'alpha': 0.85,
+    },
     # Original geometry calibrated results
     'original_NORMAL_JUNCTION': {
         'color': 'red',
@@ -998,12 +1006,22 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
             # Find index where time >= zoom_time_end (or use last index)
             zoom_end_idx = min(np.searchsorted(times_geo, zoom_time_end, side='right'), num_time_steps)
     
-    # Validate zoom window
+    # Validate zoom window (end index exclusive, same convention as MSE post_processing)
     zoom_start_idx = max(0, min(zoom_start_idx, num_time_steps - 1))
-    zoom_end_idx = min(zoom_end_idx, num_time_steps)
-    
+    zoom_end_idx = min(int(zoom_end_idx), num_time_steps)
+    zoom_end_idx = max(zoom_start_idx + 1, zoom_end_idx)
+
     if zoom_start_idx >= zoom_end_idx:
-        raise ValueError(f"Zoom window calculation failed. Using fallback: {zoom_start_idx} to {zoom_end_idx}")
+        if num_time_steps >= 2:
+            if num_time_steps == 2:
+                zoom_start_idx, zoom_end_idx = 1, 2
+            else:
+                zoom_start_idx, zoom_end_idx = num_time_steps - 1, num_time_steps
+        else:
+            raise ValueError(
+                f"Zoom window invalid and fewer than 2 time steps ({num_time_steps}). "
+                f"Got zoom_start_idx={zoom_start_idx}, zoom_end_idx={zoom_end_idx}"
+            )
     zoom_times = times_geo[zoom_start_idx:zoom_end_idx]
     time_zoom_start = zoom_times[0] if len(zoom_times) > 0 else times_geo[0]
     time_zoom_end = zoom_times[-1] if len(zoom_times) > 0 else times_geo[-1]

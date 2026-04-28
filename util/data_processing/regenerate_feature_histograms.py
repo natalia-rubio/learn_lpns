@@ -4,6 +4,7 @@ Regenerate feature histogram figures for a given set and run config.
 
 Reads ML input CSVs from data/ml_inputs/{set_name}/{run_config}/{geometry_variant}/
 and saves histograms to results/feature_histograms/{set_name}/{geometry_variant}/.
+Empty numeric cells in CSVs are read as NaN and omitted from histogram counts.
 
 Example (base run config for VMR_rigid_aorta_adults, both geometry variants):
   python -m util.data_processing.regenerate_feature_histograms VMR_rigid_aorta_adults --run-config base
@@ -89,6 +90,7 @@ def main():
             histogram_output_dir=histogram_dir,
             geometry_variant=geometry_variant,
             normalize=False,
+            allow_nan_in_ml_csvs=True,
         )
 
     print("Done.")

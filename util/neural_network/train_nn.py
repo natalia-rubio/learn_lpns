@@ -99,15 +99,21 @@ def train_nn(model, training_params):
                             use_leaky_relu=getattr(model, "use_leaky_relu", False),
                             weights=model.weights)
             val_hist.append(val_loss)
-            print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
-                "Training set accuracy {:e}  |  ".format(train_loss) + \
-                "Validation set accuracy {:e}".format(val_loss))
+            if training_params.get("verbose_epochs", False):
+                print(
+                    "Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time)
+                    + "Training set accuracy {:e}  |  ".format(train_loss)
+                    + "Validation set accuracy {:e}".format(val_loss)
+                )
         else:
             val_loss = float('nan')
             val_hist.append(val_loss)
-            print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
-                  "Training set accuracy {:e}  |  ".format(train_loss) + \
-                  "Validation set: N/A (100% train)")
+            if training_params.get("verbose_epochs", False):
+                print(
+                    "Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time)
+                    + "Training set accuracy {:e}  |  ".format(train_loss)
+                    + "Validation set: N/A (100% train)"
+                )
         
         # Early stopping: stop training if loss goes below 10^-3
         # Use validation loss if available, otherwise use training loss

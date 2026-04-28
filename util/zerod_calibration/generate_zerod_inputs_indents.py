@@ -651,7 +651,7 @@ def main():
                     X_full, feature_names_full, junction_names, _ = load_junction_geometric_features(
                         variant_geometric_input,
                         require_two_outlets=True,
-                        verbose=True
+                        verbose=False,
                     )
                     #save X_full to a csv file
                     import pandas as pd
