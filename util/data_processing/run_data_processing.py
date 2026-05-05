@@ -30,7 +30,7 @@ from util.data_processing.outputs_from_config import load_junction_lumped_parame
 from util.data_processing.data_dict_from_csvs import build_data_dict_from_csvs, build_data_dict_from_vessel_csvs
 from util.data_processing.generate_split_indices import (
     generate_split_indices,
-    get_geometry_row_ranges,
+    resolve_geometry_row_ranges_from_jax_dict,
 )
 from util.tools.basic import save_dict
 
@@ -372,12 +372,13 @@ def main():
             if "input" not in data_dict:
                 raise ValueError("Expected 'input' in data_dict")
             num_pts = int(getattr(data_dict["input"], "shape")[0])
-            row_ranges, _, geometries_ordered = get_geometry_row_ranges(
+            row_ranges, _, geometries_ordered = resolve_geometry_row_ranges_from_jax_dict(
+                data_dict,
                 os.path.join(args.data_root, "ml_inputs"),
                 args.set_name,
                 geometry_variant,
-                geometries=geometries,
                 run_config_suffix=run_config_suffix,
+                geometries=geometries,
             )
             train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
                 num_pts=num_pts,

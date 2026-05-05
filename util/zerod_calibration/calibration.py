@@ -69,7 +69,31 @@ def repeat_observations_in_time(observations, num_repeats=5):
     return result
 
 
-def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False, set_name=None):
+def calibration_residual_csv_basename(calibration_input_path: str) -> str:
+    """
+    Filename (no directory) for the stacked residual CSV consumed by svZeroDCalibrator.
+
+    Stored in ``calibration_parameters.residual_csv`` as a basename; ``run_calibration`` resolves it
+    to an absolute path next to the calibrated output JSON (typically the same folder as inputs).
+
+    Args:
+        calibration_input_path: Path to the calibration *input* JSON whose stem drives the name.
+
+    Returns:
+        e.g. ``bifurcations_EL_calibration_residual_BloodVesselJunction.csv`` for input
+        ``*_calibration_input_BloodVesselJunction.json``.
+    """
+    stem = os.path.splitext(os.path.basename(str(calibration_input_path)))[0]
+    if "_calibration_input_" in stem:
+        return stem.replace("_calibration_input_", "_calibration_residual_", 1) + ".csv"
+    if stem.endswith("_calibration_input"):
+        return stem[: -len("_calibration_input")] + "_calibration_residual.csv"
+    if stem == "calibration_input":
+        return "calibration_residual.csv"
+    return stem + "_calibration_residual.csv"
+
+
+def create_calibration_input(geometric_input_path, observations, output_path, observations_full=None, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False, set_name=None, stacked_residual_csv=True):
     """
     Create calibration input file from geometric input and observations.
     BC times use ``len(inflow)`` samples spaced by ``time_step_size`` when the observed
@@ -80,16 +104,22 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     
     Args:
         geometric_input_path: Path to geometric 0D input JSON
-        observations: Dictionary with observation data (y, dy)
+        observations: Calibration observations dictionary (y, dy), potentially NaN-masked
         output_path: Path to save calibration input JSON
+        observations_full: Optional full observations dictionary (y, dy). If None, uses observations.
         centerline_soln_path: Path to 1D centerline solution VTP (to extract timestep count)
         geo_dir: Geometry directory (to find XML file for timestep size)
         stenosis_off: If True, set calibrate_stenosis_coefficient False and set all stenosis to 0
         penalty_off: If True (and stenosis_off is False), set L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient to 0. Incompatible with stenosis_off.
         set_name: Optional set name (e.g. VMR_abdo) used to look up set-specific L2 penalties from SET_L2_PENALTIES; unlisted sets use defaults.
+        stacked_residual_csv: If True (default), set ``calibration_parameters.residual_csv`` to a basename
+            derived from ``output_path`` so svZeroDCalibrator can write the stacked residual CSV. If False,
+            only a ``residual_csv`` already present on the geometric input is preserved.
     """
     if stenosis_off and penalty_off:
         raise ValueError("Cannot use both --stenosis-off and --penalty-off.")
+    if observations_full is None:
+        observations_full = observations
     print(f"Reading geometric input from: {geometric_input_path}")
     with open(geometric_input_path, 'r') as f:
         inp = json.load(f)
@@ -98,12 +128,12 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     bc_time = None
 
     geo_bc_t, geo_bc_q = _geometric_inflow_tq_lists(inp)
-    inflow_key = _flow_inflow_observation_key(observations)
+    inflow_key = _flow_inflow_observation_key(observations_full)
 
     obs_bc_flow_list = None
     obs_bc_len = 0
     if inflow_key:
-        obs_bc_flow_list = observations["y"][inflow_key]
+        obs_bc_flow_list = observations_full["y"][inflow_key]
         if isinstance(obs_bc_flow_list, np.ndarray):
             obs_bc_flow_list = obs_bc_flow_list.tolist()
         if obs_bc_flow_list is None:
@@ -229,9 +259,11 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         l2_R, l2_stenosis = SET_L2_PENALTIES.get(set_name, (DEFAULT_L2_R, DEFAULT_L2_STENOSIS))
         if set_name and set_name in SET_L2_PENALTIES:
             print(f"  Set-specific L2 penalties for {set_name}: R={l2_R}, stenosis={l2_stenosis}")
+    prev_cal = inp.get("calibration_parameters") or {}
+    prev_residual_csv = prev_cal.get("residual_csv")
     inp["calibration_parameters"] = {
-        "tolerance_gradient": 1e-4,
-        "tolerance_increment": 1e-4,
+        "tolerance_gradient": 1e-5,
+        "tolerance_increment": 1e-10,
         "maximum_iterations": 2000,
         "calibrate_stenosis_coefficient": not stenosis_off,
         "calibrate_capacitance": False,
@@ -240,6 +272,12 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         "L2_penalty_stenosis_coefficient": l2_stenosis,
         "L2_penalty_L": 0
     }
+    if stacked_residual_csv:
+        rc = calibration_residual_csv_basename(output_path)
+        inp["calibration_parameters"]["residual_csv"] = rc
+        print(f"  Stacked residual CSV (relative path for calibrator): {rc}")
+    elif prev_residual_csv:
+        inp["calibration_parameters"]["residual_csv"] = prev_residual_csv
     
     inp["simulation_parameters"]["number_of_time_pts_per_cardiac_cycle"] = len(bc_time)
     inp["simulation_parameters"]["output_all_cycles"] = True
@@ -250,12 +288,13 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     
     # Convert numpy arrays in observations to lists for JSON serialization
     observations_list = convert_numpy_to_list(observations)
+    observations_full_list = convert_numpy_to_list(observations_full)
     
     # Add observations
     inp.update(observations_list)
     
     # Store full observations for plotting (3D solution should show full time series)
-    inp['_full_observations'] = observations_list
+    inp['_full_observations'] = observations_full_list
     
     # Store original observed inflow BC for later use in calibrated output
     if '_full_bc_time' in inp and '_full_bc_flow' in inp:
@@ -300,6 +339,90 @@ def _sanitize_svzerod_calibration_topology(config):
             junc.pop("inlet_vessels", None)
 
 
+def _materialize_nan_masked_observations_for_calibrator(config):
+    """
+    Convert NaN-masked observation rows into finite sliced rows for calibrator input.
+
+    The stock nlohmann::json parser in svzerodcalibrator rejects NaN tokens in JSON.
+    """
+    y = config.get("y")
+    if not isinstance(y, dict) or not y:
+        return config
+
+    dy = config.get("dy")
+    dy = dy if isinstance(dy, dict) else {}
+
+    first_key = next(iter(y))
+    ref = np.asarray(y[first_key], dtype=float)
+    if ref.ndim != 1:
+        return config
+    T = ref.shape[0]
+    if T == 0:
+        return config
+
+    keep_mask = np.ones(T, dtype=bool)
+    has_nan = False
+
+    for bucket in (y, dy):
+        for key, series in bucket.items():
+            arr = np.asarray(series, dtype=float)
+            if arr.ndim != 1 or arr.shape[0] != T:
+                continue
+            finite = np.isfinite(arr)
+            if not np.all(finite):
+                has_nan = True
+            keep_mask &= finite
+
+    if not has_nan:
+        return config
+
+    idx = np.flatnonzero(keep_mask)
+    n_keep = int(idx.shape[0])
+    if n_keep == 0:
+        raise RuntimeError("All calibration observation rows are NaN/non-finite; cannot run calibrator.")
+
+    out = dict(config)
+    y_out = {}
+    for key, series in y.items():
+        arr = np.asarray(series, dtype=float)
+        if arr.ndim == 1 and arr.shape[0] == T:
+            y_out[key] = arr[idx].tolist()
+        else:
+            y_out[key] = series
+    out["y"] = y_out
+
+    if dy:
+        dy_out = {}
+        for key, series in dy.items():
+            arr = np.asarray(series, dtype=float)
+            if arr.ndim == 1 and arr.shape[0] == T:
+                dy_out[key] = arr[idx].tolist()
+            else:
+                dy_out[key] = series
+        out["dy"] = dy_out
+
+    for bc in out.get("boundary_conditions", []):
+        if bc.get("bc_name") != "INFLOW":
+            continue
+        bc_values = bc.get("bc_values") or {}
+        t = bc_values.get("t")
+        q = bc_values.get("Q")
+        if isinstance(t, list) and isinstance(q, list) and len(t) == T and len(q) == T:
+            bc_values["t"] = np.asarray(t, dtype=float)[idx].tolist()
+            bc_values["Q"] = np.asarray(q, dtype=float)[idx].tolist()
+            bc["bc_values"] = bc_values
+        break
+
+    sp = out.get("simulation_parameters")
+    if isinstance(sp, dict):
+        sp = dict(sp)
+        sp["number_of_time_pts_per_cardiac_cycle"] = n_keep
+        out["simulation_parameters"] = sp
+
+    print(f"  Materialized NaN-masked observations for calibrator: {n_keep}/{T} timestep(s) kept.")
+    return out
+
+
 def run_calibration(calibration_input_path, output_path):
     """
     Run svZeroDCalibrator to generate calibrated input file.
@@ -319,6 +442,7 @@ def run_calibration(calibration_input_path, output_path):
         config = json.load(f)
 
     _sanitize_svzerod_calibration_topology(config)
+    config = _materialize_nan_masked_observations_for_calibrator(config)
 
     # Use svzerodcalibrator executable
     calibrator_exe = '/Users/natalia/cursor_access/svZeroDPlus/Release/svzerodcalibrator'
@@ -326,7 +450,22 @@ def run_calibration(calibration_input_path, output_path):
     # Get absolute paths
     abs_input_path = os.path.abspath(calibration_input_path)
     abs_output_path = os.path.abspath(output_path)
-    
+
+    # Relative residual_csv is interpreted by the C++ calibrator relative to the
+    # process cwd — resolve it here so the CSV lands next to the calibrated output.
+    cp = config.get("calibration_parameters")
+    if isinstance(cp, dict):
+        rc = cp.get("residual_csv")
+        if isinstance(rc, str) and rc.strip():
+            rc_clean = rc.strip()
+            if not os.path.isabs(rc_clean):
+                out_dir = os.path.dirname(abs_output_path) or os.getcwd()
+                abs_rc = os.path.abspath(os.path.join(out_dir, rc_clean))
+                cp = dict(cp)
+                cp["residual_csv"] = abs_rc
+                config["calibration_parameters"] = cp
+                print(f"  Resolved residual_csv to {abs_rc} (same folder as calibrated output)")
+
     print(f"  Attempting calibration with svzerodcalibrator executable...")
     print(f"    Executable: {calibrator_exe}")
     print(f"    Input: {abs_input_path}")
@@ -337,7 +476,7 @@ def run_calibration(calibration_input_path, output_path):
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
         ) as tf:
-            json.dump(config, tf, indent=4)
+            json.dump(config, tf, indent=4, allow_nan=False)
             tmp_input = tf.name
         # Run svzerodcalibrator: svzerodcalibrator <input.json> <output.json>
         result = subprocess.run(

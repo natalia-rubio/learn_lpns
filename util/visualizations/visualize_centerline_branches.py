@@ -169,9 +169,9 @@ def build_tree_structure(geometric_input_path):
     for vessel in vessels:
         vessel_id = vessel.get('vessel_id', None)
         if vessel_id is not None:
-        if 'boundary_conditions' in vessel and 'inlet' in vessel['boundary_conditions']:
+            if 'boundary_conditions' in vessel and 'inlet' in vessel['boundary_conditions']:
                 root_vessel_id = vessel_id
-            break
+                break
     
     # If no explicit inlet BC, use first vessel_id (if any)
     if root_vessel_id is None and vessel_id_to_name:
@@ -197,10 +197,10 @@ def build_tree_structure(geometric_input_path):
     for vessel in vessels:
         vessel_id = vessel.get('vessel_id', None)
         if vessel_id is not None:
-        if 'boundary_conditions' in vessel and 'outlet' in vessel['boundary_conditions']:
+            if 'boundary_conditions' in vessel and 'outlet' in vessel['boundary_conditions']:
                 terminal_vessels.add(vessel_id)
             elif vessel_id not in tree or len(tree[vessel_id]) == 0:
-            # No children means it's terminal
+                # No children means it's terminal
                 terminal_vessels.add(vessel_id)
     
     return vessel_id_to_name, tree, root_vessel_id, terminal_vessels

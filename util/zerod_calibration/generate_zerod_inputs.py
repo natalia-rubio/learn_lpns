@@ -10,6 +10,7 @@ Based on the workflow in richter2024-paper-tools.
 """
 
 import glob
+import copy
 import os
 import sys
 sys.path.append("/Users/natalia/cursor_access/learn_lpns")
@@ -180,6 +181,12 @@ def main():
                        help='Only run NN inference and forward simulation on NN inputs (skip calibration)')
     parser.add_argument('--no-redo', action='store_true',
                        help='Skip recreating files if they already exist (check at each step)')
+    parser.add_argument(
+        '--no-calibration-residual-csv',
+        action='store_true',
+        dest='no_calibration_residual_csv',
+        help='Do not set calibration_parameters.residual_csv (no stacked residual CSV from svZeroDCalibrator).',
+    )
     parser.add_argument('--normalize', action='store_true',
                        help='Use z-normalized NN models and apply normalization/unnormalization at inference')
     parser.add_argument('--model-dir', default=None,
@@ -522,7 +529,13 @@ def main():
             geometric_input_path = geometry_variants['original']['geometric_input']
             geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
             if os.path.exists(soln_path):
-                observations = extract_observations_from_1d(soln_path, geometric_input_path, geo_dir=geo_dir, start_idx=0)
+                observations = extract_observations_from_1d(
+                    soln_path,
+                    geometric_input_path,
+                    geo_dir=geo_dir,
+                    start_idx=0,
+                    verbose=bool(verbose or VERBOSE_ZERO_D_PIPELINE),
+                )
             else:
                 raise FileNotFoundError(f"1D solution not found: {soln_path}")
 
@@ -643,38 +656,17 @@ def main():
                     print(f"\n  Creating base calibration input for {geo_variant_name}...")
                     try:
                         # For bifurcations and bifurcations_EL geometries:
-                        # - Always rename existing observations to match bifurcated junction names
-                        # - Optionally add synthetic connector-vessel observations (only for bifurcations, not EL)
+                        # - bifurcations: rename 1D observation keys + J–J trunk fill (via rename helper)
+                        # - bifurcations_EL: re-extract with centerline_node_ids + mass-conserving J–J overwrite
                         if geo_variant_name in ['bifurcations', 'bifurcations_EL']:
                             with open(variant_geometric_input, 'r') as f:
                                 bifurcated_geometric_input = json.load(f)
-                            
-                            # For bifurcations: generate synthetic connector observations
-                            # For bifurcations_EL: skip synthetic observations (vessels already merged/converted)
+
                             if geo_variant_name == 'bifurcations':
-                                include_synthetic_observations = True
-                                if include_synthetic_observations:
-                                    # Load the original geometric input and centerline data
-                                    original_geometric_input_path = geometry_variants['original']['geometric_input']
-                                    with open(original_geometric_input_path, 'r') as f:
-                                        original_geometric_input = json.load(f)
-
-                                    # Read centerline data
-                                    centerline_data, _ = read_centerline_vtp(centerline_path)
-
-                                    print(f"    Generating synthetic observations for connector vessels...")
-                                    augmented_observations = generate_connector_observations(
-                                        observations,
-                                        original_geometric_input,
-                                        bifurcated_geometric_input,
-                                        centerline_data
-                                    )
-                                else:
-                                    print(f"    Skipping synthetic observations for connector vessels")
-                                    print(f"    Renaming existing observation keys to match bifurcated junction names...")
-                                    augmented_observations = rename_observations_for_bifurcations(
-                                        observations, bifurcated_geometric_input
-                                    )
+                                print(f"    Renaming observation keys to match bifurcated junction names...")
+                                augmented_observations = rename_observations_for_bifurcations(
+                                    observations, bifurcated_geometric_input
+                                )
                             else:  # bifurcations_EL
                                 # Extract observations directly from 1D solution using centerline_node_ids
                                 print(f"    Extracting observations from 1D solution using centerline_node_ids...")
@@ -686,24 +678,60 @@ def main():
                                     start_idx=0,
                                     derivative_method='central'
                                 )
+                                # J–J trunk flows from naive 1D samples can disagree with summed leaf flows;
+                                # overwrite with sum-of-descendant-terminal-flows (same rule as bif rename path).
+                                y_el = augmented_observations.setdefault("y", {})
+                                dy_el = augmented_observations.setdefault("dy", {})
+                                n_jj_f, n_jj_p = apply_mass_conserving_jj_trunk_observations_inplace(
+                                    y_el,
+                                    dy_el,
+                                    bifurcated_geometric_input,
+                                    overwrite=True,
+                                )
+                                if n_jj_f or n_jj_p:
+                                    print(
+                                        f"    EL: mass-conserving J–J from descendant leaves "
+                                        f"({n_jj_f} flow, {n_jj_p} pressure key(s), overwrite=True)"
+                                    )
 
                             obs_for_calib = augmented_observations
+                            _geom_for_flow_mass = bifurcated_geometric_input
                         else:
                             # Original geometry: use original observations
                             obs_for_calib = observations
+                            with open(variant_geometric_input, "r") as _gf_mass:
+                                _geom_for_flow_mass = json.load(_gf_mass)
+
+                        from util.zerod_calibration.observation_flow_mass_filter import (
+                            flow_mass_balance_keep_mask,
+                            apply_nan_mask_to_observations,
+                        )
+
+                        obs_full = copy.deepcopy(obs_for_calib)
+                        keep_mask = flow_mass_balance_keep_mask(
+                            obs_full,
+                            _geom_for_flow_mass,
+                            min_timesteps=1,
+                            verbose=True,
+                            label=f"{geo_variant_name} observation flow mass-balance",
+                        )
+                        obs_for_calib = apply_nan_mask_to_observations(obs_full, keep_mask)
 
                         # For set names including "priya", 1D solution is short: repeat flow/pressure 5x with time increasing
                         if 'priya' in args.set_name:
                             from util.zerod_calibration.calibration import repeat_observations_in_time
                             obs_for_calib = repeat_observations_in_time(obs_for_calib, num_repeats=5)
+                            obs_full = repeat_observations_in_time(obs_full, num_repeats=5)
                             print(f"    Repeated observation series 5x for extended time (set_name contains 'priya')")
 
                         create_calibration_input(
                             variant_geometric_input, obs_for_calib, variant_calibration_input,
+                            observations_full=obs_full,
                             centerline_soln_path=soln_path, geo_dir=geo_dir,
                             stenosis_off=getattr(args, 'stenosis_off', False),
                             penalty_off=getattr(args, 'penalty_off', False),
                             set_name=getattr(args, 'set_name', None),
+                            stacked_residual_csv=not getattr(args, 'no_calibration_residual_csv', False),
                         )
                         generated_files.append(variant_calibration_input)
                         print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
@@ -733,7 +761,12 @@ def main():
                         
                         # Apply junction type modification to calibration input
                         jtype_config = modify_junction_types(base_calibration_config, jtype)
-                        
+                        if not getattr(args, 'no_calibration_residual_csv', False):
+                            _cp = jtype_config.setdefault("calibration_parameters", {})
+                            _cp["residual_csv"] = calibration_residual_csv_basename(
+                                jtype_input_path
+                            )
+
                         with open(jtype_input_path, 'w') as f:
                             json.dump(jtype_config, f, indent=4)
                         generated_files.append(jtype_input_path)
@@ -765,6 +798,24 @@ def main():
                     # Junction types are now preserved by the calibrator
                 except Exception as e:
                     raise Exception(f"Calibration failed for {geo_variant_name}/{jtype}: {e}")
+
+        # Step 3.4: Heatmap of stacked residual L2 norms (cases × original / bifurcations / bifurcations_EL)
+        try:
+            _repo_root = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+            from util.visualizations.visualize_calibration_residual_grid import (
+                plot_residual_grid_after_calibration,
+            )
+
+            plot_residual_grid_after_calibration(
+                repo_root=_repo_root,
+                set_name=args.set_name,
+                run_config_suffix=run_config_suffix if run_config_suffix else None,
+                junction_types=args.junction_types,
+            )
+        except Exception as e:
+            print(f"  Warning: calibration residual L2 grid plot failed: {e}")
     
     # Step 3.5: Run data processing pipeline for neural network training data (after calibration)
     # Process each geometry variant separately (bifurcations and bifurcations_EL)

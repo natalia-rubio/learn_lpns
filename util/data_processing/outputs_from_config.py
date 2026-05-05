@@ -130,7 +130,12 @@ def load_junction_lumped_parameters(
             out_junction_names.append(j_name)
             out_primary_outlet_names.append(vessel_name)
 
-        target_names = ["outlet_vessel_id"] + [f"{param_name}_outlet{i}" for param_name in sorted(jv.keys()) for i in range(len(outlet_vessel_ids))]
+        # Use outlet_names length (two outlets from outlet_vessels or outlet_blocks), not
+        # len(outlet_vessel_ids), which is 0 when only outlet_blocks is set (bifurcations_EL).
+        n_out = len(outlet_names)
+        target_names = ["outlet_vessel_id"] + [
+            f"{param_name}_outlet{i}" for param_name in sorted(jv.keys()) for i in range(n_out)
+        ]
     if not rows:
         raise ValueError("No junctions with usable junction_values were found in calibration output.")
     if target_names is None:

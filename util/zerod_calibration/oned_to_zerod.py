@@ -54,7 +54,14 @@ def enforce_zero_dy_for_steady_flow(observations, num_pressure_timesteps):
         dy[k] = [0.0] * n
 
 
-def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0, derivative_method='central'):
+def extract_observations_from_1d(
+    centerline_soln_path,
+    geometric_input_path,
+    geo_dir=None,
+    start_idx=0,
+    derivative_method="central",
+    verbose=False,
+):
     """
     Extract observation data from 1D centerline solution VTP file.
     Extracts observations at boundaries and junctions following the format expected by svZeroDCalibrator.
@@ -70,6 +77,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                           'central' uses central differences (np.gradient), 
                           'forward' uses forward differences (f[i+1] - f[i]) / dt,
                           'backward' uses backward differences (f[i] - f[i-1]) / dt.
+        verbose: If True, print per-junction centerline point indices used for extraction.
         
     Returns:
         Dictionary with observation data (y, dy) for calibration
@@ -424,7 +432,8 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
             outlet_blocks = junc.get("outlet_blocks") or []
             for ib in inlet_blocks:
                 pt_idx = _point_for_block_neighbor(ib, vessel_prefer_end=True)
-                print(f"{ib}:{junc_name} inlet point index (block): {pt_idx}")
+                if verbose:
+                    print(f"{ib}:{junc_name} inlet point index (block): {pt_idx}")
                 if pt_idx is not None:
                     p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
                     if p_ref is not None:
@@ -434,7 +443,8 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                         observations["dy"][f"flow:{ib}:{junc_name}"] = f_der[start_idx:end_idx]
             for ob in outlet_blocks:
                 pt_idx = _point_for_block_neighbor(ob, vessel_prefer_end=False)
-                print(f"{junc_name}:{ob} outlet point index (block): {pt_idx}")
+                if verbose:
+                    print(f"{junc_name}:{ob} outlet point index (block): {pt_idx}")
                 if pt_idx is not None:
                     p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
                     if p_ref is not None:
@@ -458,7 +468,8 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 # This is approximate - ideally we'd find the exact junction point
                 # Find a point representing this 0D vessel segment (near the junction)
                 pt_idx = find_point_for_vessel_segment(vessel_name, prefer_end=True)
-                print(f"{vessel_name}:{junc_name} inlet point index: {pt_idx}")
+                if verbose:
+                    print(f"{vessel_name}:{junc_name} inlet point index: {pt_idx}")
                 if pt_idx is not None:
                     p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
                     if p_ref is not None:
@@ -478,7 +489,8 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 # Find a point on this vessel near the junction (use first point of branch)
                 # Find a point representing this 0D vessel segment (near the junction)
                 pt_idx = find_point_for_vessel_segment(vessel_name, prefer_end=False)
-                print(f"{vessel_name}:{junc_name} outlet point index: {pt_idx}")
+                if verbose:
+                    print(f"{vessel_name}:{junc_name} outlet point index: {pt_idx}")
                 if pt_idx is not None:
                     p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
                     if p_ref is not None:

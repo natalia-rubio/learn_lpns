@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import csv
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import numpy as np
 
@@ -507,6 +507,9 @@ def build_data_dict_from_csvs(
     all_inputs: List[np.ndarray] = []
     all_outputs: List[np.ndarray] = []
     all_generation: List[np.ndarray] = []
+    # Per-geometry row index ranges in the stacked jax arrays (same order as ``geometries``).
+    geometry_row_ranges: List[Tuple[int, int]] = []
+    row_offset = 0
     # Per-row provenance: (geometry_name, primary_outlet_name) for every row
     row_geo_names: List[str] = []
     row_outlet_names: List[str] = []
@@ -593,6 +596,9 @@ def build_data_dict_from_csvs(
                 )
 
         # Use filtered columns from geometric_features and junction_lumped_parameters
+        n_stack = int(geom_X.shape[0])
+        geometry_row_ranges.append((row_offset, row_offset + n_stack))
+        row_offset += n_stack
         all_inputs.append(geom_X)
         all_outputs.append(out_Y)
         all_generation.append(geo_gen)
@@ -600,6 +606,10 @@ def build_data_dict_from_csvs(
     input_array = np.vstack(all_inputs)
     output_array = np.vstack(all_outputs)
     generation_array = np.concatenate(all_generation, axis=0)
+    if row_offset != input_array.shape[0]:
+        raise ValueError(
+            f"internal row offset {row_offset} != stacked input rows {input_array.shape[0]}"
+        )
     if generation_array.shape[0] != input_array.shape[0]:
         raise ValueError(
             f"generation row count {generation_array.shape[0]} != input rows {input_array.shape[0]}"
@@ -736,7 +746,7 @@ def build_data_dict_from_csvs(
     scaling_factors = np.ones((n, 1), dtype=float)
 
     if jnp is not None:
-        data_dict = {
+        data_dict: Dict[str, Any] = {
             "input": jnp.asarray(input_array),
             f"output_{output_type}": jnp.asarray(output_array),
             "scaling_factors": jnp.asarray(scaling_factors),
@@ -744,6 +754,8 @@ def build_data_dict_from_csvs(
             "normalized": normalize,
             "output_min": jnp.asarray(output_min),
             "output_max": jnp.asarray(output_max),
+            "geometry_row_ranges": geometry_row_ranges,
+            "geometry_names_order": list(geometries),
         }
         if normalize:
             data_dict["input_mean"] = jnp.asarray(input_mean)
@@ -759,6 +771,8 @@ def build_data_dict_from_csvs(
             "normalized": normalize,
             "output_min": output_min,
             "output_max": output_max,
+            "geometry_row_ranges": geometry_row_ranges,
+            "geometry_names_order": list(geometries),
         }
         if normalize:
             data_dict["input_mean"] = input_mean

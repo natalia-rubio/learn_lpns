@@ -22,6 +22,7 @@ if REPO_ROOT not in sys.path:
 from util.data_processing.generate_split_indices import (
     generate_split_indices,
     get_geometry_row_ranges,
+    resolve_geometry_row_ranges_from_jax_dict,
 )
 from util.data_processing.data_dict_from_csvs import get_default_include_features
 from util.tools.basic import load_dict, save_dict
@@ -310,11 +311,13 @@ def run_cross_validation(
                 no_redo=no_redo,
             )
 
-    # Discover geometries and row ranges (same order as jax array); use config-specific ml_inputs when set
-    row_ranges, total_rows, geometries = get_geometry_row_ranges(
+    # Discover geometry folder count for jax filename; per-geometry row ranges come from the jax
+    # pickle (geometry_row_ranges) when present so they match stacked rows even if geometric_features
+    # line counts on disk drifted from a stale or partially rebuilt pickle.
+    _, _, geometries_for_path = get_geometry_row_ranges(
         ml_inputs_root, set_name, geometry_variant, run_config_suffix=data_paths_suffix
     )
-    num_geos = len(geometries)
+    num_geos = len(geometries_for_path)
     if num_geos == 0:
         raise ValueError(
             f"No geometries found under {ml_inputs_root}/{set_name}"
@@ -357,9 +360,21 @@ def run_cross_validation(
 
     data_dict = load_dict(jax_path)
     num_pts = int(np.asarray(data_dict["input"]).shape[0])
+    row_ranges, total_rows, geometries = resolve_geometry_row_ranges_from_jax_dict(
+        data_dict,
+        ml_inputs_root,
+        set_name,
+        geometry_variant,
+        run_config_suffix=data_paths_suffix,
+    )
+    num_geos = len(geometries)
     if total_rows != num_pts:
         raise ValueError(
-            f"Row count mismatch: row_ranges sum={total_rows} vs jax num_pts={num_pts}"
+            f"Row count mismatch: row_ranges sum={total_rows} vs jax num_pts={num_pts}. "
+            "This usually means a stale jax pickle after ML CSVs changed, or a corrupt CSV "
+            "(e.g. junction_lumped_parameters header vs data columns — check run_data_processing output). "
+            f"Delete {jax_path} and re-run data processing for this set/variant/config. "
+            "Pickles written by the current code store geometry_row_ranges so CV matches jax rows."
         )
 
     if data_paths_suffix:

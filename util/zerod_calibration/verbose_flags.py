@@ -17,6 +17,10 @@ or NN prediction mapping.
 EL adjustment in ``bifurcation_splitting.adjust_junction_boundaries_by_entrance_length`` follows
 the ``verbose`` argument (no longer forced on). Pass ``--verbose`` to ``generate_zerod_inputs.py``
 for EL junction-by-junction logs, absorb/rename traces, and connector conversion lines.
+
+``oned_to_zerod.extract_observations_from_1d(..., verbose=True)`` (or CLI ``--verbose`` /
+``VERBOSE_ZERO_D_PIPELINE`` via ``generate_zerod_inputs``) prints per-junction centerline point
+indices; default is off.
 """
 
 VERBOSE_ZERO_D_PIPELINE = False

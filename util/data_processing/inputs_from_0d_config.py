@@ -17,7 +17,6 @@ vessel itself (including the bifurcation that feeds that vessel).
 
 import json
 import os
-import re
 from typing import Dict, List, Tuple, Any
 
 import numpy as np
@@ -540,19 +539,11 @@ def load_junction_geometric_features(
     return X, feature_names, junction_names, outlet_primary_names
 
 
-def _is_split_connector(vessel_name: str) -> bool:
-    """True if vessel is a connector created by junction splitting (_connector0, _connector1, ...)."""
-    return bool(re.search(r"_connector\d+$", vessel_name))
-
-
 def _resolve_original_inlet_per_junction(cfg: Dict[str, Any]) -> Dict[str, str]:
     """
-    For each junction (with two outlets), resolve the original inlet vessel name:
-    the vessel that carries the total flow into the original (possibly multi-outlet) junction.
-    When a multi-outlet junction was split into multiple bifurcations, trace back through
-    connector inlets to the non-connector inlet of the first bifurcation in the chain.
-    For ``inlet_blocks`` / ``outlet_blocks`` topology, trace back through upstream junction
-    names until a non-connector vessel inlet is found.
+    For each junction (with two outlets), resolve the carrier inlet vessel or upstream
+    junction: trace ``inlet_blocks`` / upstream junction hops along J–J trunks introduced
+    when multi-outlet junctions were cascaded split (no synthetic ``_*_connector{N}`` vessels).
 
     Returns:
         Dict mapping junction_name -> original_inlet_vessel_name.
@@ -620,20 +611,8 @@ def _resolve_original_inlet_per_junction(cfg: Dict[str, Any]) -> Dict[str, str]:
                 if cur is None:
                     break
                 continue
-            # kind == "id": vessel id
-            current_inlet_id = cur
-            inlet_name = vessel_id_to_name.get(current_inlet_id, "")
-            if not inlet_name or not _is_split_connector(inlet_name):
-                break
-            prev_junction = outlet_vessel_id_to_junction.get(_norm_vid(current_inlet_id))
-            if not prev_junction or prev_junction == j_name:
-                break
-            prev = junc_by_name.get(prev_junction)
-            if not prev:
-                break
-            kind, cur = _first_inlet_token(prev)
-            if cur is None:
-                break
+            # kind == "id": bifurcation inlet vessel (no legacy split *_connector{N} hops)
+            break
         if kind == "id":
             out[j_name] = vessel_id_to_name.get(cur, "")
         elif kind == "junction":
