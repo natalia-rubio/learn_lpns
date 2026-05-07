@@ -17,11 +17,14 @@ vessel itself (including the bifurcation that feeds that vessel).
 
 import json
 import os
-import re
 from typing import Dict, List, Tuple, Any
 
 import numpy as np
 
+from util.zerod_calibration.bifurcation_splitting import (
+    junction_outlet_count,
+    junction_uses_block_connectivity,
+)
 from util.zerod_calibration.post_processing import read_zerod_csv
 
 
@@ -132,57 +135,114 @@ def _find_root_vessel_id_for_generation(cfg: Dict[str, Any]):
     return min(ids) if ids else None
 
 
+def _norm_vid(x: Any) -> Any:
+    try:
+        return int(x)
+    except (TypeError, ValueError):
+        return x
+
+
 def compute_bifurcation_generation_by_vessel(cfg: Dict[str, Any]) -> Dict[Any, float]:
     """
     Map vessel_id -> generation: number of 2-outlet junctions along the path from
     the root inlet vessel to this vessel. The root vessel has generation 0.
 
-    Each time the path crosses a junction with exactly two elements in
-    ``outlet_vessels``, generation increments by one for all downstream outlets.
+    Counts a +1 each time the path crosses a junction with exactly two outlets
+    (``outlet_vessels`` or ``outlet_blocks``). Cascaded ``BloodVesselJunction`` links
+    (``inlet_blocks`` / ``outlet_blocks``) are traversed recursively.
 
     Vessels not reachable from the root are omitted from the map.
     """
     from collections import deque
 
+    vessels = cfg.get("vessels", []) or []
+    junctions = cfg.get("junctions", []) or []
+    vessel_name_to_id: Dict[str, Any] = {}
+    vessel_id_to_name: Dict[Any, str] = {}
+    for v in vessels:
+        vid = v.get("vessel_id")
+        vname = v.get("vessel_name", "") or ""
+        if vid is not None and vname:
+            vessel_name_to_id[vname] = vid
+            vessel_id_to_name[vid] = vname
+
+    junc_names = {j.get("junction_name", "") for j in junctions if j.get("junction_name")}
+    junc_by_name = {j.get("junction_name", ""): j for j in junctions if j.get("junction_name")}
+
+    def _outlet_block_names(j: Dict[str, Any]) -> List[str]:
+        ob = j.get("outlet_blocks")
+        if ob:
+            return list(ob)
+        names: List[str] = []
+        for vid in j.get("outlet_vessels") or []:
+            vn = vessel_id_to_name.get(vid, "")
+            if vn:
+                names.append(vn)
+        return names
+
+    def _vessel_feeds_junction(vid: Any, j: Dict[str, Any]) -> bool:
+        nv = _norm_vid(vid)
+        if junction_uses_block_connectivity(j):
+            for blk in j.get("inlet_blocks") or []:
+                if blk in vessel_name_to_id and _norm_vid(vessel_name_to_id[blk]) == nv:
+                    return True
+            return False
+        for iv in j.get("inlet_vessels") or []:
+            if _norm_vid(iv) == nv:
+                return True
+        return False
+
+    def _expand_junction_outputs(j_name: str, g_in: float, path: frozenset) -> List[Tuple[Any, float]]:
+        """Return (vessel_id, generation) for every vessel outlet reachable from junction ``j_name``."""
+        if not j_name or j_name not in junc_by_name or j_name in path:
+            return []
+        J = junc_by_name[j_name]
+        nout = junction_outlet_count(J)
+        inc = 1.0 if nout == 2 else 0.0
+        g2 = g_in + inc
+        path2 = path | {j_name}
+        res: List[Tuple[Any, float]] = []
+        for blk in _outlet_block_names(J):
+            if blk in junc_names:
+                res.extend(_expand_junction_outputs(blk, g2, path2))
+            elif blk in vessel_name_to_id:
+                oid = _norm_vid(vessel_name_to_id[blk])
+                res.append((oid, g2))
+        return res
+
     root = _find_root_vessel_id_for_generation(cfg)
     if root is None:
         return {}
-    try:
-        root = int(root)
-    except (TypeError, ValueError):
-        pass
-    junctions = cfg.get("junctions", []) or []
+    root = _norm_vid(root)
     gen: Dict[Any, float] = {root: 0.0}
     q = deque([root])
     while q:
         vid = q.popleft()
-        g_here = gen[vid]
+        nv = _norm_vid(vid)
+        g_here = float(gen.get(nv, 0.0))
         for j in junctions:
-            inlets_raw = j.get("inlet_vessels") or []
-            inlets = []
-            for iv in inlets_raw:
-                try:
-                    inlets.append(int(iv))
-                except (TypeError, ValueError):
-                    inlets.append(iv)
-            if vid not in inlets:
+            if not _vessel_feeds_junction(nv, j):
                 continue
-            outs = j.get("outlet_vessels") or []
-            inc = 1.0 if len(outs) == 2 else 0.0
+            nout = junction_outlet_count(j)
+            inc = 1.0 if nout == 2 else 0.0
             g_next = g_here + inc
-            for oid in outs:
-                if oid is None:
-                    continue
-                try:
-                    oid_int = int(oid)
-                except (TypeError, ValueError):
-                    oid_int = oid
-                if oid_int not in gen:
-                    gen[oid_int] = float(g_next)
-                    q.append(oid_int)
-                else:
-                    gen[oid_int] = min(gen[oid_int], float(g_next))
-    # Normalize keys to int where possible (JSON vessel IDs are sometimes str)
+            for blk in _outlet_block_names(j):
+                if blk in junc_names:
+                    for oid, gdown in _expand_junction_outputs(blk, g_next, frozenset()):
+                        oid = _norm_vid(oid)
+                        if oid not in gen:
+                            gen[oid] = float(gdown)
+                            q.append(oid)
+                        else:
+                            gen[oid] = min(gen[oid], float(gdown))
+                elif blk in vessel_name_to_id:
+                    oid = _norm_vid(vessel_name_to_id[blk])
+                    if oid not in gen:
+                        gen[oid] = float(g_next)
+                        q.append(oid)
+                    else:
+                        gen[oid] = min(gen[oid], float(g_next))
+
     out: Dict[Any, float] = {}
     for k, v in gen.items():
         try:
@@ -244,22 +304,26 @@ def load_junction_geometric_features(
             vessel_id_to_name[vid] = vname
             vessel_name_to_id[vname] = vid
 
+    junc_names = {jn.get("junction_name", "") for jn in junctions if jn.get("junction_name")}
+
     # We assume bifurcation geometry: each junction has exactly 1 inlet and 2 outlets.
     for j in junctions:
         j_name = j.get("junction_name", "")
         gp = j.get("geometric_params", {})
 
-        outlet_vessels = j.get("outlet_vessels", [])
+        outlet_vessels = j.get("outlet_vessels", []) or []
+        outlet_blocks = j.get("outlet_blocks") or []
 
-        if require_two_outlets and len(outlet_vessels) != 2:
+        if require_two_outlets and junction_outlet_count(j) != 2:
             # Skip non-bifurcation junctions in this mode
             if verbose:
                 print(f"Skipping junction {j_name}: not a bifurcation junction")
             continue
         if verbose:
-            print(f"Processing junction {j_name}: {outlet_vessels}")
+            print(f"Processing junction {j_name}: outlet_vessels={outlet_vessels} outlet_blocks={outlet_blocks}")
 
         inlet_ids_list = j.get("inlet_vessels", []) or []
+        inlet_blocks_list = j.get("inlet_blocks") or []
         inlet_vid0 = inlet_ids_list[0] if inlet_ids_list else None
         inlet_key = inlet_vid0
         if inlet_vid0 is not None:
@@ -267,15 +331,26 @@ def load_junction_geometric_features(
                 inlet_key = int(inlet_vid0)
             except (TypeError, ValueError):
                 inlet_key = inlet_vid0
-        generation_val = float(gen_by_vessel[inlet_key]) if inlet_key in gen_by_vessel else float("nan")
+        elif inlet_blocks_list:
+            blk0 = inlet_blocks_list[0]
+            if blk0 in vessel_name_to_id:
+                inlet_key = _norm_vid(vessel_name_to_id[blk0])
+            else:
+                inlet_key = None
+        generation_val = float(gen_by_vessel[inlet_key]) if inlet_key is not None and inlet_key in gen_by_vessel else float("nan")
 
         # Build authoritative outlet_name -> vessel_id mapping for this junction
-        # using the junction's outlet_vessels list and the vessels array
-        outlet_vessel_id_map = {}  # vessel_name -> vessel_id
+        # (junction-trunk outlets use sentinel id -1.0 for the ML outlet_vessel_id column)
+        outlet_vessel_id_map: Dict[str, Any] = {}
         for vid in outlet_vessels:
             vname = vessel_id_to_name.get(vid, "")
             if vname:
                 outlet_vessel_id_map[vname] = vid
+        for blk in outlet_blocks:
+            if blk in vessel_name_to_id:
+                outlet_vessel_id_map[blk] = vessel_name_to_id[blk]
+            elif blk in junc_names:
+                outlet_vessel_id_map[blk] = -1
 
         # --- Per-junction scalars ---
         inlet_max_r = _safe_get(gp, "inlet_max_inscribed_radius", default=None)
@@ -299,9 +374,15 @@ def load_junction_geometric_features(
         if require_two_outlets and len(outlet_names) != 2:
             # Fall back to using junction's outlet list order (by vessel index) if needed
             outlet_names = []
-            for vid in outlet_vessels:
-                if 0 <= vid < len(vessels):
-                    outlet_names.append(vessels[vid].get("vessel_name", f"v{vid}"))
+            if outlet_blocks:
+                outlet_names = list(outlet_blocks)
+            else:
+                for vid in outlet_vessels:
+                    vname = vessel_id_to_name.get(vid, "")
+                    if vname:
+                        outlet_names.append(vname)
+                    elif isinstance(vid, int) and 0 <= vid < len(vessels):
+                        outlet_names.append(vessels[vid].get("vessel_name", f"v{vid}"))
 
         
 
@@ -363,23 +444,27 @@ def load_junction_geometric_features(
         outlet1_name = outlet_names[1]
         outlet0_vid = outlet_vessel_id_map.get(outlet0_name)
         outlet1_vid = outlet_vessel_id_map.get(outlet1_name)
-        
+
         if outlet0_vid is None:
             raise ValueError(
-                f"Junction {j_name}: outlet '{outlet0_name}' not found in outlet_vessels {outlet_vessels}. "
-                f"Vessel name-to-id mapping: {outlet_vessel_id_map}"
+                f"Junction {j_name}: outlet '{outlet0_name}' not in outlet_vessel_id_map {outlet_vessel_id_map}. "
+                f"outlet_vessels={outlet_vessels} outlet_blocks={outlet_blocks}"
             )
         if outlet1_vid is None:
             raise ValueError(
-                f"Junction {j_name}: outlet '{outlet1_name}' not found in outlet_vessels {outlet_vessels}. "
-                f"Vessel name-to-id mapping: {outlet_vessel_id_map}"
+                f"Junction {j_name}: outlet '{outlet1_name}' not in outlet_vessel_id_map {outlet_vessel_id_map}. "
+                f"outlet_vessels={outlet_vessels} outlet_blocks={outlet_blocks}"
             )
         
         if verbose:
             print(f"  outlet0: {outlet0_name} (vessel_id={outlet0_vid}), outlet1: {outlet1_name} (vessel_id={outlet1_vid})")
 
         # Row 1: inlet + outlet0 + outlet1
-        if 'connector' not in outlet0_name or 'connectorEL' in outlet0_name:
+        # Only emit rows whose primary outlet is a real vessel id. Split-phase
+        # J-J trunk outlets are represented as sentinel -1 and should not become
+        # supervised rows (no matching calibration target row exists).
+        outlet0_is_real_vessel = (outlet0_vid is not None) and (float(outlet0_vid) >= 0.0)
+        if outlet0_is_real_vessel and ('connector' not in outlet0_name or 'connectorEL' in outlet0_name):
             feat_row_0_first: List[float] = [outlet0_vid]
             if verbose:
                 print(f"Adding outlet 0 features: {outlet0_name}, outlet vessel id: {outlet0_vid}")
@@ -394,8 +479,10 @@ def load_junction_geometric_features(
             outlet_primary_names.append(outlet0_name)
 
         # Row 2: inlet + outlet1 + outlet0 (swapped)
-        # Skip swapped sample if outlet1 would be a connector (connector-as-primary exclusion)
-        if 'connector' not in outlet1_name or 'connectorEL' in outlet1_name:
+        # Skip swapped sample if outlet1 would be a connector OR a J-J trunk
+        # (connector-as-primary exclusion + non-vessel-primary exclusion).
+        outlet1_is_real_vessel = (outlet1_vid is not None) and (float(outlet1_vid) >= 0.0)
+        if outlet1_is_real_vessel and ('connector' not in outlet1_name or 'connectorEL' in outlet1_name):
             if verbose:
                 print(f"Adding outlet 1 features: {outlet1_name}, outlet vessel id: {outlet1_vid}")
             feat_row_1_first: List[float] = [outlet1_vid]
@@ -409,9 +496,10 @@ def load_junction_geometric_features(
             outlet_primary_names.append(outlet1_name)
         else:
             if verbose:
+                reason = "connector" if ("connector" in outlet1_name and "connectorEL" not in outlet1_name) else "non-vessel outlet block"
                 print(
                     f"Skipping swapped sample for junction {j_name}: "
-                    f"primary outlet would be connector {outlet1_name}"
+                    f"primary outlet would be {reason} {outlet1_name}"
                 )
 
     if not rows:
@@ -451,63 +539,84 @@ def load_junction_geometric_features(
     return X, feature_names, junction_names, outlet_primary_names
 
 
-def _is_split_connector(vessel_name: str) -> bool:
-    """True if vessel is a connector created by junction splitting (_connector0, _connector1, ...)."""
-    return bool(re.search(r"_connector\d+$", vessel_name))
-
-
 def _resolve_original_inlet_per_junction(cfg: Dict[str, Any]) -> Dict[str, str]:
     """
-    For each junction (with two outlets), resolve the original inlet vessel name:
-    the vessel that carries the total flow into the original (possibly multi-outlet) junction.
-    When a multi-outlet junction was split into multiple bifurcations, trace back through
-    connector inlets to the non-connector inlet of the first bifurcation in the chain.
+    For each junction (with two outlets), resolve the carrier inlet vessel or upstream
+    junction: trace ``inlet_blocks`` / upstream junction hops along J–J trunks introduced
+    when multi-outlet junctions were cascaded split (no synthetic ``_*_connector{N}`` vessels).
 
     Returns:
         Dict mapping junction_name -> original_inlet_vessel_name.
     """
     vessels = cfg.get("vessels", [])
     junctions = cfg.get("junctions", [])
+    vessel_name_to_id = {
+        v.get("vessel_name", ""): v.get("vessel_id")
+        for v in vessels
+        if v.get("vessel_name") and v.get("vessel_id") is not None
+    }
     vessel_id_to_name = {
         v.get("vessel_id"): v.get("vessel_name", "")
         for v in vessels
         if v.get("vessel_id") is not None
     }
+    junc_names = {j.get("junction_name", "") for j in junctions if j.get("junction_name")}
+    junc_by_name = {j.get("junction_name", ""): j for j in junctions if j.get("junction_name")}
+
     # vessel_id -> junction that has this vessel as an outlet (for tracing back)
-    outlet_vessel_id_to_junction: Dict[int, str] = {}
+    outlet_vessel_id_to_junction: Dict[Any, str] = {}
     for j in junctions:
         j_name = j.get("junction_name", "")
-        for vid in j.get("outlet_vessels", []):
-            outlet_vessel_id_to_junction[vid] = j_name
+        for vid in j.get("outlet_vessels", []) or []:
+            outlet_vessel_id_to_junction[_norm_vid(vid)] = j_name
+        for blk in j.get("outlet_blocks") or []:
+            if blk in vessel_name_to_id:
+                outlet_vessel_id_to_junction[_norm_vid(vessel_name_to_id[blk])] = j_name
 
-    junction_to_inlet_id: Dict[str, int] = {}
+    def _first_inlet_token(j: Dict[str, Any]) -> Tuple[Any, Any]:
+        """Return ('id', vessel_id) or ('junction', junc_name) for the primary inlet."""
+        iv = j.get("inlet_vessels") or []
+        if iv:
+            return "id", _norm_vid(iv[0])
+        ib = j.get("inlet_blocks") or []
+        if not ib:
+            return None, None
+        blk = ib[0]
+        if blk in vessel_name_to_id:
+            return "id", _norm_vid(vessel_name_to_id[blk])
+        if blk in junc_names:
+            return "junction", blk
+        return None, None
+
+    junction_to_inlet_token: Dict[str, Tuple[Any, Any]] = {}
     for j in junctions:
-        inlets = j.get("inlet_vessels", [])
-        if inlets:
-            junction_to_inlet_id[j.get("junction_name", "")] = inlets[0]
+        jn = j.get("junction_name", "")
+        if jn:
+            junction_to_inlet_token[jn] = _first_inlet_token(j)
 
     out: Dict[str, str] = {}
     for j in junctions:
         j_name = j.get("junction_name", "")
-        if not j_name or len(j.get("outlet_vessels", [])) != 2:
+        if not j_name or junction_outlet_count(j) != 2:
             continue
-        current_inlet_id = junction_to_inlet_id.get(j_name)
-        if current_inlet_id is None:
+        kind, cur = junction_to_inlet_token.get(j_name, (None, None))
+        if cur is None:
             continue
-        # Walk back while the inlet is a split connector
         while True:
-            inlet_name = vessel_id_to_name.get(current_inlet_id, "")
-            if not inlet_name or not _is_split_connector(inlet_name):
-                break
-            # This inlet is a connector; find the junction that has it as outlet
-            prev_junction = outlet_vessel_id_to_junction.get(current_inlet_id)
-            if not prev_junction or prev_junction == j_name:
-                break
-            prev_inlet_id = junction_to_inlet_id.get(prev_junction)
-            if prev_inlet_id is None:
-                break
-            current_inlet_id = prev_inlet_id
-        out[j_name] = vessel_id_to_name.get(current_inlet_id, "")
+            if kind == "junction":
+                prev_j = junc_by_name.get(str(cur))
+                if not prev_j:
+                    break
+                kind, cur = _first_inlet_token(prev_j)
+                if cur is None:
+                    break
+                continue
+            # kind == "id": bifurcation inlet vessel (no legacy split *_connector{N} hops)
+            break
+        if kind == "id":
+            out[j_name] = vessel_id_to_name.get(cur, "")
+        elif kind == "junction":
+            out[j_name] = str(cur)
     return out
 
 
@@ -557,36 +666,86 @@ def compute_junction_flow_splits(
     if not times:
         return out
 
+    junc_names = {jn.get("junction_name", "") for jn in cfg.get("junctions", []) if jn.get("junction_name")}
+    junc_by_name = {
+        jn.get("junction_name", ""): jn
+        for jn in cfg.get("junctions", [])
+        if jn.get("junction_name")
+    }
+    vessel_name_to_id = {
+        v.get("vessel_name", ""): v.get("vessel_id")
+        for v in vessels
+        if v.get("vessel_name") and v.get("vessel_id") is not None
+    }
+
+    def _vessel_name_for_flow_series(block_name: str, memo: Any) -> str:
+        """Map an outlet block (vessel or downstream junction) to a vessel name present in CSV results."""
+        if block_name in results:
+            return block_name
+        if block_name in vessel_name_to_id:
+            return block_name
+        if block_name not in junc_names:
+            return ""
+        if block_name in memo:
+            return ""
+        memo.add(block_name)
+        jn = junc_by_name.get(block_name)
+        if not jn:
+            return ""
+        for blk in jn.get("outlet_blocks") or []:
+            vn = _vessel_name_for_flow_series(blk, memo)
+            if vn:
+                return vn
+        for vid in jn.get("outlet_vessels") or []:
+            nm = vessel_id_to_name.get(vid, "")
+            if nm and nm in results:
+                return nm
+        return ""
+
     for j in cfg.get("junctions", []):
         j_name = j.get("junction_name", "")
-        outlet_vessels = j.get("outlet_vessels", [])
-        inlet_vessels = j.get("inlet_vessels", [])
+        outlet_vessels = j.get("outlet_vessels", []) or []
+        outlet_blocks = j.get("outlet_blocks") or []
+        inlet_vessels = j.get("inlet_vessels", []) or []
+        inlet_blocks = j.get("inlet_blocks") or []
 
-        if require_two_outlets and len(outlet_vessels) != 2:
+        if require_two_outlets and junction_outlet_count(j) != 2:
             continue
-        if not inlet_vessels:
+        if not inlet_vessels and not inlet_blocks:
             raise ValueError(
-                f"Junction {j_name!r} has no inlet vessels; cannot compute flow split."
+                f"Junction {j_name!r} has no inlet_vessels or inlet_blocks; cannot compute flow split."
             )
 
         # Use original inlet (trace back through connectors) for denominator
         original_inlet_name = original_inlet_by_junction.get(j_name, "")
         if not original_inlet_name:
-            inlet_vid = inlet_vessels[0]
-            original_inlet_name = vessel_id_to_name.get(inlet_vid, "")
-        out0_name = vessel_id_to_name.get(outlet_vessels[0], "")
-        out1_name = vessel_id_to_name.get(outlet_vessels[1], "")
+            if inlet_vessels:
+                original_inlet_name = vessel_id_to_name.get(inlet_vessels[0], "")
+            elif inlet_blocks:
+                ib0 = inlet_blocks[0]
+                if ib0 in vessel_name_to_id:
+                    original_inlet_name = ib0
+                elif ib0 in results:
+                    original_inlet_name = ib0
+
+        if outlet_blocks:
+            memo0, memo1 = set(), set()
+            out0_name = _vessel_name_for_flow_series(outlet_blocks[0], memo0)
+            out1_name = _vessel_name_for_flow_series(outlet_blocks[1], memo1)
+        else:
+            out0_name = vessel_id_to_name.get(outlet_vessels[0], "")
+            out1_name = vessel_id_to_name.get(outlet_vessels[1], "")
 
         if not original_inlet_name or not out0_name or not out1_name:
-            raise ValueError(
-                f"Junction {j_name!r}: missing inlet or outlet names "
-                f"(original_inlet={original_inlet_name!r}, out0={out0_name!r}, out1={out1_name!r})."
-            )
+            # Block-wired EL/J-J cases can legitimately lack a direct vessel
+            # series for one side. Keep junction present with NaN split so
+            # downstream feature extraction can continue.
+            out[j_name] = ((out0_name, out1_name), (float("nan"), float("nan")))
+            continue
         if original_inlet_name not in results or out0_name not in results or out1_name not in results:
-            raise ValueError(
-                f"Junction {j_name!r}: original inlet or outlets not found in geometric results. "
-                f"Results keys include: {list(results.keys())[:5]}..."
-            )
+            # Same graceful fallback for missing geometric-results series.
+            out[j_name] = ((out0_name, out1_name), (float("nan"), float("nan")))
+            continue
 
         ratios0: List[float] = []
         ratios1: List[float] = []
@@ -610,9 +769,7 @@ def compute_junction_flow_splits(
             # All timesteps had inlet flow < 5; use default 50% / 50%
             fs0, fs1 = 50.0, 50.0
         elif not ratios0 or not ratios1:
-            raise ValueError(
-                f"Junction {j_name!r}: inconsistent flow split (one outlet has flow data, the other does not)."
-            )
+            fs0, fs1 = float("nan"), float("nan")
         else:
             fs0 = float(np.mean(ratios0)) * 100.0
             fs1 = float(np.mean(ratios1)) * 100.0

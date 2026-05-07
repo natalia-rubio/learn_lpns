@@ -19,7 +19,7 @@ import argparse
 import glob
 import os
 import sys
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -76,6 +76,49 @@ def get_geometry_row_ranges(
         row_ranges.append((start, start + n_rows))
         start += n_rows
     return row_ranges, start, geometries
+
+
+def resolve_geometry_row_ranges_from_jax_dict(
+    data_dict: Dict[str, Any],
+    ml_inputs_root: str,
+    set_name: str,
+    geometry_variant: str,
+    run_config_suffix: Optional[str] = None,
+    geometries: Optional[List[str]] = None,
+) -> Tuple[List[Tuple[int, int]], int, List[str]]:
+    """
+    Prefer ``geometry_row_ranges`` / ``geometry_names_order`` stored in the junction jax pickle
+    (written by ``build_data_dict_from_csvs``) so row counts match the stacked arrays even when
+    on-disk ``geometric_features.csv`` line counts drift from a stale pickle.
+
+    Falls back to counting lines in ``geometric_features.csv`` per geometry (same as
+    :func:`get_geometry_row_ranges`). When falling back, ``geometries`` (if provided) fixes the
+    iteration order to match how the pickle was built (e.g. explicit ``--geometries``).
+    """
+    inp = data_dict.get("input")
+    num_pts = int(np.asarray(inp).shape[0]) if inp is not None else 0
+    stored_ranges = data_dict.get("geometry_row_ranges")
+    stored_geoms = data_dict.get("geometry_names_order")
+    if (
+        isinstance(stored_ranges, list)
+        and isinstance(stored_geoms, list)
+        and len(stored_ranges) == len(stored_geoms)
+        and stored_ranges
+    ):
+        total = sum(int(e) - int(s) for s, e in stored_ranges)
+        if total == num_pts:
+            return (
+                [(int(s), int(e)) for s, e in stored_ranges],
+                total,
+                [str(g) for g in stored_geoms],
+            )
+    return get_geometry_row_ranges(
+        ml_inputs_root,
+        set_name,
+        geometry_variant,
+        geometries=geometries,
+        run_config_suffix=run_config_suffix,
+    )
 
 
 def generate_split_indices(
@@ -158,8 +201,8 @@ def main():
     num_pts = int(np.asarray(data_dict["input"]).shape[0])
 
     ml_inputs_root = os.path.join(args.data_root, "ml_inputs")
-    row_ranges, total_rows, geometries = get_geometry_row_ranges(
-        ml_inputs_root, args.set_name, args.geometry_variant
+    row_ranges, total_rows, geometries = resolve_geometry_row_ranges_from_jax_dict(
+        data_dict, ml_inputs_root, args.set_name, args.geometry_variant
     )
     if len(row_ranges) != args.num_geos:
         raise ValueError(

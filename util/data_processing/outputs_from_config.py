@@ -67,10 +67,20 @@ def load_junction_lumped_parameters(
         if vid is not None and vname:
             vessel_id_to_name[vid] = vname
 
+    vessel_name_to_id = {name: vid for vid, name in vessel_id_to_name.items() if name}
+
+    def _junction_outlet_count(junc: Dict[str, Any]) -> int:
+        ov = junc.get("outlet_vessels", []) or []
+        if ov:
+            return len(ov)
+        ob = junc.get("outlet_blocks", []) or []
+        return len(ob)
+
     for j in junctions:
         j_name = j.get("junction_name", "")
-        outlet_vessel_ids = j.get("outlet_vessels", [])
-        if require_two_outlets and len(outlet_vessel_ids) != 2:
+        outlet_vessel_ids = j.get("outlet_vessels", []) or []
+        outlet_blocks = j.get("outlet_blocks", []) or []
+        if require_two_outlets and _junction_outlet_count(j) != 2:
             continue
 
         if not j_name:
@@ -79,21 +89,37 @@ def load_junction_lumped_parameters(
         jv = j.get("junction_values", None)
         if not isinstance(jv, dict):
             raise ValueError(f"Junction {j_name} missing dict 'junction_values' in calibration output.")
-        assert len(outlet_vessel_ids) == 2, f"Junction {j_name} has unexpected number of outlets: {outlet_vessel_ids}"
-        for i in range(len(outlet_vessel_ids)):
-            vessel_name = vessel_id_to_name.get(outlet_vessel_ids[i], "")
-            if not vessel_name:
-                vessel_name = vessels[outlet_vessel_ids[i]].get("vessel_name", "")
+        # Build per-outlet names in the same order as junction_values entries.
+        if outlet_vessel_ids:
+            outlet_names = [vessel_id_to_name.get(vid, "") for vid in outlet_vessel_ids]
+        else:
+            outlet_names = [str(x) for x in outlet_blocks]
+
+        assert len(outlet_names) == 2, (
+            f"Junction {j_name} has unexpected number of outlets: "
+            f"outlet_vessels={outlet_vessel_ids}, outlet_blocks={outlet_blocks}"
+        )
+
+        for i in range(len(outlet_names)):
+            vessel_name = outlet_names[i]
+            outlet_vid = vessel_name_to_id.get(vessel_name, -1)
             other_i = abs(i - 1)
             if verbose:
-                print(f"Processing outlet {i} of junction {j_name}: {vessel_name} (vessel_id={outlet_vessel_ids[i]})")
+                print(f"Processing outlet {i} of junction {j_name}: {vessel_name} (vessel_id={outlet_vid})")
+            if outlet_vid < 0:
+                if verbose:
+                    print(
+                        f"Skipping outlet {i} of junction {j_name}: {vessel_name} "
+                        "is not a vessel outlet (likely J-J trunk block)"
+                    )
+                continue
             if 'connector' in vessel_name and 'connectorEL' not in vessel_name:
                 if verbose:
                     print(f"Skipping outlet {i} of junction {j_name}: {vessel_name} is a connector vessel (not EL-adjusted)")
                 continue
             if verbose:
-                print(f"Adding outlet {i} of junction {j_name}: {vessel_name} with outlet vessel id: {outlet_vessel_ids[i]}")
-            row = [outlet_vessel_ids[i],]
+                print(f"Adding outlet {i} of junction {j_name}: {vessel_name} with outlet vessel id: {outlet_vid}")
+            row = [outlet_vid]
             for param_name in sorted(jv.keys()):
                 val = jv[param_name]
                 if isinstance(val, list):
@@ -104,7 +130,12 @@ def load_junction_lumped_parameters(
             out_junction_names.append(j_name)
             out_primary_outlet_names.append(vessel_name)
 
-        target_names = ["outlet_vessel_id"] + [f"{param_name}_outlet{i}" for param_name in sorted(jv.keys()) for i in range(len(outlet_vessel_ids))]
+        # Use outlet_names length (two outlets from outlet_vessels or outlet_blocks), not
+        # len(outlet_vessel_ids), which is 0 when only outlet_blocks is set (bifurcations_EL).
+        n_out = len(outlet_names)
+        target_names = ["outlet_vessel_id"] + [
+            f"{param_name}_outlet{i}" for param_name in sorted(jv.keys()) for i in range(n_out)
+        ]
     if not rows:
         raise ValueError("No junctions with usable junction_values were found in calibration output.")
     if target_names is None:

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import csv
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import numpy as np
 
@@ -263,6 +263,16 @@ def filter_outputs_from_array(
     return Y_filtered, include_outputs
 
 
+def _parse_float_cell(x: str) -> float:
+    """Parse a CSV cell as float; empty or whitespace-only cells become NaN."""
+    if x is None:
+        return float("nan")
+    s = str(x).strip()
+    if s == "":
+        return float("nan")
+    return float(s)
+
+
 def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
     if not os.path.exists(csv_path):
         raise ValueError(f"CSV not found: {csv_path}")
@@ -276,7 +286,7 @@ def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
         for r in reader:
             if not r:
                 continue
-            rows.append([float(x) for x in r])
+            rows.append([_parse_float_cell(x) for x in r])
 
     if not rows:
         raise ValueError(f"No data rows in CSV: {csv_path}")
@@ -303,7 +313,7 @@ def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[L
         for r in reader:
             if not r:
                 continue
-            rows.append([float(r[i]) for i in col_indices])
+            rows.append([_parse_float_cell(r[i]) if i < len(r) else float("nan") for i in col_indices])
     if not rows:
         raise ValueError(f"No data rows in CSV: {csv_path}")
     return header, np.asarray(rows, dtype=float)
@@ -460,6 +470,7 @@ def build_data_dict_from_csvs(
     histogram_output_dir: Optional[str] = None,
     geometry_variant: str = "bifurcations",
     normalize: bool = False,
+    allow_nan_in_ml_csvs: bool = False,
 ) -> Dict[str, "np.ndarray"]:
     """
     Concatenate multiple geometries' CSVs and build a `data_dict`.
@@ -480,6 +491,9 @@ def build_data_dict_from_csvs(
         histogram_output_dir: Directory to save histogram plots. If None, saves to 
                              "data/feature_histograms/{set_name}/{geometry_variant}"
         geometry_variant: Geometry variant name (e.g., "bifurcations" or "bifurcations_EL")
+        allow_nan_in_ml_csvs: If True, empty/missing numeric cells (read as NaN) are allowed;
+            stats use nanmean/nanstd; training-style normalization is disallowed. Default False
+            (strict, for NN pipelines).
 
     Returns:
         Dictionary with keys "input", "output_{output_type}", "scaling_factors", and
@@ -487,10 +501,15 @@ def build_data_dict_from_csvs(
     """
     if output_type not in {"rri", "ri", "rr"}:
         raise ValueError(f"Unsupported output_type: {output_type}")
+    if allow_nan_in_ml_csvs and normalize:
+        raise ValueError("allow_nan_in_ml_csvs=True is incompatible with normalize=True")
 
     all_inputs: List[np.ndarray] = []
     all_outputs: List[np.ndarray] = []
     all_generation: List[np.ndarray] = []
+    # Per-geometry row index ranges in the stacked jax arrays (same order as ``geometries``).
+    geometry_row_ranges: List[Tuple[int, int]] = []
+    row_offset = 0
     # Per-row provenance: (geometry_name, primary_outlet_name) for every row
     row_geo_names: List[str] = []
     row_outlet_names: List[str] = []
@@ -577,6 +596,9 @@ def build_data_dict_from_csvs(
                 )
 
         # Use filtered columns from geometric_features and junction_lumped_parameters
+        n_stack = int(geom_X.shape[0])
+        geometry_row_ranges.append((row_offset, row_offset + n_stack))
+        row_offset += n_stack
         all_inputs.append(geom_X)
         all_outputs.append(out_Y)
         all_generation.append(geo_gen)
@@ -584,6 +606,10 @@ def build_data_dict_from_csvs(
     input_array = np.vstack(all_inputs)
     output_array = np.vstack(all_outputs)
     generation_array = np.concatenate(all_generation, axis=0)
+    if row_offset != input_array.shape[0]:
+        raise ValueError(
+            f"internal row offset {row_offset} != stacked input rows {input_array.shape[0]}"
+        )
     if generation_array.shape[0] != input_array.shape[0]:
         raise ValueError(
             f"generation row count {generation_array.shape[0]} != input rows {input_array.shape[0]}"
@@ -599,20 +625,24 @@ def build_data_dict_from_csvs(
         ]
         
         if tortuosity_indices:
-            # Clamp tortuosity values to be at least 1.0
+            # Clamp tortuosity values to be at least 1.0 (leave NaN as NaN)
             for idx in tortuosity_indices:
-                input_array[:, idx] = np.maximum(input_array[:, idx], 1.0)
+                v = input_array[:, idx]
+                input_array[:, idx] = np.where(
+                    np.isfinite(v), np.maximum(v, 1.0), v
+                )
 
-    if np.any(np.isnan(input_array)):
-        raise ValueError(
-            "NaN found in junction input array (geometric features). "
-            "Check geometric_features.csv for all geometries (e.g. flow_split, flow_split_inv)."
-        )
-    if np.any(np.isnan(output_array)):
-        raise ValueError(
-            "NaN found in junction output array (lumped parameters). "
-            "Check junction_lumped_parameters.csv for all geometries."
-        )
+    if not allow_nan_in_ml_csvs:
+        if np.any(np.isnan(input_array)):
+            raise ValueError(
+                "NaN found in junction input array (geometric features). "
+                "Check geometric_features.csv for all geometries (e.g. flow_split, flow_split_inv)."
+            )
+        if np.any(np.isnan(output_array)):
+            raise ValueError(
+                "NaN found in junction output array (lumped parameters). "
+                "Check junction_lumped_parameters.csv for all geometries."
+            )
 
     # Generate histograms if requested (features and junction lumped parameters)
     if plot_histograms:
@@ -638,17 +668,22 @@ def build_data_dict_from_csvs(
             )
 
     # --- Compute stats (always, for the summary CSV) ---
-    input_mean = np.mean(input_array, axis=0)
-    input_std = np.std(input_array, axis=0)
+    _mean = np.nanmean if allow_nan_in_ml_csvs else np.mean
+    _std = np.nanstd if allow_nan_in_ml_csvs else np.std
+    _min = np.nanmin if allow_nan_in_ml_csvs else np.min
+    _max = np.nanmax if allow_nan_in_ml_csvs else np.max
+
+    input_mean = _mean(input_array, axis=0)
+    input_std = _std(input_array, axis=0)
     input_std_safe = input_std.copy()
     input_std_safe[input_std_safe == 0] = 1.0
 
-    output_mean = np.mean(output_array, axis=0)
-    output_std = np.std(output_array, axis=0)
+    output_mean = _mean(output_array, axis=0)
+    output_std = _std(output_array, axis=0)
     output_std_safe = output_std.copy()
     output_std_safe[output_std_safe == 0] = 1.0
-    output_min = np.min(output_array, axis=0)
-    output_max = np.max(output_array, axis=0)
+    output_min = _min(output_array, axis=0)
+    output_max = _max(output_array, axis=0)
 
     # --- Write summary CSV (always uses pre-normalization values) ---
     summary_dir = histogram_output_dir or os.path.join("data", "feature_histograms", set_name, geometry_variant)
@@ -662,31 +697,35 @@ def build_data_dict_from_csvs(
             "min_geometry", "min_outlet", "max_geometry", "max_outlet",
         ])
 
-        # Input features
-        for col_idx, fname in enumerate(feature_order or []):
-            col = input_array[:, col_idx]
-            min_idx = int(np.argmin(col))
-            max_idx = int(np.argmax(col))
+        def _summary_row_for_col(
+            col: np.ndarray,
+            kind: str,
+            name: str,
+        ) -> None:
+            if allow_nan_in_ml_csvs and not np.any(np.isfinite(col)):
+                writer.writerow([name, kind, "nan", "nan", "nan", "nan", "", "", "", ""])
+                return
+            if allow_nan_in_ml_csvs:
+                min_idx = int(np.nanargmin(col))
+                max_idx = int(np.nanargmax(col))
+            else:
+                min_idx = int(np.argmin(col))
+                max_idx = int(np.argmax(col))
             writer.writerow([
-                fname, "input",
-                f"{np.mean(col):.6g}", f"{np.std(col):.6g}",
-                f"{np.min(col):.6g}", f"{np.max(col):.6g}",
+                name, kind,
+                f"{_mean(col):.6g}", f"{_std(col):.6g}",
+                f"{_min(col):.6g}", f"{_max(col):.6g}",
                 row_geo_names[min_idx], row_outlet_names[min_idx],
                 row_geo_names[max_idx], row_outlet_names[max_idx],
             ])
 
+        # Input features
+        for col_idx, fname in enumerate(feature_order or []):
+            _summary_row_for_col(input_array[:, col_idx], "input", fname)
+
         # Output targets — include min/max instance provenance
         for col_idx, oname in enumerate(output_order or []):
-            col = output_array[:, col_idx]
-            min_idx = int(np.argmin(col))
-            max_idx = int(np.argmax(col))
-            writer.writerow([
-                oname, "output",
-                f"{np.mean(col):.6g}", f"{np.std(col):.6g}",
-                f"{np.min(col):.6g}", f"{np.max(col):.6g}",
-                row_geo_names[min_idx], row_outlet_names[min_idx],
-                row_geo_names[max_idx], row_outlet_names[max_idx],
-            ])
+            _summary_row_for_col(output_array[:, col_idx], "output", oname)
 
     print(f"  Saved data summary to {summary_path}")
 
@@ -707,7 +746,7 @@ def build_data_dict_from_csvs(
     scaling_factors = np.ones((n, 1), dtype=float)
 
     if jnp is not None:
-        data_dict = {
+        data_dict: Dict[str, Any] = {
             "input": jnp.asarray(input_array),
             f"output_{output_type}": jnp.asarray(output_array),
             "scaling_factors": jnp.asarray(scaling_factors),
@@ -715,6 +754,8 @@ def build_data_dict_from_csvs(
             "normalized": normalize,
             "output_min": jnp.asarray(output_min),
             "output_max": jnp.asarray(output_max),
+            "geometry_row_ranges": geometry_row_ranges,
+            "geometry_names_order": list(geometries),
         }
         if normalize:
             data_dict["input_mean"] = jnp.asarray(input_mean)
@@ -730,6 +771,8 @@ def build_data_dict_from_csvs(
             "normalized": normalize,
             "output_min": output_min,
             "output_max": output_max,
+            "geometry_row_ranges": geometry_row_ranges,
+            "geometry_names_order": list(geometries),
         }
         if normalize:
             data_dict["input_mean"] = input_mean

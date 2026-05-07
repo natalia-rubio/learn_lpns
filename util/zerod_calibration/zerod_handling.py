@@ -1,5 +1,8 @@
 import copy
 
+from util.zerod_calibration.bifurcation_splitting import junction_outlet_count
+
+
 def modify_junction_types(config, junction_type):
     """
     Modify junction types in a config based on the number of outlets.
@@ -19,8 +22,8 @@ def modify_junction_types(config, junction_type):
     # Update junctions based on number of outlets
     if 'junctions' in config_modified:
         for junc in config_modified['junctions']:
-            # Get number of outlet vessels
-            num_outlets = len(junc.get('outlet_vessels', []))
+            # Get number of outlet vessels (or outlet_blocks for junction–junction topology)
+            num_outlets = junction_outlet_count(junc)
             
             # Only modify junctions with more than one outlet
             if num_outlets <= 1:
@@ -43,7 +46,7 @@ def modify_junction_types(config, junction_type):
             
             # For special junction types, we need to provide junction_values
             if junction_type in ['BloodVesselJunction', 'DirIndepJunction', 'HybridJunction']:
-                num_outlets = len(junc.get('outlet_vessels', []))
+                num_outlets = junction_outlet_count(junc)
                 
                 if num_outlets > 0:
                     # Initialize or update junction values with only the required parameters
@@ -80,3 +83,65 @@ def modify_junction_types(config, junction_type):
                         del junc['junction_values']['pressure_recovery_coefficient']
     
     return config_modified
+
+
+def zero_all_stenosis_coefficients(config):
+    """
+    Mutate a 0D input config dict in place: set every stenosis-related field to zero.
+
+    Covers vessel zero_d_element_values, junction junction_values lists, and
+    geometric_params outlet_stenosis_coefficient dicts when present.
+    """
+    if 'vessels' in config:
+        for v in config['vessels']:
+            if 'zero_d_element_values' not in v or v['zero_d_element_values'] is None:
+                v['zero_d_element_values'] = {}
+            v['zero_d_element_values']['stenosis_coefficient'] = 0.0
+            gp = v.get('geometric_params')
+            if isinstance(gp, dict):
+                if 'stenosis_coefficient' in gp:
+                    gp['stenosis_coefficient'] = 0.0
+                osc = gp.get('outlet_stenosis_coefficient')
+                if isinstance(osc, dict):
+                    for k in list(osc.keys()):
+                        osc[k] = 0.0
+
+    if 'junctions' in config:
+        for junc in config['junctions']:
+            jv = junc.get('junction_values')
+            if isinstance(jv, dict) and 'stenosis_coefficient' in jv:
+                sc = jv['stenosis_coefficient']
+                if isinstance(sc, list):
+                    jv['stenosis_coefficient'] = [0.0] * len(sc)
+                else:
+                    jv['stenosis_coefficient'] = 0.0
+            gp = junc.get('geometric_params')
+            if isinstance(gp, dict):
+                osc = gp.get('outlet_stenosis_coefficient')
+                if isinstance(osc, dict):
+                    for k in list(osc.keys()):
+                        osc[k] = 0.0
+                if 'stenosis_coefficient' in gp:
+                    sc = gp['stenosis_coefficient']
+                    if isinstance(sc, list):
+                        gp['stenosis_coefficient'] = [0.0] * len(sc)
+                    else:
+                        gp['stenosis_coefficient'] = 0.0
+
+
+def normalize_junction_types_for_svzerodsolver(config):
+    """
+    Mutate config in place: svzerodsolver rejects junction_type ``internal_junction``
+    (runtime error: invalid block type). Replace with ``NORMAL_JUNCTION``, matching
+    post-processing in ``generate_baseline_0d``.
+
+    Returns:
+        Number of junction entries updated.
+    """
+    junctions = config.get('junctions') or []
+    n = 0
+    for junc in junctions:
+        if junc.get('junction_type') == 'internal_junction':
+            junc['junction_type'] = 'NORMAL_JUNCTION'
+            n += 1
+    return n

@@ -13,7 +13,10 @@ from util.neural_network.nn_model import NeuralNet
 from util.neural_network.train_nn import train_nn
 from util.tools.basic import load_dict
 from util.data_processing.generate_split_indices import get_geometry_row_ranges
-from util.zerod_calibration.run_config_canonical import run_config_suffix_to_flags
+from util.zerod_calibration.run_config_canonical import (
+    DEFAULT_CLI_RUN_CONFIG,
+    run_config_suffix_to_flags,
+)
 
 
 def parse_split_geometries_txt(txt_path: str):
@@ -127,15 +130,21 @@ if __name__ == "__main__":
                         help="Use Leaky ReLU instead of ReLU (helps gradient flow with normalized data)")
     parser.add_argument("--print-gradients", action="store_true",
                         help="Print gradient stats for the first batch before training (for debugging)")
+    parser.add_argument(
+        "--verbose-epochs",
+        action="store_true",
+        help="Print per-epoch train/validation loss during train_nn (off by default; very chatty).",
+    )
     parser.add_argument("--symmetric-loss", action="store_true", dest="symmetric_loss",
                         help="Use symmetric loss (overestimate weight 1.0 for all models). When off, per-model asymmetric weights are used (e.g. 2000, 100, 10000 for junction).")
     parser.add_argument(
         "--run-config",
-        default="",
+        default=DEFAULT_CLI_RUN_CONFIG,
         help="Run config suffix for path separation (e.g. stenosis_off_symmetric). "
         "jax_arrays and split_indices use .../set_name/<config>/... "
         "Use the exact suffix for jax/split paths (e.g. stenosis_off_symmetric_gen_loss). "
-        "Training-only suffix _gen_loss also enables generation-weighted loss unless overridden.",
+        "Training-only suffix _gen_loss also enables generation-weighted loss unless overridden. "
+        "Default: %(default)s. Pass an empty string only for legacy layouts without a run-config subfolder.",
     )
     parser.add_argument(
         "--gen-loss",
@@ -292,11 +301,12 @@ if __name__ == "__main__":
                              "gen_loss_scale": float(getattr(cli_args, "gen_loss_scale", 1.0)),
                              }
             training_params = {"num_epochs": 500,
-                              "batch_size": int(len(vessel_train_ind)/10),
+                              "batch_size": int(np.ceil(len(vessel_train_ind)/10)),
                               "train_inds": np.asarray(vessel_train_ind),
                               "val_inds": np.asarray(vessel_val_ind),
                               "num_offsets": 1,
-                              "print_gradients": getattr(cli_args, "print_gradients", False)}
+                              "print_gradients": getattr(cli_args, "print_gradients", False),
+                              "verbose_epochs": getattr(cli_args, "verbose_epochs", False)}
             out_dir = cli_args.model_dir or os.path.join("results", "models", set_name, geometry_variant + "_vessel" + norm_suffix)
             training_params["output_dir"] = out_dir
         else:
@@ -333,11 +343,12 @@ if __name__ == "__main__":
                              "gen_loss_scale": float(getattr(cli_args, "gen_loss_scale", 1.0)),
                              }
             training_params = {"num_epochs": 500,
-                              "batch_size": int(len(train_inds)/10),
+                              "batch_size": int(np.ceil(len(train_inds)/10)),
                               "train_inds": train_inds,
                               "val_inds": val_inds,
                               "num_offsets": num_offsets,
-                              "print_gradients": getattr(cli_args, "print_gradients", False)}
+                              "print_gradients": getattr(cli_args, "print_gradients", False),
+                              "verbose_epochs": getattr(cli_args, "verbose_epochs", False)}
             if cli_args.model_dir:
                 training_params["output_dir"] = cli_args.model_dir
 

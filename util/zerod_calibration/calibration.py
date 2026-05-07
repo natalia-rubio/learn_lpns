@@ -1,7 +1,9 @@
 import os
 import json
+import tempfile
 import numpy as np
 from util.zerod_calibration.file_io import timestep_from_1D, convert_numpy_to_list
+from util.zerod_calibration.bifurcation_splitting import junction_outlet_count
 
 # Default L2 penalties when not set-specific (R_poiseuille, stenosis_coefficient)
 DEFAULT_L2_R = 10**5
@@ -13,6 +15,41 @@ SET_L2_PENALTIES = {
     "VMR_abdo": (10**2, 10**5),
     "VMR_rigid_aorta_adults": (10**5, 10**10),
 }
+
+
+def _flow_inflow_observation_key(observations):
+    """Return the first ``flow:INFLOW:*`` key in observations['y'], or None."""
+    y = observations.get("y")
+    if not isinstance(y, dict):
+        return None
+    for k in y:
+        if k.startswith("flow:INFLOW:"):
+            return k
+    return None
+
+
+def _geometric_inflow_tq_lists(inp):
+    """Return (t, Q) as plain float lists from the INFLOW FLOW BC, or (None, None)."""
+    for bc in inp.get("boundary_conditions") or []:
+        if bc.get("bc_name") != "INFLOW":
+            continue
+        bv = bc.get("bc_values") or {}
+        t = bv.get("t")
+        q = bv.get("Q")
+        if t is None or q is None:
+            continue
+        if isinstance(t, np.ndarray):
+            t = t.tolist()
+        if isinstance(q, np.ndarray):
+            q = q.tolist()
+        try:
+            t = [float(x) for x in t]
+            q = [float(x) for x in q]
+        except (TypeError, ValueError):
+            continue
+        if len(t) == len(q) and len(t) > 0:
+            return t, q
+    return None, None
 
 
 def repeat_observations_in_time(observations, num_repeats=5):
@@ -32,48 +69,154 @@ def repeat_observations_in_time(observations, num_repeats=5):
     return result
 
 
-def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False, set_name=None):
+def calibration_residual_csv_basename(calibration_input_path: str) -> str:
+    """
+    Filename (no directory) for the stacked residual CSV consumed by svZeroDCalibrator.
+
+    Stored in ``calibration_parameters.residual_csv`` as a basename; ``run_calibration`` resolves it
+    to an absolute path next to the calibrated output JSON (typically the same folder as inputs).
+
+    Args:
+        calibration_input_path: Path to the calibration *input* JSON whose stem drives the name.
+
+    Returns:
+        e.g. ``bifurcations_EL_calibration_residual_BloodVesselJunction.csv`` for input
+        ``*_calibration_input_BloodVesselJunction.json``.
+    """
+    stem = os.path.splitext(os.path.basename(str(calibration_input_path)))[0]
+    if "_calibration_input_" in stem:
+        return stem.replace("_calibration_input_", "_calibration_residual_", 1) + ".csv"
+    if stem.endswith("_calibration_input"):
+        return stem[: -len("_calibration_input")] + "_calibration_residual.csv"
+    if stem == "calibration_input":
+        return "calibration_residual.csv"
+    return stem + "_calibration_residual.csv"
+
+
+def create_calibration_input(geometric_input_path, observations, output_path, observations_full=None, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False, set_name=None, stacked_residual_csv=True):
     """
     Create calibration input file from geometric input and observations.
-    Computes BC times from 1D solution timesteps multiplied by timestep size from XML.
+    BC times use ``len(inflow)`` samples spaced by ``time_step_size`` when the observed
+    inflow series has more than one sample. If the observed inflow has at most one sample
+    (e.g. steady 1D), INFLOW ``(t, Q)`` is taken from the geometric JSON instead.
+    Prefer ``simulation_parameters.time_step_size`` from the geometric JSON (Richter / svZeroD);
+    otherwise derive from the 1D VTP and ``geo_dir`` (XML or VMR/TST path fallbacks).
     
     Args:
         geometric_input_path: Path to geometric 0D input JSON
-        observations: Dictionary with observation data (y, dy)
+        observations: Calibration observations dictionary (y, dy), potentially NaN-masked
         output_path: Path to save calibration input JSON
+        observations_full: Optional full observations dictionary (y, dy). If None, uses observations.
         centerline_soln_path: Path to 1D centerline solution VTP (to extract timestep count)
         geo_dir: Geometry directory (to find XML file for timestep size)
         stenosis_off: If True, set calibrate_stenosis_coefficient False and set all stenosis to 0
         penalty_off: If True (and stenosis_off is False), set L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient to 0. Incompatible with stenosis_off.
         set_name: Optional set name (e.g. VMR_abdo) used to look up set-specific L2 penalties from SET_L2_PENALTIES; unlisted sets use defaults.
+        stacked_residual_csv: If True (default), set ``calibration_parameters.residual_csv`` to a basename
+            derived from ``output_path`` so svZeroDCalibrator can write the stacked residual CSV. If False,
+            only a ``residual_csv`` already present on the geometric input is preserved.
     """
     if stenosis_off and penalty_off:
         raise ValueError("Cannot use both --stenosis-off and --penalty-off.")
+    if observations_full is None:
+        observations_full = observations
     print(f"Reading geometric input from: {geometric_input_path}")
     with open(geometric_input_path, 'r') as f:
         inp = json.load(f)
     
     # Compute BC times directly from 1D solution timesteps (no refinement/interpolation)
     bc_time = None
-    
-    # If we are using a 1D solution, we compute the timestep use the 3D timestep size from the XML file and the timestep_increment 
-    if centerline_soln_path and geo_dir:
-        time_step_size = timestep_from_1D(centerline_soln_path, geo_dir)
-    # If we are using a 0D solution, we use the timestep size from the geometric input
-    # else:
-        # print(f"  Warning: No centerline solution path or geo_dir provided, using default time step size: {time_step_size:.6f} s")
-        #time_step_size = inp["boundary_conditions"][0]["bc_values"]["t"][1] - inp["boundary_conditions"][0]["bc_values"]["t"][0]
-    
-    # We get the inflow BC values from the observations
-    if "flow:INFLOW:branch0_seg0" in observations["y"]:
-        bc_flow = observations["y"]["flow:INFLOW:branch0_seg0"]
-        # Convert to list if numpy array
-        if isinstance(bc_flow, np.ndarray):
-            bc_flow = bc_flow.tolist()
+
+    geo_bc_t, geo_bc_q = _geometric_inflow_tq_lists(inp)
+    inflow_key = _flow_inflow_observation_key(observations_full)
+
+    obs_bc_flow_list = None
+    obs_bc_len = 0
+    if inflow_key:
+        obs_bc_flow_list = observations_full["y"][inflow_key]
+        if isinstance(obs_bc_flow_list, np.ndarray):
+            obs_bc_flow_list = obs_bc_flow_list.tolist()
+        if obs_bc_flow_list is None:
+            obs_bc_flow_list = []
+        obs_bc_len = len(obs_bc_flow_list)
+
+    # Linspace BC times need time_step_size; copying geometric (t, Q) does not.
+    need_time_step_size = True
+    if not inflow_key:
+        need_time_step_size = geo_bc_t is None
     else:
-        raise ValueError("No inflow flow data found in observations")
-        
-    bc_time = np.linspace(0.0, len(bc_flow) * time_step_size, len(bc_flow), endpoint=False).tolist()
+        if obs_bc_len > 1:
+            need_time_step_size = True
+        elif geo_bc_t is not None:
+            need_time_step_size = False
+        elif obs_bc_len == 1:
+            need_time_step_size = True
+        else:
+            need_time_step_size = False
+
+    time_step_size = None
+    sim_params = inp.get("simulation_parameters")
+    if isinstance(sim_params, dict):
+        for key in ("time_step_size", "Time_step_size", "fixed_time_step_size"):
+            if key not in sim_params or sim_params[key] is None:
+                continue
+            try:
+                time_step_size = float(sim_params[key])
+                print(
+                    f"  Using time_step_size from geometric input "
+                    f"simulation_parameters['{key}'] = {time_step_size:.6f} s"
+                )
+                break
+            except (TypeError, ValueError):
+                continue
+
+    if time_step_size is None and centerline_soln_path and geo_dir:
+        time_step_size = timestep_from_1D(centerline_soln_path, geo_dir)
+
+    if time_step_size is None and need_time_step_size:
+        raise ValueError(
+            "Could not determine time_step_size for calibration BC times: set "
+            "simulation_parameters.time_step_size in geometric_input.json, or pass "
+            "centerline_soln_path and geo_dir so timestep_from_1D can run (XML / VMR / TST-cohort)."
+        )
+    if time_step_size is None:
+        print(
+            "  No time_step_size in geometric JSON and no 1D/XML path; not required "
+            "(INFLOW (t, Q) taken from geometric JSON or single-sample linspace not used)."
+        )
+
+    if not inflow_key:
+        if geo_bc_t is None:
+            raise ValueError(
+                "No flow:INFLOW:* observation found in observations and no usable INFLOW (t, Q) "
+                "in geometric boundary_conditions."
+            )
+        bc_time = list(geo_bc_t)
+        bc_flow = list(geo_bc_q)
+        print("  No flow:INFLOW:* in observations; using geometric INFLOW BC (t, Q).")
+    else:
+        bc_flow = list(obs_bc_flow_list)
+
+        if len(bc_flow) > 1:
+            bc_time = np.linspace(
+                0.0, len(bc_flow) * time_step_size, len(bc_flow), endpoint=False
+            ).tolist()
+        elif geo_bc_t is not None:
+            bc_time = list(geo_bc_t)
+            bc_flow = list(geo_bc_q)
+            print(
+                f"  Inflow observation {inflow_key} has <=1 sample; "
+                f"using original geometric INFLOW BC ({len(bc_time)} samples)."
+            )
+        elif len(bc_flow) == 1:
+            bc_time = np.linspace(
+                0.0, len(bc_flow) * time_step_size, len(bc_flow), endpoint=False
+            ).tolist()
+        else:
+            raise ValueError(
+                f"Inflow observation series {inflow_key} is empty and geometric INFLOW has no "
+                "usable (t, Q). Check 1D VTP / observation extraction (single-timestep: end_idx=None, not -1)."
+            )
 
     
     # Store full time frame for geometric input (forward simulations use full time)
@@ -116,10 +259,12 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         l2_R, l2_stenosis = SET_L2_PENALTIES.get(set_name, (DEFAULT_L2_R, DEFAULT_L2_STENOSIS))
         if set_name and set_name in SET_L2_PENALTIES:
             print(f"  Set-specific L2 penalties for {set_name}: R={l2_R}, stenosis={l2_stenosis}")
+    prev_cal = inp.get("calibration_parameters") or {}
+    prev_residual_csv = prev_cal.get("residual_csv")
     inp["calibration_parameters"] = {
-        "tolerance_gradient": 1e-4,
-        "tolerance_increment": 1e-4,
-        "maximum_iterations": 20,
+        "tolerance_gradient": 1e-5,
+        "tolerance_increment": 1e-10,
+        "maximum_iterations": 2000,
         "calibrate_stenosis_coefficient": not stenosis_off,
         "calibrate_capacitance": False,
         "set_capacitance_to_zero": False,
@@ -127,6 +272,12 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
         "L2_penalty_stenosis_coefficient": l2_stenosis,
         "L2_penalty_L": 0
     }
+    if stacked_residual_csv:
+        rc = calibration_residual_csv_basename(output_path)
+        inp["calibration_parameters"]["residual_csv"] = rc
+        print(f"  Stacked residual CSV (relative path for calibrator): {rc}")
+    elif prev_residual_csv:
+        inp["calibration_parameters"]["residual_csv"] = prev_residual_csv
     
     inp["simulation_parameters"]["number_of_time_pts_per_cardiac_cycle"] = len(bc_time)
     inp["simulation_parameters"]["output_all_cycles"] = True
@@ -137,12 +288,13 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     
     # Convert numpy arrays in observations to lists for JSON serialization
     observations_list = convert_numpy_to_list(observations)
+    observations_full_list = convert_numpy_to_list(observations_full)
     
     # Add observations
     inp.update(observations_list)
     
     # Store full observations for plotting (3D solution should show full time series)
-    inp['_full_observations'] = observations_list
+    inp['_full_observations'] = observations_full_list
     
     # Store original observed inflow BC for later use in calibrated output
     if '_full_bc_time' in inp and '_full_bc_flow' in inp:
@@ -162,6 +314,115 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     print(f"Calibration input saved to: {output_path}")
     return inp
 
+def _sanitize_svzerod_calibration_topology(config):
+    """
+    Stock svzerodcalibrator BloodVesselJunction wiring allows exactly one inlet edge.
+
+    Some geometric JSON may list multiple ``inlet_blocks`` or keep redundant ``inlet_vessels``
+    alongside ``inlet_blocks``; trim so the calibrator does not hit
+    "Blood vessel junction does not support multiple inlets."
+    """
+    for junc in config.get("junctions") or []:
+        jn = junc.get("junction_name", "?")
+        ib = junc.get("inlet_blocks")
+        if isinstance(ib, list) and len(ib) > 1:
+            print(
+                f"  Warning: junction {jn!r} lists {len(ib)} inlet_blocks; "
+                f"keeping only {ib[0]!r} for svzerodcalibrator."
+            )
+            junc["inlet_blocks"] = [ib[0]]
+        if (
+            isinstance(junc.get("inlet_blocks"), list)
+            and len(junc["inlet_blocks"]) > 0
+            and junc.get("inlet_vessels")
+        ):
+            junc.pop("inlet_vessels", None)
+
+
+def _materialize_nan_masked_observations_for_calibrator(config):
+    """
+    Convert NaN-masked observation rows into finite sliced rows for calibrator input.
+
+    The stock nlohmann::json parser in svzerodcalibrator rejects NaN tokens in JSON.
+    """
+    y = config.get("y")
+    if not isinstance(y, dict) or not y:
+        return config
+
+    dy = config.get("dy")
+    dy = dy if isinstance(dy, dict) else {}
+
+    first_key = next(iter(y))
+    ref = np.asarray(y[first_key], dtype=float)
+    if ref.ndim != 1:
+        return config
+    T = ref.shape[0]
+    if T == 0:
+        return config
+
+    keep_mask = np.ones(T, dtype=bool)
+    has_nan = False
+
+    for bucket in (y, dy):
+        for key, series in bucket.items():
+            arr = np.asarray(series, dtype=float)
+            if arr.ndim != 1 or arr.shape[0] != T:
+                continue
+            finite = np.isfinite(arr)
+            if not np.all(finite):
+                has_nan = True
+            keep_mask &= finite
+
+    if not has_nan:
+        return config
+
+    idx = np.flatnonzero(keep_mask)
+    n_keep = int(idx.shape[0])
+    if n_keep == 0:
+        raise RuntimeError("All calibration observation rows are NaN/non-finite; cannot run calibrator.")
+
+    out = dict(config)
+    y_out = {}
+    for key, series in y.items():
+        arr = np.asarray(series, dtype=float)
+        if arr.ndim == 1 and arr.shape[0] == T:
+            y_out[key] = arr[idx].tolist()
+        else:
+            y_out[key] = series
+    out["y"] = y_out
+
+    if dy:
+        dy_out = {}
+        for key, series in dy.items():
+            arr = np.asarray(series, dtype=float)
+            if arr.ndim == 1 and arr.shape[0] == T:
+                dy_out[key] = arr[idx].tolist()
+            else:
+                dy_out[key] = series
+        out["dy"] = dy_out
+
+    for bc in out.get("boundary_conditions", []):
+        if bc.get("bc_name") != "INFLOW":
+            continue
+        bc_values = bc.get("bc_values") or {}
+        t = bc_values.get("t")
+        q = bc_values.get("Q")
+        if isinstance(t, list) and isinstance(q, list) and len(t) == T and len(q) == T:
+            bc_values["t"] = np.asarray(t, dtype=float)[idx].tolist()
+            bc_values["Q"] = np.asarray(q, dtype=float)[idx].tolist()
+            bc["bc_values"] = bc_values
+        break
+
+    sp = out.get("simulation_parameters")
+    if isinstance(sp, dict):
+        sp = dict(sp)
+        sp["number_of_time_pts_per_cardiac_cycle"] = n_keep
+        out["simulation_parameters"] = sp
+
+    print(f"  Materialized NaN-masked observations for calibrator: {n_keep}/{T} timestep(s) kept.")
+    return out
+
+
 def run_calibration(calibration_input_path, output_path):
     """
     Run svZeroDCalibrator to generate calibrated input file.
@@ -179,24 +440,47 @@ def run_calibration(calibration_input_path, output_path):
     # Read calibration input
     with open(calibration_input_path, 'r') as f:
         config = json.load(f)
-    
-    
+
+    _sanitize_svzerod_calibration_topology(config)
+    config = _materialize_nan_masked_observations_for_calibrator(config)
+
     # Use svzerodcalibrator executable
     calibrator_exe = '/Users/natalia/cursor_access/svZeroDPlus/Release/svzerodcalibrator'
     
     # Get absolute paths
     abs_input_path = os.path.abspath(calibration_input_path)
     abs_output_path = os.path.abspath(output_path)
-    
+
+    # Relative residual_csv is interpreted by the C++ calibrator relative to the
+    # process cwd — resolve it here so the CSV lands next to the calibrated output.
+    cp = config.get("calibration_parameters")
+    if isinstance(cp, dict):
+        rc = cp.get("residual_csv")
+        if isinstance(rc, str) and rc.strip():
+            rc_clean = rc.strip()
+            if not os.path.isabs(rc_clean):
+                out_dir = os.path.dirname(abs_output_path) or os.getcwd()
+                abs_rc = os.path.abspath(os.path.join(out_dir, rc_clean))
+                cp = dict(cp)
+                cp["residual_csv"] = abs_rc
+                config["calibration_parameters"] = cp
+                print(f"  Resolved residual_csv to {abs_rc} (same folder as calibrated output)")
+
     print(f"  Attempting calibration with svzerodcalibrator executable...")
     print(f"    Executable: {calibrator_exe}")
     print(f"    Input: {abs_input_path}")
     print(f"    Output: {abs_output_path}")
     
+    tmp_input = None
     try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as tf:
+            json.dump(config, tf, indent=4, allow_nan=False)
+            tmp_input = tf.name
         # Run svzerodcalibrator: svzerodcalibrator <input.json> <output.json>
         result = subprocess.run(
-            [calibrator_exe, abs_input_path, abs_output_path],
+            [calibrator_exe, tmp_input, abs_output_path],
             capture_output=False,
             text=True,
             check=True
@@ -215,6 +499,12 @@ def run_calibration(calibration_input_path, output_path):
         raise RuntimeError(error_msg)
     except FileNotFoundError:
         raise RuntimeError(f"svzerodcalibrator executable not found at: {calibrator_exe}")
+    finally:
+        if tmp_input:
+            try:
+                os.unlink(tmp_input)
+            except OSError:
+                pass
     
     # Read the calibrated output
     try:
@@ -234,7 +524,7 @@ def run_calibration(calibration_input_path, output_path):
             if junc.get('junction_type') == 'HybridJunction':
                 if 'pressure_recovery_coefficient' not in junc['junction_values']:
                     # Add with default zeros matching number of outlets
-                    num_outlets = len(junc.get('outlet_vessels', []))
+                    num_outlets = junction_outlet_count(junc)
                     junc['junction_values']['pressure_recovery_coefficient'] = [0.0] * num_outlets
                     print(f"  Added pressure_recovery_coefficient to {junc.get('junction_name', 'unknown')} (HybridJunction)")
             else:

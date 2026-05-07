@@ -30,9 +30,11 @@ from util.data_processing.outputs_from_config import load_junction_lumped_parame
 from util.data_processing.data_dict_from_csvs import build_data_dict_from_csvs, build_data_dict_from_vessel_csvs
 from util.data_processing.generate_split_indices import (
     generate_split_indices,
-    get_geometry_row_ranges,
+    resolve_geometry_row_ranges_from_jax_dict,
 )
 from util.tools.basic import save_dict
+from util.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
+
 
 def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", data_root="data", run_config_suffix=None):
     """
@@ -87,15 +89,15 @@ def main():
     parser.add_argument("--data-root", default="data", help="Repo data root (default: data)")
     parser.add_argument(
         "--run-config",
-        default="base",
-        help="Run config suffix for path separation (default: base). "
+        default=DEFAULT_CLI_RUN_CONFIG,
+        help="Run config suffix for path separation (default: %(default)s). "
         "ml_inputs/jax_arrays/split_indices use .../set_name/<suffix>/... "
         "(e.g. stenosis_off_symmetric_gen_loss is a full duplicate path tree).",
     )
     parser.add_argument("--normalize", action="store_true", help="Apply z-normalization to inputs/outputs (saves to separate _normalized pkl)")
     parser.add_argument("--verbose", action="store_true", help="Verbose printing")
     args = parser.parse_args()
-    run_config_suffix = (args.run_config or "base").strip()
+    run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
 
     # Determine which geometry variants to process
     if args.geometry_variant == "all":
@@ -164,9 +166,8 @@ def main():
                 flow_split_col = []
                 for i, jname in enumerate(junction_names):
                     if jname not in flow_splits:
-                        raise ValueError(
-                            f"Junction {jname!r} not in flow splits (expected for two-outlet junctions from {geometric_results_path})."
-                        )
+                        flow_split_col.append(np.nan)
+                        continue
                     (out0_name, out1_name), (fs0, fs1) = flow_splits[jname]
                     primary = outlet_primary_names[i]
                     if primary == out0_name:
@@ -174,9 +175,7 @@ def main():
                     elif primary == out1_name:
                         val = fs1
                     else:
-                        raise ValueError(
-                            f"Primary outlet {primary!r} for junction {jname!r} does not match outlets ({out0_name!r}, {out1_name!r})."
-                        )
+                        val = np.nan
                     flow_split_col.append(val)
                 X = np.column_stack([X, flow_split_col])
                 feature_names = feature_names + ["flow_split"]
@@ -375,12 +374,13 @@ def main():
             if "input" not in data_dict:
                 raise ValueError("Expected 'input' in data_dict")
             num_pts = int(getattr(data_dict["input"], "shape")[0])
-            row_ranges, _, geometries_ordered = get_geometry_row_ranges(
+            row_ranges, _, geometries_ordered = resolve_geometry_row_ranges_from_jax_dict(
+                data_dict,
                 os.path.join(args.data_root, "ml_inputs"),
                 args.set_name,
                 geometry_variant,
-                geometries=geometries,
                 run_config_suffix=run_config_suffix,
+                geometries=geometries,
             )
             train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
                 num_pts=num_pts,

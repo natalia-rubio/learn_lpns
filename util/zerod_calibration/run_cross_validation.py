@@ -22,13 +22,16 @@ if REPO_ROOT not in sys.path:
 from util.data_processing.generate_split_indices import (
     generate_split_indices,
     get_geometry_row_ranges,
+    resolve_geometry_row_ranges_from_jax_dict,
 )
 from util.data_processing.data_dict_from_csvs import get_default_include_features
 from util.tools.basic import load_dict, save_dict
 from util.zerod_calibration.post_processing import calculate_mse_between_3d_and_0d
 from util.zerod_calibration.generate_zerod_inputs import get_run_config_suffix
 from util.zerod_calibration.run_config_canonical import (
+    DEFAULT_CLI_RUN_CONFIG,
     canonical_run_config_for_data_paths,
+    run_config_includes_gen_loss,
     run_config_suffix_to_flags,
 )
 from util.zerod_calibration.batch_generate_zerod_inputs_vmr import get_vmr_geometries
@@ -181,16 +184,6 @@ def _ensure_ml_inputs_and_jax_for_config(
     data_processing_script = os.path.join(os.path.dirname(script_dir), "data_processing", "run_data_processing.py")
     print(f"Run config {run_config_suffix}: ml_inputs/jax not found. Running batch generate (VMR) then data processing...")
     cmd_batch = [sys.executable, batch_script, "--set-name", set_name, "--geometries", *geometries]
-    if normalize:
-        cmd_batch.append("--normalize")
-    if stenosis_off:
-        cmd_batch.append("--stenosis-off")
-    if penalty_off:
-        cmd_batch.append("--penalty-off")
-    if symmetric_loss:
-        cmd_batch.append("--symmetric-loss")
-    if clip_predictions:
-        cmd_batch.append("--clip-predictions")
     if no_redo:
         cmd_batch.append("--no-redo")
     if run_config_suffix:
@@ -310,11 +303,13 @@ def run_cross_validation(
                 no_redo=no_redo,
             )
 
-    # Discover geometries and row ranges (same order as jax array); use config-specific ml_inputs when set
-    row_ranges, total_rows, geometries = get_geometry_row_ranges(
+    # Discover geometry folder count for jax filename; per-geometry row ranges come from the jax
+    # pickle (geometry_row_ranges) when present so they match stacked rows even if geometric_features
+    # line counts on disk drifted from a stale or partially rebuilt pickle.
+    _, _, geometries_for_path = get_geometry_row_ranges(
         ml_inputs_root, set_name, geometry_variant, run_config_suffix=data_paths_suffix
     )
-    num_geos = len(geometries)
+    num_geos = len(geometries_for_path)
     if num_geos == 0:
         raise ValueError(
             f"No geometries found under {ml_inputs_root}/{set_name}"
@@ -357,9 +352,21 @@ def run_cross_validation(
 
     data_dict = load_dict(jax_path)
     num_pts = int(np.asarray(data_dict["input"]).shape[0])
+    row_ranges, total_rows, geometries = resolve_geometry_row_ranges_from_jax_dict(
+        data_dict,
+        ml_inputs_root,
+        set_name,
+        geometry_variant,
+        run_config_suffix=data_paths_suffix,
+    )
+    num_geos = len(geometries)
     if total_rows != num_pts:
         raise ValueError(
-            f"Row count mismatch: row_ranges sum={total_rows} vs jax num_pts={num_pts}"
+            f"Row count mismatch: row_ranges sum={total_rows} vs jax num_pts={num_pts}. "
+            "This usually means a stale jax pickle after ML CSVs changed, or a corrupt CSV "
+            "(e.g. junction_lumped_parameters header vs data columns — check run_data_processing output). "
+            f"Delete {jax_path} and re-run data processing for this set/variant/config. "
+            "Pickles written by the current code store geometry_row_ranges so CV matches jax rows."
         )
 
     if data_paths_suffix:
@@ -651,6 +658,8 @@ def run_cross_validation(
             if symmetric_loss:
                 cmd_deploy.append("--symmetric-loss")
             deploy_rc = run_config_cli if run_config_cli is not None else run_config_suffix
+            if deploy_rc and run_config_includes_gen_loss(deploy_rc):
+                cmd_deploy.append("--gen-loss")
             if deploy_rc:
                 cmd_deploy.extend(["--run-config", deploy_rc])
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
@@ -1197,9 +1206,9 @@ def main():
     )
     parser.add_argument(
         "--run-config",
-        default="base",
+        default=DEFAULT_CLI_RUN_CONFIG,
         metavar="SUFFIX",
-        help="Run config suffix for paths and behavior (default: base). E.g. base, symmetric, symmetric_gen_loss, penalty_off, penalty_off_gen_loss, symmetric_penalty_off, symmetric_penalty_off_gen_loss, stenosis_off, stenosis_off_symmetric. zeroD/ml_inputs/jax/results use .../set_name/SUFFIX/....",
+        help="Run config suffix for paths and behavior (default: %(default)s). E.g. base, symmetric, symmetric_gen_loss, penalty_off, penalty_off_gen_loss, symmetric_penalty_off, symmetric_penalty_off_gen_loss, stenosis_off, stenosis_off_symmetric. zeroD/ml_inputs/jax/results use .../set_name/SUFFIX/....",
     )
     parser.add_argument(
         "--NN-vessel",
@@ -1244,7 +1253,7 @@ def main():
     )
     args = parser.parse_args()
 
-    run_config_suffix = (args.run_config or "base").strip()
+    run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
     if run_config_suffix not in ALLOWED_RUN_CONFIGS:
         parser.error(
             f"Unrecognized --run-config: {run_config_suffix!r}. "

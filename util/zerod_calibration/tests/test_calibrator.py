@@ -21,7 +21,7 @@ from generate_zerod_inputs import (
     run_calibration,
     run_forward_simulation,
     modify_junction_types,
-    fit_outlet_resistances_from_3d,
+    fit_outlet_resistances_from_observations,
     update_outlet_bcs_in_file,
     replace_inlet_bc_in_calibrated_output,
     update_geometric_input_with_calibration_bc
@@ -344,7 +344,7 @@ def main():
     
     # Fit outlet resistances from observations
     print(f"\nFitting outlet resistances from observations...")
-    fitted_resistances = fit_outlet_resistances_from_3d(base_geometric_input_path, observations)
+    fitted_resistances = fit_outlet_resistances_from_observations(base_geometric_input_path, observations)
     
     # Update base calibration input with fitted outlet BCs
     print(f"\nUpdating base calibration input with fitted outlet BCs...")
