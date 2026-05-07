@@ -6,6 +6,21 @@ from typing import Any, Dict, Optional
 
 _GEN_LOSS_SUFFIX = "_gen_loss"
 
+# Default ``--run-config`` path suffix for repo CLIs when omitted (under ``set_name``).
+DEFAULT_CLI_RUN_CONFIG = "stenosis_off_symmetric_gen_loss"
+
+
+def full_run_config_path_suffix(physics_suffix: str, gen_loss: bool) -> str:
+    """
+    Directory suffix under ``data/zeroD/<set>/`` / ``ml_inputs``: physics-only name from
+    ``get_run_config_suffix`` plus optional ``_gen_loss``, matching ``--run-config`` on disk.
+    """
+    if not gen_loss:
+        return physics_suffix
+    if not physics_suffix or physics_suffix == "base":
+        return f"base{_GEN_LOSS_SUFFIX}"
+    return f"{physics_suffix}{_GEN_LOSS_SUFFIX}"
+
 
 def canonical_run_config_for_data_paths(run_config_suffix: Optional[str]) -> Optional[str]:
     """

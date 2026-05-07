@@ -13,7 +13,10 @@ from util.neural_network.nn_model import NeuralNet
 from util.neural_network.train_nn import train_nn
 from util.tools.basic import load_dict
 from util.data_processing.generate_split_indices import get_geometry_row_ranges
-from util.zerod_calibration.run_config_canonical import run_config_suffix_to_flags
+from util.zerod_calibration.run_config_canonical import (
+    DEFAULT_CLI_RUN_CONFIG,
+    run_config_suffix_to_flags,
+)
 
 
 def parse_split_geometries_txt(txt_path: str):
@@ -136,11 +139,12 @@ if __name__ == "__main__":
                         help="Use symmetric loss (overestimate weight 1.0 for all models). When off, per-model asymmetric weights are used (e.g. 2000, 100, 10000 for junction).")
     parser.add_argument(
         "--run-config",
-        default="",
+        default=DEFAULT_CLI_RUN_CONFIG,
         help="Run config suffix for path separation (e.g. stenosis_off_symmetric). "
         "jax_arrays and split_indices use .../set_name/<config>/... "
         "Use the exact suffix for jax/split paths (e.g. stenosis_off_symmetric_gen_loss). "
-        "Training-only suffix _gen_loss also enables generation-weighted loss unless overridden.",
+        "Training-only suffix _gen_loss also enables generation-weighted loss unless overridden. "
+        "Default: %(default)s. Pass an empty string only for legacy layouts without a run-config subfolder.",
     )
     parser.add_argument(
         "--gen-loss",

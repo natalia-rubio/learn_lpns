@@ -22,7 +22,11 @@ import xml.etree.ElementTree as ET
 from typing import Optional
 import csv
 from collections import defaultdict, OrderedDict
-from util.zerod_calibration.run_config_canonical import canonical_run_config_for_data_paths
+from util.zerod_calibration.run_config_canonical import (
+    canonical_run_config_for_data_paths,
+    full_run_config_path_suffix,
+    run_config_includes_gen_loss,
+)
 from util.zerod_calibration.verbose_flags import VERBOSE_ZERO_D_PIPELINE
 from util.zerod_calibration.oned_to_zerod import *
 from util.zerod_calibration.post_processing import *
@@ -208,13 +212,19 @@ def main():
     parser.add_argument('--symmetric-loss', action='store_true', dest='symmetric_loss',
                        help='Record that NN was trained with symmetric loss (for path naming; does not change inference)')
     parser.add_argument(
+        '--gen-loss',
+        action='store_true',
+        dest='gen_loss',
+        help='Use the _gen_loss path variant (same as a --run-config suffix ending in _gen_loss); '
+        'must match --run-config when both are set.',
+    )
+    parser.add_argument(
         '--run-config',
         default=None,
         metavar='SUFFIX',
         help='Optional path suffix for zeroD/ml_inputs (e.g. stenosis_off_symmetric_gen_loss). '
-        'Must match flags from --normalize/--stenosis-off/...; a trailing _gen_loss is an '
-        'extra variant (own jax/splits paths + gen-weighted loss) and is ignored only when '
-        'checking flag parity.',
+        'Must match flags from --normalize/--stenosis-off/--gen-loss/...; when the suffix '
+        'ends with _gen_loss, pass --gen-loss as well.',
     )
     parser.add_argument(
         '--strict-forward',
@@ -266,7 +276,7 @@ def main():
         # Force BloodVesselJunction to be in junction_types if not already
         if 'BloodVesselJunction' not in args.junction_types:
             args.junction_types = ['BloodVesselJunction']
-    # Run-config suffix: record normalize, stenosis-off, symmetric-loss for path separation
+    # Physics-only suffix (no _gen_loss); parity with --run-config after stripping _gen_loss
     flag_run_config_suffix = get_run_config_suffix(
         normalize=getattr(args, 'normalize', False),
         stenosis_off=getattr(args, 'stenosis_off', False),
@@ -274,6 +284,9 @@ def main():
         clip_predictions=getattr(args, 'clip_predictions', False),
         penalty_off=getattr(args, 'penalty_off', False),
     )
+    gen_loss_arg = getattr(args, 'gen_loss', False)
+    flag_full_suffix = full_run_config_path_suffix(flag_run_config_suffix, gen_loss_arg)
+
     rc_arg = getattr(args, 'run_config', None)
     if rc_arg is not None and str(rc_arg).strip():
         rc = str(rc_arg).strip()
@@ -283,9 +296,14 @@ def main():
                 f"--run-config {rc!r} does not match flags (canonical {canon!r} vs {flag_run_config_suffix!r} "
                 "from --normalize/--stenosis-off/--symmetric-loss/...)."
             )
+        if run_config_includes_gen_loss(rc) != bool(gen_loss_arg):
+            parser.error(
+                f"--run-config {rc!r} gen_loss suffix does not match --gen-loss "
+                f"(expected --gen-loss with _gen_loss suffix, or omit both)."
+            )
         run_config_suffix = rc
     else:
-        run_config_suffix = flag_run_config_suffix
+        run_config_suffix = flag_full_suffix
     if run_config_suffix:
         print(f"  Run config: {run_config_suffix}")
     if getattr(args, 'stenosis_off', False) and getattr(args, 'penalty_off', False):
@@ -574,7 +592,7 @@ def main():
             
             # Fit outlet resistances from observations (skip for VMR, coro, and Richter-sourced geometry)
             if args.set_name != "VMR" and not skip_outlet_bc_fitting:
-                fitted_resistances = fit_outlet_resistances_from_3d(geometric_input_path, observations)
+                fitted_resistances = fit_outlet_resistances_from_observations(geometric_input_path, observations)
             else:
                 fitted_resistances = None
 

@@ -33,6 +33,8 @@ from util.data_processing.generate_split_indices import (
     resolve_geometry_row_ranges_from_jax_dict,
 )
 from util.tools.basic import save_dict
+from util.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
+
 
 def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", data_root="data", run_config_suffix=None):
     """
@@ -87,15 +89,15 @@ def main():
     parser.add_argument("--data-root", default="data", help="Repo data root (default: data)")
     parser.add_argument(
         "--run-config",
-        default="base",
-        help="Run config suffix for path separation (default: base). "
+        default=DEFAULT_CLI_RUN_CONFIG,
+        help="Run config suffix for path separation (default: %(default)s). "
         "ml_inputs/jax_arrays/split_indices use .../set_name/<suffix>/... "
         "(e.g. stenosis_off_symmetric_gen_loss is a full duplicate path tree).",
     )
     parser.add_argument("--normalize", action="store_true", help="Apply z-normalization to inputs/outputs (saves to separate _normalized pkl)")
     parser.add_argument("--verbose", action="store_true", help="Verbose printing")
     args = parser.parse_args()
-    run_config_suffix = (args.run_config or "base").strip()
+    run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
 
     # Determine which geometry variants to process
     if args.geometry_variant == "all":

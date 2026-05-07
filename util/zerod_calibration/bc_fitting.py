@@ -2,7 +2,6 @@
 
 import os
 import json
-import csv
 import numpy as np
 
 
@@ -186,60 +185,10 @@ def fit_outlet_rcr_from_observations(geometric_input_path, observations, dt=None
 
     return outlet_params
 
-
-def read_zerod_csv(csv_path):
+    
+def fit_outlet_resistances_from_observations(geometric_input_path, observations):
     """
-    Read 0D simulation results from CSV.
-    Handles both 'location' and 'name' as the vessel identifier column.
-    
-    Returns:
-        results: Dictionary {location: {time: {field: value}}}
-        times: Sorted list of time values
-    """
-    results = {}
-    times = set()
-    
-    if not os.path.exists(csv_path):
-        return results, sorted(times)
-    
-    with open(csv_path, 'r') as f:
-        reader = csv.DictReader(f)
-        # Check which column name is used for vessel identifier
-        fieldnames = reader.fieldnames
-        if fieldnames is None:
-            return results, sorted(times)
-        
-        vessel_col = None
-        if 'location' in fieldnames:
-            vessel_col = 'location'
-        elif 'name' in fieldnames:
-            vessel_col = 'name'
-        else:
-            return results, sorted(times)
-        
-        for row in reader:
-            location = row[vessel_col]
-            time = float(row['time'])
-            times.add(time)
-            
-            if location not in results:
-                results[location] = {}
-            if time not in results[location]:
-                results[location][time] = {}
-            
-            # Extract all numeric fields
-            for key, value in row.items():
-                if key not in [vessel_col, 'time']:
-                    try:
-                        results[location][time][key] = float(value)
-                    except (ValueError, TypeError):
-                        continue
-    
-    return results, sorted(times)
-    
-def fit_outlet_resistances_from_3d(geometric_input_path, observations):
-    """
-    Fit outlet boundary condition resistances and distal pressures from 3D solution observations.
+    Fit outlet boundary condition resistances and distal pressures from observations.
     Fits linear relationship: P = R*Q + Pd using least squares regression.
     
     Args:
@@ -249,7 +198,7 @@ def fit_outlet_resistances_from_3d(geometric_input_path, observations):
     Returns:
         Dictionary mapping outlet BC names to fitted (R, Pd) tuples
     """
-    print(f"\nFitting outlet resistances and distal pressures from 3D solution...")
+    print(f"\nFitting outlet resistances and distal pressures from observations...")
     
     # Load geometric input
     with open(geometric_input_path, 'r') as f:

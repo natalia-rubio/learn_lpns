@@ -182,7 +182,6 @@ def parse_simulation_xml(xml_path):
         print(f"Warning: Could not parse simulation XML: {e}")
         return None
 
-
 def get_time_period(set_name, geo_name):
     """
     Try to get the actual time period from 3D simulation XML.
