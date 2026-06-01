@@ -4,7 +4,8 @@ Heatmap of stacked calibration residual L2 norms across cohort geometries and ge
 
 Rows: per-case folders under a cohort directory (e.g. TST-1, TST-3, TST-5).
 Columns: modalities original (base graph), bifurcations, bifurcations_EL — each using
-BloodVesselJunction calibration residual CSV from svZeroDCalibrator.
+BloodVesselJunction calibration residual CSV from svZeroDCalibrator under
+``results/calibration_residuals/<set>/[<run_config>/]<case>/``.
 
 Cell **color** encodes ``log₁₀`` of the residual Euclidean norm (blue = smallest, red =
 largest within the grid). Cell annotations show the linear norm ‖r‖₂.
@@ -98,11 +99,35 @@ DEFAULT_MODALITIES: Sequence[Tuple[str, str]] = (
 )
 
 
+def _residual_csv_path_for_case(
+    repo_root: str,
+    set_name: str,
+    case: str,
+    geometry_variant: str,
+    junction_type: str,
+    run_config_suffix: Optional[str] = None,
+) -> str:
+    from util.zerod_calibration.calibration import calibration_residual_csv_path
+
+    stem = _stem_calibration_input(geometry_variant, junction_type)
+    dummy_input = os.path.join("dummy", f"{stem}.json")
+    return calibration_residual_csv_path(
+        dummy_input,
+        repo_root,
+        set_name,
+        case,
+        run_config_suffix,
+    )
+
+
 def build_residual_norm_matrix(
     cohort_dir: str,
     geometry_case_dirs: Optional[Sequence[str]] = None,
     junction_type: str = "BloodVesselJunction",
     modalities: Sequence[Tuple[str, str]] = DEFAULT_MODALITIES,
+    repo_root: Optional[str] = None,
+    set_name: Optional[str] = None,
+    run_config_suffix: Optional[str] = None,
 ) -> Tuple[np.ndarray, List[str], List[str], Dict[Tuple[int, int], str]]:
     """
     Returns:
@@ -110,6 +135,15 @@ def build_residual_norm_matrix(
         row_labels, col_labels (short names for modalities)
         paths: map (i,j) -> csv path attempted (for debugging)
     """
+    from util.zerod_calibration.calibration import parse_zero_d_cohort_dir
+
+    if repo_root is None or set_name is None:
+        _repo, _set, _rc = parse_zero_d_cohort_dir(cohort_dir)
+        repo_root = repo_root or _repo
+        set_name = set_name or _set
+        if run_config_suffix is None:
+            run_config_suffix = _rc
+
     cases = (
         list(geometry_case_dirs)
         if geometry_case_dirs is not None
@@ -121,10 +155,19 @@ def build_residual_norm_matrix(
     paths: Dict[Tuple[int, int], str] = {}
 
     for i, case in enumerate(cases):
-        case_dir = os.path.join(cohort_dir, case)
         for j, (_, variant_key) in enumerate(modalities):
-            bn = residual_csv_basename_for_variant(variant_key, junction_type)
-            path = os.path.join(case_dir, bn)
+            if repo_root and set_name:
+                path = _residual_csv_path_for_case(
+                    repo_root,
+                    set_name,
+                    case,
+                    variant_key,
+                    junction_type,
+                    run_config_suffix,
+                )
+            else:
+                bn = residual_csv_basename_for_variant(variant_key, junction_type)
+                path = os.path.join(cohort_dir, case, bn)
             paths[(i, j)] = path
             nrm = read_residual_l2_norm(path)
             mat[i, j] = np.nan if nrm is None else nrm
@@ -139,6 +182,9 @@ def plot_calibration_residual_l2_grid(
     modalities: Sequence[Tuple[str, str]] = DEFAULT_MODALITIES,
     output_path: Optional[str] = None,
     title: Optional[str] = None,
+    repo_root: Optional[str] = None,
+    set_name: Optional[str] = None,
+    run_config_suffix: Optional[str] = None,
 ) -> Optional[str]:
     """
     Write a PNG heatmap; color scale is ``log₁₀‖r‖₂`` (linear norms shown in cells).
@@ -155,6 +201,9 @@ def plot_calibration_residual_l2_grid(
         geometry_case_dirs=geometry_case_dirs,
         junction_type=junction_type,
         modalities=modalities,
+        repo_root=repo_root,
+        set_name=set_name,
+        run_config_suffix=run_config_suffix,
     )
 
     if mat.size == 0 or len(row_labels) == 0:
@@ -273,6 +322,9 @@ def plot_residual_grid_after_calibration(
         junction_type="BloodVesselJunction",
         output_path=out_path,
         title=title,
+        repo_root=repo_root,
+        set_name=set_name,
+        run_config_suffix=run_config_suffix,
     )
 
 
