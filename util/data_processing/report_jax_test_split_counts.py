@@ -6,7 +6,7 @@ Reads the concatenated junction and vessel ``data_dict`` files under::
 
     data/jax_arrays/<set_name>/<run_config>/<geometry_variant>/<set_type>/
 
-Default: ``stenosis_off_symmetric_gen_loss / bifurcations_EL / test``.
+Default: ``stenosis_off_symmetric_gen_loss / bifurcations_EL / all``.
 
 - **Non-connector vessels**: ``input.shape[0]`` in ``jax_arrays_vessel_num_geos_*.pkl``
   (one row per non-connector vessel; same construction as
@@ -156,8 +156,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--set-type",
-        default="test",
-        help="Split folder name (default: test)",
+        default="all",
+        help="Cohort folder tier under jax_arrays (default: all)",
     )
     args = parser.parse_args()
 

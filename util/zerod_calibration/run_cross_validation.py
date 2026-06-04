@@ -20,15 +20,22 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from util.data_processing.generate_split_indices import (
-    generate_split_indices,
+    build_geometry_index_map,
+    build_split_dict,
+    generate_geometry_split,
     get_geometry_row_ranges,
+    load_split_for_training,
+    resolve_flat_indices,
+    resolve_geometry_row_ranges_from_jax_dict,
 )
 from util.data_processing.data_dict_from_csvs import get_default_include_features
 from util.tools.basic import load_dict, save_dict
 from util.zerod_calibration.post_processing import calculate_mse_between_3d_and_0d
 from util.zerod_calibration.generate_zerod_inputs import get_run_config_suffix
 from util.zerod_calibration.run_config_canonical import (
+    DEFAULT_CLI_RUN_CONFIG,
     canonical_run_config_for_data_paths,
+    run_config_includes_gen_loss,
     run_config_suffix_to_flags,
 )
 from util.zerod_calibration.batch_generate_zerod_inputs_vmr import get_vmr_geometries
@@ -181,16 +188,6 @@ def _ensure_ml_inputs_and_jax_for_config(
     data_processing_script = os.path.join(os.path.dirname(script_dir), "data_processing", "run_data_processing.py")
     print(f"Run config {run_config_suffix}: ml_inputs/jax not found. Running batch generate (VMR) then data processing...")
     cmd_batch = [sys.executable, batch_script, "--set-name", set_name, "--geometries", *geometries]
-    if normalize:
-        cmd_batch.append("--normalize")
-    if stenosis_off:
-        cmd_batch.append("--stenosis-off")
-    if penalty_off:
-        cmd_batch.append("--penalty-off")
-    if symmetric_loss:
-        cmd_batch.append("--symmetric-loss")
-    if clip_predictions:
-        cmd_batch.append("--clip-predictions")
     if no_redo:
         cmd_batch.append("--no-redo")
     if run_config_suffix:
@@ -224,7 +221,7 @@ def run_cross_validation(
     geometry_variant,
     num_trials,
     data_root="data",
-    set_type="test",
+    set_type="all",
     ml_inputs_root=None,
     trial_index=None,
     normalize=False,
@@ -310,11 +307,13 @@ def run_cross_validation(
                 no_redo=no_redo,
             )
 
-    # Discover geometries and row ranges (same order as jax array); use config-specific ml_inputs when set
-    row_ranges, total_rows, geometries = get_geometry_row_ranges(
+    # Discover geometry folder count for jax filename; per-geometry row ranges come from the jax
+    # pickle (geometry_row_ranges) when present so they match stacked rows even if geometric_features
+    # line counts on disk drifted from a stale or partially rebuilt pickle.
+    _, _, geometries_for_path = get_geometry_row_ranges(
         ml_inputs_root, set_name, geometry_variant, run_config_suffix=data_paths_suffix
     )
-    num_geos = len(geometries)
+    num_geos = len(geometries_for_path)
     if num_geos == 0:
         raise ValueError(
             f"No geometries found under {ml_inputs_root}/{set_name}"
@@ -348,18 +347,30 @@ def run_cross_validation(
         vessel_jax_path = os.path.join(
             data_root, "jax_arrays", set_name, data_paths_suffix, geometry_variant, set_type,
             f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl",
-        ) if normalize else None
+        )
     else:
         vessel_jax_path = os.path.join(
             data_root, "jax_arrays", set_name, geometry_variant, set_type,
             f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl",
-        ) if normalize else None
+        )
 
     data_dict = load_dict(jax_path)
     num_pts = int(np.asarray(data_dict["input"]).shape[0])
+    row_ranges, total_rows, geometries = resolve_geometry_row_ranges_from_jax_dict(
+        data_dict,
+        ml_inputs_root,
+        set_name,
+        geometry_variant,
+        run_config_suffix=data_paths_suffix,
+    )
+    num_geos = len(geometries)
     if total_rows != num_pts:
         raise ValueError(
-            f"Row count mismatch: row_ranges sum={total_rows} vs jax num_pts={num_pts}"
+            f"Row count mismatch: row_ranges sum={total_rows} vs jax num_pts={num_pts}. "
+            "This usually means a stale jax pickle after ML CSVs changed, or a corrupt CSV "
+            "(e.g. junction_lumped_parameters header vs data columns — check run_data_processing output). "
+            f"Delete {jax_path} and re-run data processing for this set/variant/config. "
+            "Pickles written by the current code store geometry_row_ranges so CV matches jax rows."
         )
 
     if data_paths_suffix:
@@ -425,30 +436,22 @@ def run_cross_validation(
 
         # When re-running a single trial, reuse existing split if present so val set matches the summary table
         if trial_index is not None and os.path.exists(split_path):
-            split_dict = load_dict(split_path)
-            train_ind = np.asarray(split_dict["train_ind"]).ravel()
-            val_ind = np.asarray(split_dict["val_ind"]).ravel()
-            train_geometries = split_dict.get("train_geometries")
-            val_geometries = split_dict.get("val_geometries")
-            if not train_geometries or not val_geometries:
-                train_geo_idx = np.unique([i for i, (s, e) in enumerate(row_ranges) for r in train_ind if s <= r < e])
-                val_geo_idx = np.unique([i for i, (s, e) in enumerate(row_ranges) for r in val_ind if s <= r < e])
-                train_geometries = [geometries[i] for i in train_geo_idx]
-                val_geometries = [geometries[i] for i in val_geo_idx]
+            split_dict = load_split_for_training(split_path)
+            train_geometries = split_dict["train_geometries"]
+            val_geometries = split_dict["val_geometries"]
+            train_ind = resolve_flat_indices(split_dict, "junction", "train", split_path=split_path)
+            val_ind = resolve_flat_indices(split_dict, "junction", "val", split_path=split_path)
             print(f"  Split (reused from {os.path.basename(split_path)}): {len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}")
         else:
             # Ensure this trial's validation set is different from all previous trials
             max_attempts = 200
+            train_geometries = []
+            val_geometries = []
             for attempt in range(max_attempts):
                 seed = trial * 1000 + attempt
-                train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
-                    num_pts=num_pts,
-                    percent_train=percent_train,
-                    seed=seed,
-                    geometry_row_ranges=row_ranges,
+                train_geometries, val_geometries = generate_geometry_split(
+                    percent_train, seed, geometries
                 )
-                train_geometries = [geometries[i] for i in train_geo_idx]
-                val_geometries = [geometries[i] for i in val_geo_idx]
                 if not val_geometries:
                     if attempt == 0:
                         pct = int(round(percent_train * 100))
@@ -468,18 +471,20 @@ def run_cross_validation(
             if not val_geometries:
                 continue
 
-            split_dict = {
-                "train_ind": np.asarray(train_ind, dtype=int),
-                "val_ind": np.asarray(val_ind, dtype=int),
-                "num_offsets": 1,
-                "percent_train": percent_train,
-                "seed": int(seed),
-                "num_pts": num_pts,
-                "split_by_geometry": True,
-                "train_geometries": train_geometries,
-                "val_geometries": val_geometries,
-            }
+            vessel_data_dict = load_dict(vessel_jax_path) if os.path.exists(vessel_jax_path) else {}
+            geometry_indices = build_geometry_index_map(data_dict, vessel_data_dict)
+            split_dict = build_split_dict(
+                train_geometries,
+                val_geometries,
+                geometry_indices,
+                num_offsets=1,
+                percent_train=percent_train,
+                seed=int(seed),
+                num_pts=num_pts,
+            )
             save_dict(split_dict, split_path)
+            train_ind = resolve_flat_indices(split_dict, "junction", "train", split_path=split_path)
+            val_ind = resolve_flat_indices(split_dict, "junction", "val", split_path=split_path)
             print(f"  Split: {len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}")
 
         # Check for validation features outside training set range; write CSV per split
@@ -651,6 +656,8 @@ def run_cross_validation(
             if symmetric_loss:
                 cmd_deploy.append("--symmetric-loss")
             deploy_rc = run_config_cli if run_config_cli is not None else run_config_suffix
+            if deploy_rc and run_config_includes_gen_loss(deploy_rc):
+                cmd_deploy.append("--gen-loss")
             if deploy_rc:
                 cmd_deploy.extend(["--run-config", deploy_rc])
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
@@ -1187,7 +1194,7 @@ def main():
         help="Number of random 90/10 splits (default: 5)",
     )
     parser.add_argument("--data-root", default="data", help="Data root (default: data)")
-    parser.add_argument("--set-type", default="test", help="Set type for paths (default: test)")
+    parser.add_argument("--set-type", default="all", help="Cohort folder tier for jax/split paths (default: all)")
     parser.add_argument(
         "--trial",
         type=int,
@@ -1197,9 +1204,9 @@ def main():
     )
     parser.add_argument(
         "--run-config",
-        default="base",
+        default=DEFAULT_CLI_RUN_CONFIG,
         metavar="SUFFIX",
-        help="Run config suffix for paths and behavior (default: base). E.g. base, symmetric, symmetric_gen_loss, penalty_off, penalty_off_gen_loss, symmetric_penalty_off, symmetric_penalty_off_gen_loss, stenosis_off, stenosis_off_symmetric. zeroD/ml_inputs/jax/results use .../set_name/SUFFIX/....",
+        help="Run config suffix for paths and behavior (default: %(default)s). E.g. base, symmetric, symmetric_gen_loss, penalty_off, penalty_off_gen_loss, symmetric_penalty_off, symmetric_penalty_off_gen_loss, stenosis_off, stenosis_off_symmetric. zeroD/ml_inputs/jax/results use .../set_name/SUFFIX/....",
     )
     parser.add_argument(
         "--NN-vessel",
@@ -1244,7 +1251,7 @@ def main():
     )
     args = parser.parse_args()
 
-    run_config_suffix = (args.run_config or "base").strip()
+    run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
     if run_config_suffix not in ALLOWED_RUN_CONFIGS:
         parser.error(
             f"Unrecognized --run-config: {run_config_suffix!r}. "

@@ -60,18 +60,23 @@ class NeuralNet():
         n_rows = int(self.input.shape[0])
         # Bifurcation generation per row (for optional loss weighting); not an input feature
         graw = self.data_dict.get("generation")
+        self.gen_loss = bool(network_params.get("gen_loss", False))
         if graw is not None:
             garr = jnp.asarray(graw, dtype=jnp.float32).reshape(n_rows)
+        elif self.gen_loss:
+            raise ValueError(
+                "gen_loss is enabled but jax pickle has no 'generation' array. "
+                "Re-run run_data_processing so geometric CSVs include generation."
+            )
         else:
             garr = jnp.zeros((n_rows,), dtype=jnp.float32)
         self._generation_full = garr
-        self.gen_loss = bool(network_params.get("gen_loss", False))
         # Per-sample weight = gen_loss_scale * 2^(-generation): smaller generation -> larger weight
         self.gen_loss_scale = float(network_params.get("gen_loss_scale", 1.0))
         if self.gen_loss:
             print(
                 f"  gen_loss: ON  (sample weight = {self.gen_loss_scale} / 2^generation); "
-                f"generation in pkl: {'yes' if graw is not None else 'no (zeros)'}"
+                f"generation rows={n_rows}"
             )
         
         self.num_output_coefs = 3

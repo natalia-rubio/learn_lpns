@@ -9,20 +9,18 @@ Each row in the returned array corresponds to one junction instance
 (after bifurcation_splitting, i.e. each with exactly two outlets).
 Each column is a scalar geometric feature derived from `geometric_params`.
 
-Includes **generation**: count of junctions with exactly two outlets (two-outlet
-bifurcations) along the path from the root inlet branch to the junction's inlet
-vessel (0 at the inlet branch). Vessel-level features use the same count to the
-vessel itself (including the bifurcation that feeds that vessel).
+Includes **generation**: count of two-outlet junctions along the path from the root
+inlet vessel (id-based ``inlet_vessels`` / ``outlet_vessels`` wiring). Root vessel
+and first bifurcation junction have generation 0.
 """
 
 import json
 import os
 import re
+from collections import deque
 from typing import Dict, List, Tuple, Any
 
 import numpy as np
-
-from util.zerod_calibration.post_processing import read_zerod_csv
 
 
 def _safe_get(d: Dict[str, Any], *keys, default=None):
@@ -106,22 +104,17 @@ COMPUTED_VESSEL_FEATURES: List[Tuple[str, Any]] = [
 
 def _find_root_vessel_id_for_generation(cfg: Dict[str, Any]):
     """
-    Vessel_id of the tree root (inlet branch). Matches visualize_centerline_branches
-    logic: prefer vessel with inlet boundary condition, then name containing branch0,
-    else minimum vessel_id.
+    Vessel_id of the tree root (inlet branch). Prefer vessel with inlet BC, then
+    name containing branch0, else minimum vessel_id.
     """
     vessels = cfg.get("vessels", [])
-    found = None
     for v in vessels:
         vid = v.get("vessel_id")
         if vid is None:
             continue
         bc = v.get("boundary_conditions")
         if isinstance(bc, dict) and "inlet" in bc:
-            found = vid
-            break
-    if found is not None:
-        return found
+            return vid
     for v in vessels:
         name = v.get("vessel_name", "") or ""
         if "branch0" in name:
@@ -139,14 +132,12 @@ def compute_bifurcation_generation_by_vessel(cfg: Dict[str, Any]) -> Dict[Any, f
 
     Each time the path crosses a junction with exactly two elements in
     ``outlet_vessels``, generation increments by one for all downstream outlets.
-
-    Vessels not reachable from the root are omitted from the map.
     """
-    from collections import deque
-
     root = _find_root_vessel_id_for_generation(cfg)
     if root is None:
-        return {}
+        raise ValueError(
+            "Cannot compute bifurcation generation: no root inlet vessel found in config."
+        )
     try:
         root = int(root)
     except (TypeError, ValueError):
@@ -182,7 +173,6 @@ def compute_bifurcation_generation_by_vessel(cfg: Dict[str, Any]) -> Dict[Any, f
                     q.append(oid_int)
                 else:
                     gen[oid_int] = min(gen[oid_int], float(g_next))
-    # Normalize keys to int where possible (JSON vessel IDs are sometimes str)
     out: Dict[Any, float] = {}
     for k, v in gen.items():
         try:
@@ -259,15 +249,30 @@ def load_junction_geometric_features(
         if verbose:
             print(f"Processing junction {j_name}: {outlet_vessels}")
 
+        if not j_name:
+            raise ValueError("Junction missing junction_name in config.")
+
         inlet_ids_list = j.get("inlet_vessels", []) or []
-        inlet_vid0 = inlet_ids_list[0] if inlet_ids_list else None
-        inlet_key = inlet_vid0
-        if inlet_vid0 is not None:
-            try:
-                inlet_key = int(inlet_vid0)
-            except (TypeError, ValueError):
-                inlet_key = inlet_vid0
-        generation_val = float(gen_by_vessel[inlet_key]) if inlet_key in gen_by_vessel else float("nan")
+        if not inlet_ids_list:
+            raise ValueError(
+                f"Junction {j_name!r}: no inlet_vessels (expected one inlet for id-based wiring)."
+            )
+        if len(inlet_ids_list) != 1:
+            raise ValueError(
+                f"Junction {j_name!r}: expected exactly one inlet vessel for id-based wiring, "
+                f"got {len(inlet_ids_list)}: {inlet_ids_list!r}"
+            )
+        inlet_vid0 = inlet_ids_list[0]
+        try:
+            inlet_key = int(inlet_vid0)
+        except (TypeError, ValueError):
+            inlet_key = inlet_vid0
+        if inlet_key not in gen_by_vessel:
+            raise ValueError(
+                f"Junction {j_name!r}: inlet vessel {inlet_key!r} has no bifurcation generation "
+                f"(not reachable from root inlet vessel)."
+            )
+        generation_val = float(gen_by_vessel[inlet_key])
 
         # Build authoritative outlet_name -> vessel_id mapping for this junction
         # using the junction's outlet_vessels list and the vessels array
@@ -386,7 +391,7 @@ def load_junction_geometric_features(
                 print(f"Adding inlet max inscribed radius: {inlet_max_r}")
             feat_row_0_first.append(_to_float(inlet_max_r))
             feat_row_0_first.extend(_to_float(c) for c in inlet_tangent)
-            feat_row_0_first.append(generation_val if generation_val == generation_val else 0.0)
+            feat_row_0_first.append(generation_val)
             feat_row_0_first.extend(get_outlet_features(outlet0_name))
             feat_row_0_first.extend(get_outlet_features(outlet1_name))
             rows.append(feat_row_0_first)
@@ -401,7 +406,7 @@ def load_junction_geometric_features(
             feat_row_1_first: List[float] = [outlet1_vid]
             feat_row_1_first.append(_to_float(inlet_max_r))
             feat_row_1_first.extend(_to_float(c) for c in inlet_tangent)
-            feat_row_1_first.append(generation_val if generation_val == generation_val else 0.0)
+            feat_row_1_first.append(generation_val)
             feat_row_1_first.extend(get_outlet_features(outlet1_name))
             feat_row_1_first.extend(get_outlet_features(outlet0_name))
             rows.append(feat_row_1_first)
@@ -693,9 +698,12 @@ def load_vessel_geometric_features(
             vk = int(vessel_id)
         except (TypeError, ValueError):
             vk = vessel_id
-        gnum = float(gen_by_vessel[vk]) if vk in gen_by_vessel else float("nan")
-        if gnum != gnum:
-            gnum = 0.0
+        if vk not in gen_by_vessel:
+            raise ValueError(
+                f"Vessel {vessel_name!r} (id={vk}): no bifurcation generation "
+                f"(not reachable from root inlet vessel)."
+            )
+        gnum = float(gen_by_vessel[vk])
         vessel_length = float(v.get("vessel_length", 0.0) or 0.0)
         gp = v.get("geometric_params") or {}
         inlet_area = float(gp.get("inlet_area", 0.0) or 0.0)
