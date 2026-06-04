@@ -1,3 +1,8 @@
+"""
+Sherlock cluster helpers for synthetic-junction sims: directory setup, geometry/centerline
+checks, cap detection, and parameter loading. Legacy; not used by current projection entry points.
+"""
+
 import os
 import sys
 import numpy as np
