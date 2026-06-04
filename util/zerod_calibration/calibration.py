@@ -69,12 +69,82 @@ def repeat_observations_in_time(observations, num_repeats=5):
     return result
 
 
+CALIBRATION_RESIDUALS_SUBDIR = os.path.join("results", "calibration_residuals")
+
+
+def find_repo_root(start_path: str) -> str:
+    """Walk up from a file or directory path to the repo root (``util/`` + ``data/zeroD/``)."""
+    cur = os.path.abspath(start_path)
+    if os.path.isfile(cur):
+        cur = os.path.dirname(cur)
+    for _ in range(16):
+        if os.path.isdir(os.path.join(cur, "util")) and os.path.isdir(
+            os.path.join(cur, "data", "zeroD")
+        ):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def parse_zero_d_cohort_dir(cohort_dir: str):
+    """
+    Parse ``.../data/zeroD/<set_name>/[<run_config>/]`` (directory of case subfolders).
+
+    Returns:
+        ``(repo_root, set_name, run_config_suffix)``; missing parts are ``None``.
+    """
+    norm = os.path.normpath(os.path.abspath(cohort_dir))
+    parts = norm.split(os.sep)
+    if "zeroD" not in parts:
+        return find_repo_root(cohort_dir), None, None
+    i = parts.index("zeroD")
+    repo_root = norm[: norm.index(os.path.join("data", "zeroD"))]
+    if not repo_root:
+        repo_root = os.sep.join(parts[:i]) or os.sep
+    tail = parts[i + 1 :]
+    if not tail:
+        return repo_root, None, None
+    set_name = tail[0]
+    run_config_suffix = tail[1] if len(tail) > 1 else None
+    return repo_root, set_name, run_config_suffix
+
+
+def infer_zero_d_layout_from_path(path: str):
+    """
+    Parse ``.../data/zeroD/<set_name>/[<run_config>/]<geo_name>/...``.
+
+    Returns:
+        ``(set_name, geo_name, run_config_suffix)`` or ``None`` if not under ``data/zeroD``.
+    """
+    norm = os.path.normpath(os.path.abspath(path))
+    parts = norm.split(os.sep)
+    if "zeroD" not in parts:
+        return None
+    i = parts.index("zeroD")
+    tail = parts[i + 1 :]
+    if len(tail) < 2:
+        return None
+    set_name = tail[0]
+    if len(tail) == 2:
+        return set_name, tail[1], None
+    geo_name = tail[-2]
+    if len(tail) == 3:
+        return set_name, geo_name, None
+    if len(tail) == 4:
+        return set_name, geo_name, tail[1]
+    run_config = os.path.join(*tail[1:-2])
+    return set_name, geo_name, run_config
+
+
 def calibration_residual_csv_basename(calibration_input_path: str) -> str:
     """
     Filename (no directory) for the stacked residual CSV consumed by svZeroDCalibrator.
 
     Stored in ``calibration_parameters.residual_csv`` as a basename; ``run_calibration`` resolves it
-    to an absolute path next to the calibrated output JSON (typically the same folder as inputs).
+    to an absolute path under ``results/calibration_residuals/``.
 
     Args:
         calibration_input_path: Path to the calibration *input* JSON whose stem drives the name.
@@ -91,6 +161,65 @@ def calibration_residual_csv_basename(calibration_input_path: str) -> str:
     if stem == "calibration_input":
         return "calibration_residual.csv"
     return stem + "_calibration_residual.csv"
+
+
+def calibration_residual_csv_dir(
+    repo_root: str,
+    set_name: str,
+    geo_name: str,
+    run_config_suffix=None,
+) -> str:
+    """Directory for one geometry's calibration residual CSVs (created by ``run_calibration``)."""
+    parts = [repo_root, CALIBRATION_RESIDUALS_SUBDIR, set_name]
+    if run_config_suffix:
+        parts.append(str(run_config_suffix))
+    parts.append(str(geo_name))
+    return os.path.join(*parts)
+
+
+def calibration_residual_csv_path(
+    calibration_input_path: str,
+    repo_root: str,
+    set_name: str,
+    geo_name: str,
+    run_config_suffix=None,
+) -> str:
+    """Absolute path where svZeroDCalibrator should write the stacked residual CSV."""
+    out_dir = calibration_residual_csv_dir(repo_root, set_name, geo_name, run_config_suffix)
+    os.makedirs(out_dir, exist_ok=True)
+    return os.path.join(out_dir, calibration_residual_csv_basename(calibration_input_path))
+
+
+def resolve_calibration_residual_csv_path(
+    calibration_input_path: str,
+    output_path: str,
+    repo_root=None,
+    set_name=None,
+    geo_name=None,
+    run_config_suffix=None,
+) -> str:
+    """
+    Choose residual CSV path: ``results/calibration_residuals/...`` when layout is known,
+    else same directory as ``output_path`` (legacy).
+    """
+    if repo_root and set_name and geo_name:
+        return calibration_residual_csv_path(
+            calibration_input_path,
+            repo_root,
+            set_name,
+            geo_name,
+            run_config_suffix,
+        )
+    layout = infer_zero_d_layout_from_path(output_path) or infer_zero_d_layout_from_path(
+        calibration_input_path
+    )
+    if layout:
+        s, g, rc = layout
+        root = repo_root or find_repo_root(output_path)
+        return calibration_residual_csv_path(calibration_input_path, root, s, g, rc)
+    bn = calibration_residual_csv_basename(calibration_input_path)
+    out_dir = os.path.dirname(os.path.abspath(output_path)) or os.getcwd()
+    return os.path.abspath(os.path.join(out_dir, bn))
 
 
 def create_calibration_input(geometric_input_path, observations, output_path, observations_full=None, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False, set_name=None, stacked_residual_csv=True):
@@ -113,8 +242,8 @@ def create_calibration_input(geometric_input_path, observations, output_path, ob
         penalty_off: If True (and stenosis_off is False), set L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient to 0. Incompatible with stenosis_off.
         set_name: Optional set name (e.g. VMR_abdo) used to look up set-specific L2 penalties from SET_L2_PENALTIES; unlisted sets use defaults.
         stacked_residual_csv: If True (default), set ``calibration_parameters.residual_csv`` to a basename
-            derived from ``output_path`` so svZeroDCalibrator can write the stacked residual CSV. If False,
-            only a ``residual_csv`` already present on the geometric input is preserved.
+            derived from ``output_path``; ``run_calibration`` resolves it under ``results/calibration_residuals/``.
+            If False, only a ``residual_csv`` already present on the geometric input is preserved.
     """
     if stenosis_off and penalty_off:
         raise ValueError("Cannot use both --stenosis-off and --penalty-off.")
@@ -423,7 +552,14 @@ def _materialize_nan_masked_observations_for_calibrator(config):
     return out
 
 
-def run_calibration(calibration_input_path, output_path):
+def run_calibration(
+    calibration_input_path,
+    output_path,
+    repo_root=None,
+    set_name=None,
+    geo_name=None,
+    run_config_suffix=None,
+):
     """
     Run svZeroDCalibrator to generate calibrated input file.
     Uses svzerodcalibrator executable at /Users/natalia/cursor_access/svZeroDPlus/Release/svzerodcalibrator.
@@ -432,6 +568,10 @@ def run_calibration(calibration_input_path, output_path):
     Args:
         calibration_input_path: Path to calibration input JSON
         output_path: Path to save calibrated output JSON
+        repo_root: Repo root for ``results/calibration_residuals/`` (inferred if omitted)
+        set_name: Dataset name (e.g. VMR_abdo); inferred from paths when omitted
+        geo_name: Geometry case folder name; inferred from paths when omitted
+        run_config_suffix: Optional run-config subfolder under ``data/zeroD/<set>/``
     """
     import subprocess
     
@@ -451,20 +591,24 @@ def run_calibration(calibration_input_path, output_path):
     abs_input_path = os.path.abspath(calibration_input_path)
     abs_output_path = os.path.abspath(output_path)
 
-    # Relative residual_csv is interpreted by the C++ calibrator relative to the
-    # process cwd — resolve it here so the CSV lands next to the calibrated output.
+    # svZeroDCalibrator needs an absolute residual_csv path; store under results/calibration_residuals/.
     cp = config.get("calibration_parameters")
     if isinstance(cp, dict):
         rc = cp.get("residual_csv")
         if isinstance(rc, str) and rc.strip():
-            rc_clean = rc.strip()
-            if not os.path.isabs(rc_clean):
-                out_dir = os.path.dirname(abs_output_path) or os.getcwd()
-                abs_rc = os.path.abspath(os.path.join(out_dir, rc_clean))
-                cp = dict(cp)
-                cp["residual_csv"] = abs_rc
-                config["calibration_parameters"] = cp
-                print(f"  Resolved residual_csv to {abs_rc} (same folder as calibrated output)")
+            abs_rc = resolve_calibration_residual_csv_path(
+                calibration_input_path,
+                output_path,
+                repo_root=repo_root,
+                set_name=set_name,
+                geo_name=geo_name,
+                run_config_suffix=run_config_suffix,
+            )
+            os.makedirs(os.path.dirname(abs_rc), exist_ok=True)
+            cp = dict(cp)
+            cp["residual_csv"] = abs_rc
+            config["calibration_parameters"] = cp
+            print(f"  Resolved residual_csv to {abs_rc}")
 
     print(f"  Attempting calibration with svzerodcalibrator executable...")
     print(f"    Executable: {calibrator_exe}")

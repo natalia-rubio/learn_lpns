@@ -810,7 +810,17 @@ def main():
                 print(f"\n    Calibrating {geo_variant_name}/{jtype}...")
                 
                 try:
-                    calibrated_config = run_calibration(jtype_input_path, jtype_output_path)
+                    _repo_root = os.path.dirname(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                    )
+                    calibrated_config = run_calibration(
+                        jtype_input_path,
+                        jtype_output_path,
+                        repo_root=_repo_root,
+                        set_name=args.set_name,
+                        geo_name=args.geo_name,
+                        run_config_suffix=run_config_suffix if run_config_suffix else None,
+                    )
                     generated_files.append(jtype_output_path)
                     print(f"      ✓ Calibration completed for {geo_variant_name}/{jtype}")
                     # Junction types are now preserved by the calibrator

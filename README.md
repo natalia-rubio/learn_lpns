@@ -4,6 +4,8 @@ This repository contains functionality to train and deploy neural networks that 
 
 ** Documentation + production readiness in progress **
 
+<img src="figures/github_figures.png" alt="Comparison of 3D finite element and 0D electric circuit models of blood flow" width="85%">
+
 ## Requirements
 
 - **Python** 3.10 or newer
