@@ -9,7 +9,7 @@ This repository contains functionality to train and deploy neural networks that 
 ## Requirements
 
 - **Python** 3.10 or newer
-- **Python packages** (see Setup): core scientific stack plus **JAX**, **Optax**, and **dill** for training; **SciPy** for some fitting paths; **matplotlib** for plotting; **pandas** where calibration/CasADi helpers need it; **VTK** (`vtk` on PyPI) for centerline/VTP I/O in `util/zerod_calibration/file_io.py`.
+- **Python packages** (see Setup): core scientific stack plus **JAX**, **Optax**, and **dill** for training; **VTK** (`vtk` on PyPI) for geometric processing; **SciPy**,**matplotlib**, **pandas**.
 - **`svzerodsolver`** and **`svzerodcalibrator`** binaries on `PATH`.  These applications are both supported by the repo [svZeroDSolver](https://github.com/SimVascular/svZeroDSolver).  Currently, this workflow is only compatible with [my fork](https://github.com/natalia-rubio/svZeroDPlus/tree/base_w_feat).
 
 
@@ -45,7 +45,7 @@ The central workflow of this repo is as follows:
 
 1. Pre-process 0D geometry and extract geometric features,
 2. Find "ground truth" lumped paramters by calibration to 3D simulation data,
-3. Train neural networks to predict lumped parameters from geometric features,
+3. Train neural networks (NNs) to predict lumped parameters from geometric features,
 4. Test the forward-simulation performace of 0D models with neural-network-predicted parameters.
 
 $k$-fold cross-validation of this workflow is implemented, where $k$ different train and test sets are considered.  Scripts for visualizations are also provided.  
@@ -58,7 +58,7 @@ $k$-fold cross-validation of this workflow is implemented, where $k$ different t
 | `util/neural_network/` | JAX/Optax model definitions, utilities, training launcher, and training loop for predicting lumped parameters from geometric features. |
 | `util/data_processing/` | Builds ML-ready tables and JAX arrays from generated 0D outputs; creates split indices and helper summaries. |
 | `util/visualizations/` | Plotting and reporting scripts for CV metrics, calibration diagnostics, and geometry/result inspection. |
-| `util/cluster_scripts/` | Batch/cluster helpers for centerline projection, VTU processing, and large-scale data generation workflows. |
+| `util/cluster_scripts/` | Cluster helpers for centerline projection, VTU processing, and large-scale data generation workflows. |
 | `util/tools/` | Shared lightweight utilities used across modules (e.g., dictionary save/load wrappers). |
 | `data/` | Generated/working datasets (`zeroD`, `ml_inputs`, `jax_arrays`, `split_indices`) organized by set name and optional run-config suffix. |
 | `results/` | Model artifacts and evaluation outputs (`results/models/...`, `results/cross_validation/...`). |
@@ -71,7 +71,7 @@ Run from the **repository root** so imports and `--data-root data` resolve as ex
 
 ### k-fold cross-validation (`run_cross_validation.py`)
 
-Each trial randomly splits geometries into train vs validation, trains the junction NN (and vessel NN unless disabled), deploys with `generate_zerod_inputs.py --NN-only` on validation geometries, and aggregates MSE from each geometry’s `mse_comparison.csv`.
+Each trial randomly splits geometries into train vs validation sets, trains the junction NN (and vessel NN unless disabled), deploys with `generate_zerod_inputs.py --NN-only` on validation geometries, and aggregates MSE from each geometry’s `mse_comparison.csv`.
 
 ```bash
 # Positional: <set_name> [geometry_variant] [num_trials]
@@ -105,5 +105,5 @@ The `results/` directory holds **trained models, cross-validation summaries, and
 
 - `models/`: saved junction and vessel neural network checkpoints and metadata, commonly laid out as `…/<set_name>/<run_config>/…_trial_<k>/` for k-fold cross-validation.
 - `cross_validation/`: aggregated metrics across trials.
-- Script-specific outputs: visualization and post-processing tools write under predictable roots such as `location_comparison/` (plots of pressure and flow over time at ), `feature_histograms/` (histograms of geometrics features and lumped parameters in different sets), `param_comparison/` (comparison of standard, neural-net, and optimal lumped parameters)
+- Script-specific outputs: visualization and post-processing tools write under predictable roots such as `location_comparison/` (plots of pressure and flow over time), `feature_histograms/` (histograms of geometrics features and lumped parameters in different sets), `param_comparison/` (comparison of standard, neural-net, and optimal lumped parameters)
 
