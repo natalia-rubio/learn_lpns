@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Project a single-timestep 3D VTU onto SimVascular-style centerlines (Python only, no svSlicer).
+learn_lpns entry point: project 3D VTU(s) onto centerlines for TST-cohort (Python only, no svSlicer).
+
+Reuses project_results_python_fallback from batch_centerline_proj_svslicer.py.
 
 Expected TST-cohort layout:
 

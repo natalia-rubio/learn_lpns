@@ -1,4 +1,8 @@
 #!/bin/bash
+# SLURM job: segment-boundary-only centerline projection via
+# batch_centerline_proj_svslicer_segment_boundaries.py (Python only).
+# Usage: sbatch batch_centerline_proj_svslicer_segment_boundaries.sh <set_name> [num_procs] [num_points_near_boundary]
+
 #SBATCH --job-name=batch_centerline_proj_seg_boundaries
 #SBATCH --partition=amarsden
 # Note: If job runs on 'normal' partition instead, check:

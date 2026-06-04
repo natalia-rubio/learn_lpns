@@ -1,4 +1,7 @@
 #!/bin/bash
+# SLURM job: run unsteady_tree_centerline_proj.py for one CCO tree (trunk-only, subsampled times).
+# Edit the python command at the bottom to set tree name and processor count.
+
 #SBATCH --job-name=tree_centerline_proj
 #SBATCH --partition=amarsden
 #SBATCH --output=/scratch/users/nrubio/job_scripts/tree_centerline_proj

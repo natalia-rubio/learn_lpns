@@ -1,3 +1,8 @@
+"""
+Convert VTK meshes to XDMF via meshio; split() parses time-step suffixes from array names.
+Used by get_bc_integrals.py.
+"""
+
 import os
 import meshio
 import numpy as np

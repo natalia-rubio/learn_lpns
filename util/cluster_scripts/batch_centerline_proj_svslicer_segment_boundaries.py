@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Batch script to project 3D simulation results onto centerlines using svSlicer.
-This version only extracts solutions for points within 5 points of segment boundaries.
-First combines all timestep VTU files into a single multi-timestep VTU file,
-then calls svSlicer for fast processing.
+Variant of batch_centerline_proj_svslicer.py: project only centerline points near
+segment boundaries (where BranchId changes), within num_points_near_boundary indices.
+
+Uses the Python fallback only (svSlicer cannot apply this point filter).
+
+Usage: python batch_centerline_proj_svslicer_segment_boundaries.py <set_name> [num_procs] [num_points_near_boundary]
 """
 
 import os

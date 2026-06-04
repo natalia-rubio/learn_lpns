@@ -22,6 +22,7 @@ from util.zerod_calibration.run_config_canonical import (
 def parse_split_geometries_txt(txt_path: str):
     """Parse train/val geometry names from split _geometries.txt file.
     Returns (train_geometries, val_geometries), each a list of geometry name strings.
+    Used to double-check train/val splits.
     """
     if not os.path.exists(txt_path):
         return None, None
@@ -43,17 +44,25 @@ def parse_split_geometries_txt(txt_path: str):
 
 
 def launch_training(network_params, optimizer_params, training_params):
+    """Train a neural network for linear resistor, quadratic resistor, and inductor for both junctions and vessels.
+    Args:
+        network_params: Dictionary of network parameters.
+        optimizer_params: Dictionary of optimizer parameters.
+        training_params: Dictionary of training parameters.
+    
+    Trained models are saved in the results/models directory.
+
+    Several hyperparameters are overridden with hardcoded values for now.
+    Formal hyperparameter optimization still needed.
+
+    coef_ind: 0 for linear resistor, 1 for quadratic resistor, 2 for inductor.
+    """
+
     network_params["output_type"] = "rri"
     symmetric_loss = network_params.pop("symmetric_loss", False)
     
     print("Training RRI model...")
-    # lr_init1 = 0.1
-    # lr_init2 = 0.1
-    # lr_init3 = 0.1
-    lr_init1 = 0.0001
-    lr_init2 = 0.0001
-    lr_init3 = 0.0001
-    # for vessel unnorm
+
     lr_init1 = 0.01
     lr_init2 = 0.001
     lr_init3 = 0.01
@@ -61,7 +70,8 @@ def launch_training(network_params, optimizer_params, training_params):
     print(f"training model 1:  Linear Resistor")
     print(f"{network_params['num_input_features']} input features")
     network_params["target_coef_ind"] = 0
-    
+    optimizer_params["decay_rate"] = 0.8
+    optimizer_params["init"] = lr_init1
     if network_params["model_name_suffix"] == "_vessel":
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
@@ -72,13 +82,11 @@ def launch_training(network_params, optimizer_params, training_params):
         network_params["num_layers"] = 2
         training_params["num_epochs"] = 4000#5000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 2000
-    optimizer_params["decay_rate"] = 0.8
-    optimizer_params["init"] = lr_init1
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
 
-    optimizer_params["init"] = lr_init2
     print(f"training model 2:  Stenosis Resistor")
+    optimizer_params["init"] = lr_init2
     network_params["target_coef_ind"] = 1
     if network_params["model_name_suffix"] == "_vessel":
         network_params["layer_width"] = 10
@@ -93,7 +101,9 @@ def launch_training(network_params, optimizer_params, training_params):
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
 
-
+    print(f"training model 3:  Inductor")
+    optimizer_params["init"] = lr_init3
+    network_params["target_coef_ind"] = 2
     if network_params["model_name_suffix"] == "_vessel":
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
@@ -104,7 +114,6 @@ def launch_training(network_params, optimizer_params, training_params):
         network_params["num_layers"] = 4
         training_params["num_epochs"] = 2000#5000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10000
-    network_params["target_coef_ind"] = 2
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
     return
@@ -136,7 +145,7 @@ if __name__ == "__main__":
         help="Print per-epoch train/validation loss during train_nn (off by default; very chatty).",
     )
     parser.add_argument("--symmetric-loss", action="store_true", dest="symmetric_loss",
-                        help="Use symmetric loss (overestimate weight 1.0 for all models). When off, per-model asymmetric weights are used (e.g. 2000, 100, 10000 for junction).")
+                        help="Use symmetric loss (overestimate weight 1.0 for all models). When off, per-model asymmetric weights are used.")
     parser.add_argument(
         "--run-config",
         default=DEFAULT_CLI_RUN_CONFIG,
@@ -165,6 +174,7 @@ if __name__ == "__main__":
     set_name = cli_args.set_name
     num_geos = cli_args.num_geos
     print(f"num_geos: {num_geos}")
+
     geometry_variant_arg = getattr(cli_args, "geometry_variant_flag", None) or cli_args.geometry_variant or "all"
     normalize = bool(cli_args.normalize)
     run_config_raw = (cli_args.run_config or "").strip() or None
@@ -228,6 +238,7 @@ if __name__ == "__main__":
                     data_root, "jax_arrays", set_name, geometry_variant, set_type,
                     f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl"
                 )
+            # Decide on a train/val split for the vessel data so that the per-geometry assignment to train or val is the same as in the junction train/val split.  This should be re-done so that train/val split is based on geometries, not junction indices.
             vessel_data = load_dict(vessel_pkl)
             num_input_features = int(vessel_data["input"].shape[1])
             vessel_row_ranges = vessel_data["row_ranges"]
