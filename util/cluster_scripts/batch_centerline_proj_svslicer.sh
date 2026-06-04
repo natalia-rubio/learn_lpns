@@ -1,4 +1,8 @@
 #!/bin/bash
+# SLURM job: batch 3D→centerline projection via batch_centerline_proj_svslicer.py
+# (Python fallback; sets SVSLICER_USE_PYTHON_ONLY=1). Sherlock CCO_trees sets.
+# Usage: sbatch batch_centerline_proj_svslicer.sh <set_name> [num_procs] [num_threads]
+
 #SBATCH --job-name=batch_centerline_proj
 #SBATCH --partition=amarsden
 # Note: If job runs on 'normal' partition instead, check:

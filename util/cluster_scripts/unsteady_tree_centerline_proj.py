@@ -1,3 +1,12 @@
+"""
+Legacy one-off 3D→centerline projection for a single CCO tree on Sherlock.
+
+Projects only branch_id==0 (main trunk) points and subsamples timesteps (every 20th frame).
+Hardcoded paths under /scratch/users/nrubio/synthetic_junctions/CCO/.
+
+Usage: python unsteady_tree_centerline_proj.py <tree_name> <num_procs>
+"""
+
 import os
 import sys
 import vtk
@@ -7,7 +16,8 @@ from util.vtk_functions import read_geo, write_geo, calculator, cut_plane, conne
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 from vtk.util.numpy_support import numpy_to_vtk as n2v
 import pickle
-import pdb
+
+
 def save_dict(di_, filename_):
     with open(filename_, 'wb') as f:
         pickle.dump(di_, f)
@@ -50,7 +60,17 @@ def get_integral(inp_3d, origin, normal):
 
     for v in get_res_names(inp_3d, 'Velocity'):
         #fun = '(iHat*'+repr(normal[0])+'+jHat*'+repr(normal[1])+'+kHat*'+repr(normal[2])+').' + v
-        fun = 'dot(iHat*'+repr(normal[0])+'+jHat*'+repr(normal[1])+'+kHat*'+repr(normal[2])+',' + v + ")"
+        fun = (
+            "dot(iHat*"
+            + repr(float(normal[0]))
+            + "+jHat*"
+            + repr(float(normal[1]))
+            + "+kHat*"
+            + repr(float(normal[2]))
+            + ","
+            + v
+            + ")"
+        )
         inp = calculator(inp, fun, [v], 'normal_' + v)
 
     return Integration(inp)
@@ -61,7 +81,6 @@ num_procs = sys.argv[2]  # e.g., "96-procs"
 input_file_names = os.listdir(f"/scratch/users/nrubio/synthetic_junctions/CCO/{tree_name}/{tree_name}_flow_unsteady/{num_procs}-procs")
 input_file_names.sort()
 times = [name.split('_')[-1].split('.')[0] for name in input_file_names if name.endswith('.vtu')]
-# pdb.set_trace()
 res_names_1d = [f"pressure_{time}" for time in times] + [f"velocity_{time}" for time in times]
 
 fpath_out = f"/scratch/users/nrubio/synthetic_junctions/CCO/{tree_name}/{tree_name}_flow_unsteady/unsteady_soln.vtp"
@@ -93,8 +112,6 @@ for i in tqdm(range(reader_1d.GetNumberOfPoints())):
     #print(branch_id[i])
     if branch_id[i] != 0:
         continue
-    if gid[i] != 3000:
-        continue # only process every 10th point for performance
     reader_1d.GetPointCells(i, ids)
     if ids.GetNumberOfIds() == 1:
         if gid[i] == 0:
@@ -128,10 +145,6 @@ for i in tqdm(range(reader_1d.GetNumberOfPoints())):
         reader_1d.GetPointData().GetArray('area').SetValue(i, integral.area())
     except:
         continue
-    break
-    
+
 write_geo(fpath_out, reader_1d)
 print(f"wrote geo to {fpath_out}")
-pdb.set_trace()
-
-    

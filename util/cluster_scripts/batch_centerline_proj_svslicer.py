@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
-Batch script to project 3D simulation results onto centerlines using svSlicer.
-First combines all timestep VTU files into a single multi-timestep VTU file,
-then calls svSlicer for fast processing.
+Batch 3D→centerline projection for Sherlock CCO_trees sets (primary batch pipeline).
+
+Combines per-timestep VTUs, tries svSlicer, then falls back to batched svSlicer or
+parallel Python projection (project_results_python_fallback). Set SVSLICER_USE_PYTHON_ONLY=1
+to skip svSlicer entirely.
+
+Usage: python batch_centerline_proj_svslicer.py <set_name> [num_procs] [num_threads]
 """
 
 import os
@@ -456,7 +460,17 @@ def get_integral(inp_3d, origin, normal):
     
     # recursively add calculators for normal velocities
     for v in get_res_names(inp_3d, 'Velocity'):
-        fun = 'dot(iHat*'+repr(normal[0])+'+jHat*'+repr(normal[1])+'+kHat*'+repr(normal[2])+',' + v + ")"
+        fun = (
+            "dot(iHat*"
+            + repr(float(normal[0]))
+            + "+jHat*"
+            + repr(float(normal[1]))
+            + "+kHat*"
+            + repr(float(normal[2]))
+            + ","
+            + v
+            + ")"
+        )
         inp = calculator(inp, fun, [v], 'normal_' + v)
     
     return Integration(inp)

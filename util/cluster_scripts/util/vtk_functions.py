@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+"""
+Low-level VTK I/O and geometry filters for centerline projection (read/write VTP/VTU,
+plane cuts, connectivity, slice integration, region growing).
+"""
 
 import os
 import vtk

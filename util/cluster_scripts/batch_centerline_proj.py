@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Batch script to project 3D simulation results onto centerlines for all completed simulations.
-Loops over all sets and geometries in CCO_trees directory structure.
+Batch 3D→centerline projection (pure Python, no svSlicer) for Sherlock CCO_trees sets.
+
+Loops geometries in a set, projects every timestep onto the centerline sequentially,
+and writes unsteady_soln.vtp under synthetic_junctions_reduced_results/.
+
+Usage: python batch_centerline_proj.py <set_name> [num_procs]
 """
 
 import os
@@ -46,7 +50,17 @@ def get_integral(inp_3d, origin, normal):
 
     # recursively add calculators for normal velocities
     for v in get_res_names(inp_3d, 'Velocity'):
-        fun = 'dot(iHat*'+repr(normal[0])+'+jHat*'+repr(normal[1])+'+kHat*'+repr(normal[2])+',' + v + ")"
+        fun = (
+            "dot(iHat*"
+            + repr(float(normal[0]))
+            + "+jHat*"
+            + repr(float(normal[1]))
+            + "+kHat*"
+            + repr(float(normal[2]))
+            + ","
+            + v
+            + ")"
+        )
         inp = calculator(inp, fun, [v], 'normal_' + v)
 
     return Integration(inp)
