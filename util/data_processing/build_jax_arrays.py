@@ -19,7 +19,7 @@ from util.tools.basic import save_dict
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--set-name", required=True)
-    parser.add_argument("--set-type", default="test")
+    parser.add_argument("--set-type", default="all")
     parser.add_argument("--geometries", nargs="+", required=True)
     # parser.add_argument("--output-type", default="rri", choices=["rri", "ri", "rr"])
     # parser.add_argument("--ml-inputs-root", default="data/ml_inputs")
