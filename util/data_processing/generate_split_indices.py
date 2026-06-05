@@ -180,8 +180,8 @@ def build_geometry_index_map(
         if idx < len(j_ranges):
             s, e = j_ranges[idx]
             geometry_indices.setdefault(str(geo), {})["junction"] = (int(s), int(e))
-    v_ranges = vessel_dict.get("row_ranges") or []
-    v_geos = vessel_dict.get("geometries") or []
+    v_ranges = vessel_dict.get("geometry_row_ranges") or vessel_dict.get("row_ranges") or []
+    v_geos = vessel_dict.get("geometry_names_order") or vessel_dict.get("geometries") or []
     for idx, geo in enumerate(v_geos):
         if idx < len(v_ranges):
             s, e = v_ranges[idx]

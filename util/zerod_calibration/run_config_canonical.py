@@ -6,6 +6,9 @@ from typing import Any, Dict, Optional
 
 _GEN_LOSS_SUFFIX = "_gen_loss"
 
+# Default ``--run-config`` path suffix for repo CLIs when omitted (under ``set_name``).
+DEFAULT_CLI_RUN_CONFIG = "stenosis_off_symmetric_gen_loss"
+
 
 def canonical_run_config_for_data_paths(run_config_suffix: Optional[str]) -> Optional[str]:
     """
@@ -53,7 +56,6 @@ def run_config_suffix_to_flags(run_config_suffix: Any) -> Dict[str, bool]:
         "normalize": "normalized" in s,
         "stenosis_off": "stenosis_off" in s,
         "symmetric_loss": "symmetric" in s,
-        "clip_predictions": "clip" in s,
         "penalty_off": "penalty_off" in s,
         "gen_loss": gen_loss,
     }

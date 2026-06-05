@@ -25,15 +25,14 @@ def _jax_arrays_path(
     geometry_variant: str,
     set_type: str,
     num_geos: int,
-    norm_suffix: str,
     run_config_suffix: str | None,
     *,
     vessel: bool,
 ) -> str:
     jax_filename = (
-        f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl"
+        f"jax_arrays_vessel_num_geos_{num_geos}.pkl"
         if vessel
-        else f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl"
+        else f"jax_arrays_num_geos_{num_geos}.pkl"
     )
     parts = [data_root, "jax_arrays", set_name]
     if run_config_suffix:
@@ -70,14 +69,12 @@ def _build_training_params_for_modality(
     geometry_variant: str,
     set_type: str,
     num_geos: int,
-    norm_suffix: str,
     run_config_suffix: str | None,
     jax_path: str,
     output_type: str,
     symmetric_loss_eff: bool,
     gen_loss_eff: bool,
     gen_loss_scale: float,
-    normalize: bool,
     leaky_relu: bool,
     model_dir: str | None,
 ) -> tuple[dict, dict]:
@@ -117,7 +114,6 @@ def _build_training_params_for_modality(
         "data_root": data_root,
         "geometry_variant": geometry_variant,
         "run_config_suffix": run_config_suffix,
-        "normalize": normalize,
         "use_leaky_relu": leaky_relu,
         "pred_mode": "m1",
         "model_name_suffix": model_name_suffix,
@@ -139,7 +135,7 @@ def _build_training_params_for_modality(
     }
     if vessel:
         out_dir = model_dir or os.path.join(
-            "results", "models", set_name, geometry_variant + "_vessel" + norm_suffix
+            "results", "models", set_name, geometry_variant + "_vessel"
         )
         training_params["output_dir"] = out_dir
     elif model_dir:
@@ -232,8 +228,6 @@ if __name__ == "__main__":
                         help="Geometry variant: bifurcations, bifurcations_EL, or all (default: all). Can also be set via --geometry-variant.")
     parser.add_argument("--geometry-variant", dest="geometry_variant_flag", default=None,
                         help="Geometry variant (overrides positional if set). Use this when passing --vessel so order does not matter.")
-    parser.add_argument("--normalize", action="store_true",
-                        help="Use normalized jax_arrays (loads *_normalized.pkl)")
     parser.add_argument("--split-path", default=None,
                         help="Path to train/val split pickle (default: data/split_indices/.../train_val_ind_{set_name}_num_geos_{num_geos})")
     parser.add_argument("--model-dir", default=None,
@@ -241,7 +235,7 @@ if __name__ == "__main__":
     parser.add_argument("--vessel", action="store_true",
                         help="Train vessel NN (R/S/L per vessel); uses vessel jax arrays and same geometry-based split")
     parser.add_argument("--leaky-relu", action="store_true",
-                        help="Use Leaky ReLU instead of ReLU (helps gradient flow with normalized data)")
+                        help="Use Leaky ReLU instead of ReLU (helps gradient flow when inputs span large ranges)")
     parser.add_argument("--print-gradients", action="store_true",
                         help="Print gradient stats for the first batch before training (for debugging)")
     parser.add_argument(
@@ -281,19 +275,16 @@ if __name__ == "__main__":
     print(f"num_geos: {num_geos}")
 
     geometry_variant_arg = getattr(cli_args, "geometry_variant_flag", None) or cli_args.geometry_variant or "all"
-    normalize = bool(cli_args.normalize)
     run_config_raw = (cli_args.run_config or "").strip() or None
     # Paths use the full --run-config string (e.g. ..._gen_loss is its own jax/split tree).
     data_paths_suffix = run_config_raw
     if run_config_raw:
         rc_flags = run_config_suffix_to_flags(run_config_raw)
-        normalize = normalize or rc_flags["normalize"]
         symmetric_loss_eff = bool(cli_args.symmetric_loss or rc_flags["symmetric_loss"])
         gen_loss_eff = bool(cli_args.gen_loss or rc_flags["gen_loss"])
     else:
         symmetric_loss_eff = bool(cli_args.symmetric_loss)
         gen_loss_eff = bool(cli_args.gen_loss)
-    norm_suffix = "_normalized" if normalize else ""
     output_type = "rri"
     set_type = "all"
     data_root = "data"
@@ -307,8 +298,7 @@ if __name__ == "__main__":
     # Process each geometry variant
     for geometry_variant in geometry_variants_to_process:
         print(f"\n{'='*80}")
-        print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}"
-              f"{' (normalized)' if normalize else ''}")
+        print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}")
         if symmetric_loss_eff:
             print("Symmetric loss: overestimate weight = 1.0 for all models")
         if gen_loss_eff:
@@ -330,7 +320,6 @@ if __name__ == "__main__":
             geometry_variant,
             set_type,
             num_geos,
-            norm_suffix,
             data_paths_suffix,
             vessel=vessel,
         )
@@ -343,14 +332,12 @@ if __name__ == "__main__":
             geometry_variant=geometry_variant,
             set_type=set_type,
             num_geos=num_geos,
-            norm_suffix=norm_suffix,
             run_config_suffix=data_paths_suffix,
             jax_path=jax_path,
             output_type=output_type,
             symmetric_loss_eff=symmetric_loss_eff,
             gen_loss_eff=gen_loss_eff,
             gen_loss_scale=float(getattr(cli_args, "gen_loss_scale", 1.0)),
-            normalize=normalize,
             leaky_relu=getattr(cli_args, "leaky_relu", False),
             model_dir=cli_args.model_dir,
         )

@@ -55,18 +55,18 @@ def get_batch_indices(indices, batch_size):
 
 # Network Utilities
 def scale_jax(scaling_dict, field, field_name):
-    # Inverse data normalization function
     mean = scaling_dict[field_name][0]
     std = scaling_dict[field_name][1]
     scaled_field = jnp.divide(jnp.subtract(field, mean), std)
-    return jnp.reshape(scaled_field, (-1,1))
+    return jnp.reshape(scaled_field, (-1, 1))
+
 
 def inv_scale_jax(scaling_dict, field, field_name):
-    # Inverse data normalization function
     mean = scaling_dict[field_name][0]
     std = scaling_dict[field_name][1]
     scaled_field = jnp.add(jnp.multiply(field, std), mean)
-    return jnp.reshape(scaled_field, (-1,1))
+    return jnp.reshape(scaled_field, (-1, 1))
+
 
 def relu(x):
   # Rectified Linear Unit activation function

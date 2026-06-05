@@ -546,7 +546,6 @@ def main():
                     '--geometry-variant', geo_variant_name,
                     '--set-type', 'test',
                     '--geometries', geo_name_for_ml,
-                    '--output-type', 'rri',
                     '--percent-train', '1',
                     '--seed', '0',
                     '--data-root', 'data',
@@ -618,6 +617,7 @@ def main():
                     # This ensures we use the same 13 features that the model was trained on
                     from util.data_processing.data_dict_from_csvs import (
                         _read_csv_matrix,
+                        _clamp_tortuosity,
                         filter_features_from_array,
                     )
                     
@@ -659,8 +659,9 @@ def main():
                     
                     # Apply the same feature selection using the reusable function
                     X, feature_names = filter_features_from_array(
-                        X_full, feature_names_full, remap_tortuosity=True
+                        X_full, feature_names_full
                     )
+                    _clamp_tortuosity(X, feature_names)
                     
                     if len(X) == 0:
                         raise ValueError("No junctions found in geometric features")
