@@ -21,6 +21,8 @@ from datetime import datetime
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, REPO_ROOT)
 
+from util.zerod_calibration.run_config_canonical import run_config_suffix_to_flags
+
 # Timeout in seconds for each generate_zerod_inputs.py run. Increase for slow/large geometries.
 DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS = 1000
 
@@ -239,8 +241,6 @@ def run_generate_zerod_inputs(set_name, geo_name, args_dict, verbose=False, time
         cmd.append('--penalty-off')
     if args_dict.get('symmetric_loss', False):
         cmd.append('--symmetric-loss')
-    if args_dict.get('clip_predictions', False):
-        cmd.append('--clip-predictions')
     rc = args_dict.get('run_config')
     if rc:
         cmd.extend(['--run-config', rc])
@@ -355,8 +355,6 @@ Examples:
                        help='Use normalized NN models and unnormalize predictions (pass --normalize to generate_zerod_inputs)')
     parser.add_argument('--symmetric-loss', action='store_true', dest='symmetric_loss',
                        help='Symmetric loss run-config: overestimate weight 1.0 for all models (for path naming)')
-    parser.add_argument('--clip-predictions', action='store_true', dest='clip_predictions',
-                       help='Clip R/S/L to training set min/max (run-config)')
     parser.add_argument(
         '--run-config',
         default=None,
@@ -383,6 +381,17 @@ Examples:
     
     args = parser.parse_args()
     set_name = args.set_name
+
+    run_config = (getattr(args, "run_config", None) or "").strip() or None
+    if run_config:
+        rc_flags = run_config_suffix_to_flags(run_config)
+        if rc_flags["stenosis_off"]:
+            args.stenosis_off = True
+        if rc_flags["penalty_off"]:
+            args.penalty_off = True
+        if rc_flags["symmetric_loss"]:
+            args.symmetric_loss = True
+
     # Build args dictionary
     args_dict = {
         'junction_types': args.junction_types,
@@ -402,7 +411,6 @@ Examples:
         'stenosis_off': getattr(args, 'stenosis_off', False),
         'penalty_off': getattr(args, 'penalty_off', False),
         'symmetric_loss': getattr(args, 'symmetric_loss', False),
-        'clip_predictions': getattr(args, 'clip_predictions', False),
         'run_config': (getattr(args, 'run_config', None) or '').strip() or None,
     }
     
@@ -481,7 +489,6 @@ Examples:
     print(f"  Normalize: {getattr(args, 'normalize', False)}")
     print(f"  Stenosis-off: {getattr(args, 'stenosis_off', False)}")
     print(f"  Symmetric-loss: {getattr(args, 'symmetric_loss', False)}")
-    print(f"  Clip-predictions: {getattr(args, 'clip_predictions', False)}")
     print(f"  Run-config (path suffix): {getattr(args, 'run_config', None) or '(from flags only)'}")
     print(f"  Timeout per geometry: {args.timeout}s ({args.timeout/60:.1f} minutes)")
     print(f"  Max failures: {args.max_failures if args.max_failures else 'unlimited'}")

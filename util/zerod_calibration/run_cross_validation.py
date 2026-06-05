@@ -35,7 +35,6 @@ from util.zerod_calibration.generate_zerod_inputs import get_run_config_suffix
 from util.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
     canonical_run_config_for_data_paths,
-    run_config_includes_gen_loss,
     run_config_suffix_to_flags,
 )
 from util.zerod_calibration.batch_generate_zerod_inputs_vmr import get_vmr_geometries
@@ -54,7 +53,6 @@ ALLOWED_RUN_CONFIGS = frozenset({
     "normalized",
     "normalized_penalty_off",
     "normalized_stenosis_off",
-    "clip",
     "symmetric",
     "symmetric_gen_loss",
 })
@@ -177,7 +175,6 @@ def _ensure_ml_inputs_and_jax_for_config(
     normalize,
     stenosis_off,
     symmetric_loss,
-    clip_predictions,
     penalty_off,
     geometries,
     no_redo=False,
@@ -190,6 +187,12 @@ def _ensure_ml_inputs_and_jax_for_config(
     cmd_batch = [sys.executable, batch_script, "--set-name", set_name, "--geometries", *geometries]
     if no_redo:
         cmd_batch.append("--no-redo")
+    if stenosis_off:
+        cmd_batch.append("--stenosis-off")
+    if penalty_off:
+        cmd_batch.append("--penalty-off")
+    if symmetric_loss:
+        cmd_batch.append("--symmetric-loss")
     if run_config_suffix:
         cmd_batch.extend(["--run-config", run_config_suffix])
     result = subprocess.run(cmd_batch, cwd=REPO_ROOT, text=True)
@@ -227,7 +230,6 @@ def run_cross_validation(
     normalize=False,
     nn_vessel=True,
     skip_training_if_exists=False,
-    clip_predictions=False,
     stenosis_off=False,
     penalty_off=False,
     symmetric_loss=False,
@@ -245,7 +247,6 @@ def run_cross_validation(
         normalize=normalize,
         stenosis_off=stenosis_off,
         symmetric_loss=symmetric_loss,
-        clip_predictions=clip_predictions,
         penalty_off=penalty_off,
     )
     # All on-disk paths (zeroD, ml_inputs, jax, splits, models, CV) use the full CLI suffix when set,
@@ -301,7 +302,6 @@ def run_cross_validation(
                 normalize=normalize,
                 stenosis_off=stenosis_off,
                 symmetric_loss=symmetric_loss,
-                clip_predictions=clip_predictions,
                 penalty_off=penalty_off,
                 geometries=_geometries,
                 no_redo=no_redo,
@@ -413,8 +413,6 @@ def run_cross_validation(
         print("NN-vessel: will train vessel NN per trial and include vessel-predicted modality in MSE")
     if symmetric_loss:
         print("Symmetric loss: overestimate weight = 1.0 for all models")
-    if clip_predictions:
-        print("Clip predictions: R/S/L will be clipped to training set min/max during deploy")
     if stenosis_off:
         print("Stenosis-off: calibrate_stenosis_coefficient=False, all stenosis set to 0, NN will not predict stenosis")
     if penalty_off:
@@ -647,8 +645,6 @@ def run_cross_validation(
                     cmd_deploy.append(vessel_jax_path)
             if nn_vessel:
                 cmd_deploy.append("--NN-vessel")
-            if clip_predictions:
-                cmd_deploy.append("--clip-predictions")
             if stenosis_off:
                 cmd_deploy.append("--stenosis-off")
             if penalty_off:
@@ -656,8 +652,6 @@ def run_cross_validation(
             if symmetric_loss:
                 cmd_deploy.append("--symmetric-loss")
             deploy_rc = run_config_cli if run_config_cli is not None else run_config_suffix
-            if deploy_rc and run_config_includes_gen_loss(deploy_rc):
-                cmd_deploy.append("--gen-loss")
             if deploy_rc:
                 cmd_deploy.extend(["--run-config", deploy_rc])
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
@@ -1095,7 +1089,6 @@ def regenerate_location_plots(
     normalize=False,
     penalty_off=False,
     symmetric_loss=False,
-    clip_predictions=False,
 ):
     """
     Regenerate location comparison plots from existing zeroD data by running
@@ -1159,8 +1152,6 @@ def regenerate_location_plots(
             cmd.append("--penalty-off")
         if symmetric_loss:
             cmd.append("--symmetric-loss")
-        if clip_predictions:
-            cmd.append("--clip-predictions")
         if run_config_suffix:
             cmd.extend(["--run-config", run_config_suffix])
         # Include NN modalities (Learned Junctions, Learned Junctions and Vessels, Learned Vessels) in plots when CSVs exist
@@ -1272,7 +1263,6 @@ def main():
             normalize=flags["normalize"],
             penalty_off=flags["penalty_off"],
             symmetric_loss=flags["symmetric_loss"],
-            clip_predictions=flags["clip_predictions"],
         )
         return
     if args.metrics_only:
@@ -1295,7 +1285,6 @@ def main():
         normalize=flags["normalize"],
         nn_vessel=args.nn_vessel,
         skip_training_if_exists=args.skip_training_if_exists,
-        clip_predictions=flags["clip_predictions"],
         stenosis_off=flags["stenosis_off"],
         penalty_off=flags["penalty_off"],
         symmetric_loss=flags["symmetric_loss"],

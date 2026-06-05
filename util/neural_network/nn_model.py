@@ -23,16 +23,12 @@ class NeuralNet():
         
         # Geometry variant (default: "bifurcations" for backward compatibility)
         self.geometry_variant = network_params.get("geometry_variant", "bifurcations")
-        
-        # Normalization flag (default: False for backward compatibility)
-        self.normalize = network_params.get("normalize", False)
-        norm_suffix = "_normalized" if self.normalize else ""
 
         data_root = network_params.get("data_root", "data")
         run_config_suffix = network_params.get("run_config_suffix")
         jax_filename = network_params.get(
             "jax_arrays_filename",
-            f"jax_arrays_num_geos_{network_params['num_geos']}{norm_suffix}.pkl",
+            f"jax_arrays_num_geos_{network_params['num_geos']}.pkl",
         )
         path_parts = [data_root, "jax_arrays", self.set_name]
         if run_config_suffix:
@@ -46,8 +42,6 @@ class NeuralNet():
         # Asymmetric loss: overestimates (pred > target) weighted more than underestimates. None or 1.0 = symmetric.
         self.asymmetric_loss_overestimate_weight = network_params.get("asymmetric_loss_overestimate_weight", 1.0)
 
-        # scaling_dict is not used in the current loss, but keep attribute for API compatibility.
-        self.scaling_dict = network_params.get("scaling_dict", {})
         self.output_type    = network_params["output_type"]
         self.target_coef_ind = network_params["target_coef_ind"]
         self.weights        =  init_weights(network_params)
@@ -89,7 +83,6 @@ class NeuralNet():
                                                  transition_steps = optimizer_params["transition_steps"], 
                                                  decay_rate = optimizer_params["decay_rate"])
         self.optimizer = optax.adam(learning_rate = self.scheduler)
-        #self.optimizer = optax.sgd(learning_rate = self.scheduler)
         self.opt_state = self.optimizer.init(self.weights)
         return
     
@@ -106,8 +99,6 @@ class NeuralNet():
         return grad(loss, argnums=-3)(
             self.input[indices, :],
             self.output[indices, :],
-            self.data_dict["scaling_factors"][indices, :],
-            self.scaling_dict,
             self.target_coef_ind,
             self.use_leaky_relu,
             self.weights,
@@ -128,12 +119,10 @@ def predict(input, weights, use_leaky_relu=False):
     return output
 
 
-@jit(static_argnums=(4, 5))  # target_coef_ind, use_leaky_relu
+@jit(static_argnums=(2, 3))  # target_coef_ind, use_leaky_relu
 def loss(
     input,
     outputs,
-    scaling_factors,
-    scaling_dict,
     target_coef_ind,
     use_leaky_relu,
     weights,
@@ -150,8 +139,8 @@ def loss(
     return jnp.sum(w * sq) / jnp.maximum(jnp.sum(w), 1e-8) + L2_penalty * 0
 
 
-@jit(static_argnums=(4, 5))  # target_coef_ind, use_leaky_relu
-def loss_pure(input, outputs, scaling_factors, scaling_dict, target_coef_ind, use_leaky_relu, weights):
+@jit(static_argnums=(2, 3))  # target_coef_ind, use_leaky_relu
+def loss_pure(input, outputs, target_coef_ind, use_leaky_relu, weights):
     coefs_pred = predict(input, weights, use_leaky_relu)
     return jnp.sqrt(jnp.mean(jnp.square(coefs_pred[:, 0] - outputs[:, target_coef_ind])))
 

@@ -52,56 +52,6 @@ from scipy.interpolate import interp1d
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 
 
-def _resolve_norm_data_path(
-    explicit_path,
-    model_dir,
-    set_name,
-    geo_variant,
-    pkl_basename_pattern,
-    kind="junction",
-    run_config_suffix=None,
-):
-    """
-    Resolve path to the normalized jax_arrays pkl that matches the model being used.
-    Priority: 1) explicit_path (--norm-data-path / --vessel-norm-data-path),
-               2) model_dir/norm_data_num_geos.txt then build path.
-    When normalization is on, model_dir is always the directory where the model was
-    loaded from (--model-dir or default). If explicit_path is not set, we require
-    norm_data_num_geos.txt in model_dir and raise if missing (no glob fallback).
-    When run_config_suffix is set, jax_arrays path includes it for config-specific data.
-    """
-    if explicit_path:
-        if os.path.exists(explicit_path):
-            return explicit_path
-        raise FileNotFoundError(f"Norm data path not found: {explicit_path}")
-    if not model_dir or not os.path.isdir(model_dir):
-        raise FileNotFoundError(
-            f"Model directory not found: {model_dir}. "
-            f"Cannot resolve {kind} norm data without --norm-data-path or a valid model directory."
-        )
-    sidecar = os.path.join(model_dir, "norm_data_num_geos.txt")
-    if not os.path.exists(sidecar):
-        raise FileNotFoundError(
-            f"Norm data sidecar not found: {sidecar}. "
-            f"When using --normalize without --norm-data-path, the model directory must contain "
-            f"norm_data_num_geos.txt (written by launch_training). "
-            f"Either pass --norm-data-path to the exact jax_arrays *_normalized.pkl used for training, "
-            f"or re-train with the current launch_training so the sidecar is written."
-        )
-    with open(sidecar) as f:
-        num_geos = f.read().strip()
-    path_parts = ["data", "jax_arrays", set_name]
-    if run_config_suffix:
-        path_parts.append(run_config_suffix)
-    path_parts.extend([geo_variant, "test", pkl_basename_pattern.format(num_geos=num_geos)])
-    path = os.path.join(*path_parts)
-    if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"Norm data pkl not found at {path} (from {sidecar} num_geos={num_geos})"
-        )
-    return path
-
-
 def _jax_set_type_for_data_processing(args):
     """
     Return the jax_arrays subfolder to use when we run data processing from generate_zerod_inputs.
@@ -123,20 +73,24 @@ def _jax_set_type_for_data_processing(args):
     return "forward"
 
 
-def get_run_config_suffix(normalize=False, stenosis_off=False, symmetric_loss=False, clip_predictions=False, penalty_off=False):
+def get_run_config_suffix(
+    stenosis_off=False,
+    symmetric_loss=False,
+    penalty_off=False,
+    normalize=False,
+):
     """
-    Build a suffix for paths so different CV runs (normalize, stenosis-off, symmetric-loss, clip-predictions, penalty-off)
+    Build a suffix for paths so different CV runs (stenosis-off, symmetric-loss, penalty-off)
     are stored separately. Returns "base" when no flags are set so there is always a config subfolder.
+
+    ``normalize`` is accepted for backward compatibility but ignored (z-normalization removed).
     """
+    del normalize
     parts = []
-    if normalize:
-        parts.append("normalized")
     if stenosis_off:
         parts.append("stenosis_off")
     if symmetric_loss:
         parts.append("symmetric")
-    if clip_predictions:
-        parts.append("clip")
     if penalty_off:
         parts.append("penalty_off")
     return "_".join(parts) if parts else "base"
@@ -178,20 +132,12 @@ def main():
                        help='Only run NN inference and forward simulation on NN inputs (skip calibration)')
     parser.add_argument('--no-redo', action='store_true',
                        help='Skip recreating files if they already exist (check at each step)')
-    parser.add_argument('--normalize', action='store_true',
-                       help='Use z-normalized NN models and apply normalization/unnormalization at inference')
     parser.add_argument('--model-dir', default=None,
                        help='Directory containing rri_{set_name}_pred_{0,1,2}_model files (default: results/models/{set_name}/{geometry_variant})')
-    parser.add_argument('--norm-data-path', default=None,
-                       help='Path to jax_arrays *_normalized.pkl used for NN training (must match the model). If not set, inferred from model-dir sidecar or largest num_geos.')
-    parser.add_argument('--vessel-norm-data-path', default=None,
-                       help='Path to jax_arrays_vessel *_normalized.pkl used for vessel NN training (must match the vessel model).')
     parser.add_argument('--NN-vessel', action='store_true', dest='NN_vessel',
                        help='Also run vessel NN inference: predict vessel R/S/L and write *_NN_JunctionAndVessel.json + forward sim')
     parser.add_argument('--trial-id', type=int, default=None,
                        help='If set (e.g. from cross-validation), append _trial_{id} to plot output paths and filenames')
-    parser.add_argument('--clip-predictions', action='store_true',
-                       help='Clip R_poiseuille, stenosis_coefficient, L to training set min/max')
     parser.add_argument('--stenosis-off', action='store_true', dest='stenosis_off',
                        help='Turn off stenosis: calibrate_stenosis_coefficient=False, set all stenosis to 0, do not use NN to predict stenosis')
     parser.add_argument('--penalty-off', action='store_true', dest='penalty_off',
@@ -203,17 +149,12 @@ def main():
         default=None,
         metavar='SUFFIX',
         help='Optional path suffix for zeroD/ml_inputs (e.g. stenosis_off_symmetric_gen_loss). '
-        'Must match flags from --normalize/--stenosis-off/...; a trailing _gen_loss is an '
+        'Must match flags from --stenosis-off/...; a trailing _gen_loss is an '
         'extra variant (own jax/splits paths + gen-weighted loss) and is ignored only when '
         'checking flag parity.',
     )
 
     args = parser.parse_args(); verbose = args.verbose
-    if args.normalize:
-        print(f"  Normalization: ON")
-
-    else:   
-        print(f"  Normalization: OFF")
     # Track generated/existing files for logging
     generated_files = []
     
@@ -224,12 +165,10 @@ def main():
         # Force BloodVesselJunction to be in junction_types if not already
         if 'BloodVesselJunction' not in args.junction_types:
             args.junction_types = ['BloodVesselJunction']
-    # Run-config suffix: record normalize, stenosis-off, symmetric-loss for path separation
+    # Run-config suffix: stenosis-off, symmetric-loss, etc. for path separation
     flag_run_config_suffix = get_run_config_suffix(
-        normalize=getattr(args, 'normalize', False),
         stenosis_off=getattr(args, 'stenosis_off', False),
         symmetric_loss=getattr(args, 'symmetric_loss', False),
-        clip_predictions=getattr(args, 'clip_predictions', False),
         penalty_off=getattr(args, 'penalty_off', False),
     )
     rc_arg = getattr(args, 'run_config', None)
@@ -239,7 +178,7 @@ def main():
         if canon != flag_run_config_suffix:
             parser.error(
                 f"--run-config {rc!r} does not match flags (canonical {canon!r} vs {flag_run_config_suffix!r} "
-                "from --normalize/--stenosis-off/--symmetric-loss/...)."
+                "from --stenosis-off/--symmetric-loss/...)."
             )
         run_config_suffix = rc
     else:
@@ -721,14 +660,11 @@ def main():
                     '--geometry-variant', geo_variant_name,
                     '--set-type', jax_set_type,
                     '--geometries', geo_name_for_ml,
-                    '--output-type', 'rri',
                     '--percent-train', '1',
                     '--seed', '0',
                     '--data-root', 'data',
                     '--run-config', run_config_suffix,
                 ]
-                if getattr(args, 'normalize', False):
-                    run_data_processing_cmd.append('--normalize')
                 if verbose:
                     run_data_processing_cmd.append('--verbose')
                 result = subprocess.run(
@@ -804,6 +740,7 @@ def main():
                     # This ensures we use the same 13 features that the model was trained on
                     from util.data_processing.data_dict_from_csvs import (
                         _read_csv_matrix,
+                        _clamp_tortuosity,
                         filter_features_from_array,
                     )
                     
@@ -881,8 +818,9 @@ def main():
                     
                     # Apply the same feature selection using the reusable function
                     X, feature_names = filter_features_from_array(
-                        X_full, feature_names_full, remap_tortuosity=True
+                        X_full, feature_names_full
                     )
+                    _clamp_tortuosity(X, feature_names)
                     
                     if len(X) == 0:
                         raise ValueError("No junctions found in geometric features")
@@ -893,44 +831,14 @@ def main():
                     print(f"  Junction names in feature extraction: {unique_junction_names}")
                     print(f"  Selected {len(feature_names)} features (matching training data): {feature_names}")
                     
-                    # --- Conditionally apply z-normalization ---
-                    norm_suffix = "_normalized" if args.normalize else ""
-                    if args.normalize:
-                        from util.tools.basic import load_dict
-                        model_dir_for_norm = getattr(args, 'model_dir', None) or os.path.join(
-                            'results', 'models', args.set_name, geo_variant_name + norm_suffix)
-                        jax_arrays_path = _resolve_norm_data_path(
-                            getattr(args, 'norm_data_path', None),
-                            model_dir_for_norm,
-                            args.set_name,
-                            geo_variant_name,
-                            "jax_arrays_num_geos_{num_geos}_normalized.pkl",
-                            kind="junction",
-                            run_config_suffix=run_config_suffix,
-                        )
-                        print(f"  Loading normalization stats from: {jax_arrays_path}")
-                        norm_data = load_dict(jax_arrays_path)
-                        input_mean = np.array(norm_data['input_mean'])
-                        input_std = np.array(norm_data['input_std'])
-                        output_mean = np.array(norm_data['output_mean'])
-                        output_std = np.array(norm_data['output_std'])
-                        print(f"  Normalization stats loaded: input ({len(input_mean)} features), output ({len(output_mean)} targets)")
-                        X_for_nn = (X - input_mean) / input_std
-                        print(f"  Inputs z-normalized for NN inference")
-                    else:
-                        X_for_nn = X
-                        norm_data = None
-                        print(f"  Normalization: OFF (raw inputs used)")
-                    
-                    # Convert to JAX array
-                    X_jax = jnp.array(X_for_nn, dtype=jnp.float32)
+                    X_jax = jnp.array(X, dtype=jnp.float32)
                     print(f"  Neural network input dimensions: {X_jax.shape} (rows={X_jax.shape[0]}, features={X_jax.shape[1]})")
                 
                     # Load the three trained models (use --model-dir if set, e.g. for CV trials)
                     if getattr(args, 'model_dir', None):
                         model_dir = args.model_dir
                     else:
-                        model_dir = os.path.join('results', 'models', args.set_name, geo_variant_name + norm_suffix)
+                        model_dir = os.path.join('results', 'models', args.set_name, geo_variant_name)
                     model_base_name = f"rri_{args.set_name}_pred"
                     model_paths = [
                         os.path.join(model_dir, f"{model_base_name}_0_model"),
@@ -952,21 +860,11 @@ def main():
                         pred = predict(X_jax, model.weights, use_leaky)
                         raw_predictions.append(np.array(pred).flatten())
                     
-                    # Unnormalize predictions if normalization is on
                     output_names = ['R_poiseuille', 'stenosis_coefficient', 'L']
-                    if args.normalize:
-                        predictions = []
-                        for coef_idx, pred_norm in enumerate(raw_predictions):
-                            pred_original = pred_norm * output_std[coef_idx] + output_mean[coef_idx]
-                            predictions.append(pred_original)
-                            print(f"      Unnormalized {output_names[coef_idx]}: "
-                                  f"mean={output_mean[coef_idx]:.4f}, std={output_std[coef_idx]:.4f}, "
-                                  f"pred range=[{pred_original.min():.4f}, {pred_original.max():.4f}]")
-                    else:
-                        predictions = raw_predictions
-                        for coef_idx, pred in enumerate(predictions):
-                            print(f"      {output_names[coef_idx]}: "
-                                  f"pred range=[{pred.min():.4f}, {pred.max():.4f}]")
+                    predictions = raw_predictions
+                    for coef_idx, pred in enumerate(predictions):
+                        print(f"      {output_names[coef_idx]}: "
+                              f"pred range=[{pred.min():.4f}, {pred.max():.4f}]")
                     
                     # predictions[0] = R_poiseuille (one value per row)
                     # predictions[1] = stenosis_coefficient (one value per row)
@@ -974,45 +872,6 @@ def main():
                     pred_R = np.array(predictions[0])
                     pred_S = np.zeros_like(pred_R) if getattr(args, 'stenosis_off', False) else np.array(predictions[1])
                     pred_L = np.array(predictions[2])
-
-                    if getattr(args, 'clip_predictions', False):
-                        from util.tools.basic import load_dict as _load_dict
-                        if args.normalize and norm_data is not None:
-                            out_min = np.atleast_1d(np.array(norm_data['output_min']))
-                            out_max = np.atleast_1d(np.array(norm_data['output_max']))
-                        else:
-                            _model_dir = getattr(args, 'model_dir', None) or os.path.join(
-                                'results', 'models', args.set_name, geo_variant_name)
-                            _sidecar = os.path.join(_model_dir, 'norm_data_num_geos.txt')
-                            if not os.path.exists(_sidecar):
-                                raise FileNotFoundError(
-                                    "--clip-predictions: norm_data_num_geos.txt not found in model dir. "
-                                    "Re-train with current launch_training or omit --clip-predictions."
-                                )
-                            with open(_sidecar) as _f:
-                                _num_geos = _f.read().strip()
-                            _jax_parts = ['data', 'jax_arrays', args.set_name]
-                            if run_config_suffix:
-                                _jax_parts.append(run_config_suffix)
-                            _jax_parts.extend([geo_variant_name, 'test', f'jax_arrays_num_geos_{_num_geos}.pkl'])
-                            _pkl = os.path.join(*_jax_parts)
-                            if not os.path.exists(_pkl):
-                                raise FileNotFoundError(f"--clip-predictions: training pkl not found: {_pkl}")
-                            _train = _load_dict(_pkl)
-                            if 'output_min' not in _train or 'output_max' not in _train:
-                                raise ValueError(
-                                    "--clip-predictions: pkl missing output_min/output_max. "
-                                    "Re-run data processing to regenerate jax_arrays."
-                                )
-                            out_min = np.atleast_1d(np.array(_train['output_min']))
-                            out_max = np.atleast_1d(np.array(_train['output_max']))
-                        pred_R = np.clip(pred_R, out_min[0], out_max[0])
-                        pred_S = np.clip(pred_S, out_min[1], out_max[1])
-                        pred_L = np.clip(pred_L, out_min[2], out_max[2])
-                        print(f"  Predictions clipped to training range: "
-                              f"R [{out_min[0]:.4f}, {out_max[0]:.4f}], "
-                              f"S [{out_min[1]:.4f}, {out_max[1]:.4f}], "
-                              f"L [{out_min[2]:.4f}, {out_max[2]:.4f}]")
 
                     # Verify prediction array sizes match input
                      # Note: junction_names may have duplicates (same junction appears twice for swapped rows)
@@ -1141,6 +1000,7 @@ def main():
             if getattr(args, 'NN_vessel', False):
                 from util.data_processing.inputs_from_0d_config import load_vessel_geometric_features
                 from util.data_processing.data_dict_from_csvs import (
+                    _clamp_tortuosity,
                     filter_features_from_array,
                     get_default_include_features_vessel,
                 )
@@ -1150,8 +1010,7 @@ def main():
                 # When model_dir is trial-specific (CV), vessel models exist only for that variant
                 model_dir_basename = os.path.basename(getattr(args, 'model_dir', '') or '')
                 if '_trial_' in model_dir_basename:
-                    _first = model_dir_basename.split('_trial_')[0]
-                    _model_variant = _first.replace('_normalized', '')
+                    _model_variant = model_dir_basename.split('_trial_')[0]
                 else:
                     _model_variant = None
                 for geo_variant_name in ['bifurcations', 'bifurcations_EL']:
@@ -1191,42 +1050,16 @@ def main():
                         X_v, feat_names_v = filter_features_from_array(
                             X_v, feat_names_v,
                             include_features=get_default_include_features_vessel(),
-                            remap_tortuosity=False,
                         )
-                        norm_suffix = "_normalized" if args.normalize else ""
-                        # For CV: junction dir is e.g. bifurcations_EL_normalized_trial_0, vessel dir is bifurcations_EL_vessel_normalized_trial_0
+                        _clamp_tortuosity(X_v, feat_names_v)
                         if getattr(args, 'model_dir', None) and '_trial_' in os.path.basename(args.model_dir):
                             _base = os.path.dirname(args.model_dir)
-                            _name = os.path.basename(args.model_dir)
-                            if '_normalized_trial_' in _name:
-                                _name = _name.replace('_normalized_trial_', '_vessel_normalized_trial_', 1)
-                            else:
-                                _name = _name.replace('_trial_', '_vessel_trial_', 1)
+                            _name = os.path.basename(args.model_dir).replace('_trial_', '_vessel_trial_', 1)
                             vessel_model_dir = os.path.join(_base, _name)
                         else:
                             vessel_model_dir = os.path.join(
-                                'results', 'models', args.set_name, geo_variant_name + '_vessel' + norm_suffix)
-                        if args.normalize:
-                            from util.tools.basic import load_dict
-                            vessel_jax_path = _resolve_norm_data_path(
-                                getattr(args, 'vessel_norm_data_path', None),
-                                vessel_model_dir,
-                                args.set_name,
-                                geo_variant_name,
-                                "jax_arrays_vessel_num_geos_{num_geos}_normalized.pkl",
-                                kind="vessel",
-                                run_config_suffix=run_config_suffix,
-                            )
-                            vessel_norm_data = load_dict(vessel_jax_path)
-                            input_mean_v = np.array(vessel_norm_data['input_mean'])
-                            input_std_v = np.array(vessel_norm_data['input_std'])
-                            output_mean_v = np.array(vessel_norm_data['output_mean'])
-                            output_std_v = np.array(vessel_norm_data['output_std'])
-                            X_v_nn = (X_v - input_mean_v) / input_std_v
-                        else:
-                            X_v_nn = np.array(X_v, dtype=np.float64)
-                            vessel_norm_data = None
-                        X_v_jax = jnp.array(X_v_nn, dtype=jnp.float32)
+                                'results', 'models', args.set_name, geo_variant_name + '_vessel')
+                        X_v_jax = jnp.array(np.array(X_v, dtype=np.float64), dtype=jnp.float32)
                         model_paths = [os.path.join(vessel_model_dir, f"rri_{args.set_name}_vessel_pred_{i}_model") for i in range(3)]
                         for mp in model_paths:
                             if not os.path.exists(mp):
@@ -1237,46 +1070,11 @@ def main():
                             use_leaky_v = getattr(model, "use_leaky_relu", False)
                             pred = nn_predict(X_v_jax, model.weights, use_leaky_v)
                             raw_predictions_v.append(np.array(pred).flatten())
-                        if args.normalize:
-                            pred_R_v = raw_predictions_v[0] * output_std_v[0] + output_mean_v[0]
-                            pred_S_v = raw_predictions_v[1] * output_std_v[1] + output_mean_v[1]
-                            pred_L_v = raw_predictions_v[2] * output_std_v[2] + output_mean_v[2]
-                        else:
-                            pred_R_v = np.array(raw_predictions_v[0])
-                            pred_S_v = np.array(raw_predictions_v[1])
-                            pred_L_v = np.array(raw_predictions_v[2])
+                        pred_R_v = np.array(raw_predictions_v[0])
+                        pred_S_v = np.array(raw_predictions_v[1])
+                        pred_L_v = np.array(raw_predictions_v[2])
                         if getattr(args, 'stenosis_off', False):
                             pred_S_v = np.zeros_like(pred_R_v)
-                        if getattr(args, 'clip_predictions', False):
-                            from util.tools.basic import load_dict as _load_dict_v
-                            if args.normalize and vessel_norm_data is not None:
-                                v_min = np.atleast_1d(np.array(vessel_norm_data['output_min']))
-                                v_max = np.atleast_1d(np.array(vessel_norm_data['output_max']))
-                            else:
-                                _sidecar_v = os.path.join(vessel_model_dir, 'norm_data_num_geos.txt')
-                                if not os.path.exists(_sidecar_v):
-                                    raise FileNotFoundError(
-                                        "--clip-predictions (vessel): norm_data_num_geos.txt not found in vessel model dir."
-                                    )
-                                with open(_sidecar_v) as _f:
-                                    _num_geos_v = _f.read().strip()
-                                _jax_parts_v = ['data', 'jax_arrays', args.set_name]
-                                if run_config_suffix:
-                                    _jax_parts_v.append(run_config_suffix)
-                                _jax_parts_v.extend([geo_variant_name, 'test', f'jax_arrays_vessel_num_geos_{_num_geos_v}.pkl'])
-                                _pkl_v = os.path.join(*_jax_parts_v)
-                                if not os.path.exists(_pkl_v):
-                                    raise FileNotFoundError(f"--clip-predictions (vessel): training pkl not found: {_pkl_v}")
-                                _train_v = _load_dict_v(_pkl_v)
-                                if 'output_min' not in _train_v or 'output_max' not in _train_v:
-                                    raise ValueError(
-                                        "--clip-predictions (vessel): pkl missing output_min/output_max. Re-run data processing."
-                                    )
-                                v_min = np.atleast_1d(np.array(_train_v['output_min']))
-                                v_max = np.atleast_1d(np.array(_train_v['output_max']))
-                            pred_R_v = np.clip(pred_R_v, v_min[0], v_max[0])
-                            pred_S_v = np.clip(pred_S_v, v_min[1], v_max[1])
-                            pred_L_v = np.clip(pred_L_v, v_min[2], v_max[2])
                         vessel_id_to_row = {vid: i for i, vid in enumerate(vessel_ids)}
                         for v in jv_config.get('vessels', []):
                             vname = (v.get('vessel_name') or '').lower()

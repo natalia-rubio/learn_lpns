@@ -16,7 +16,6 @@ import dill
 
 
 def train_nn(model, training_params):
-    norm_suffix = "_normalized" if getattr(model, 'normalize', False) else ""
     model_name2 = f"{model.output_type}_{model.set_name}{getattr(model, 'model_name_suffix', '')}_pred_{model.target_coef_ind}"
     model_name = f"{model.output_type}_{model.set_name}_ng_{model.num_geos}_nl_{model.num_layers}_lw_{model.layer_width}_ne_{training_params['num_epochs']}_bs_{training_params['batch_size']}_dr_{model.decay_rate}_{model.set_type}_pred_{model.target_coef_ind}"
     plotting = True
@@ -27,7 +26,7 @@ def train_nn(model, training_params):
     out_dir = training_params.get("output_dir")
     if out_dir is None:
         geometry_variant = getattr(model, 'geometry_variant', 'bifurcations')
-        out_dir = os.path.join("results", "models", str(model.set_name), geometry_variant + norm_suffix)
+        out_dir = os.path.join("results", "models", str(model.set_name), geometry_variant + getattr(model, 'model_name_suffix', ''))
     
     num_offsets = training_params["num_offsets"]
     print("Number of offsets: ", num_offsets)
@@ -80,24 +79,24 @@ def train_nn(model, training_params):
 
         epoch_time = time.time() - start_time
  
-        train_loss = loss_pure(input=model.input[train_inds, :],
-                        outputs=model.output[train_inds, :],
-                        scaling_factors=model.data_dict["scaling_factors"][train_inds, :],
-                        scaling_dict=model.scaling_dict,
-                        target_coef_ind=model.target_coef_ind,
-                        use_leaky_relu=getattr(model, "use_leaky_relu", False),
-                        weights=model.weights)
+        train_loss = loss_pure(
+            input=model.input[train_inds, :],
+            outputs=model.output[train_inds, :],
+            target_coef_ind=model.target_coef_ind,
+            use_leaky_relu=getattr(model, "use_leaky_relu", False),
+            weights=model.weights,
+        )
         train_hist.append(train_loss)
 
         # Handle empty validation set (100% train)
         if len(val_inds) > 0:
-            val_loss = loss_pure(input=model.input[val_inds, :],
-                            outputs=model.output[val_inds, :],
-                            scaling_factors=model.data_dict["scaling_factors"][val_inds, :],
-                            scaling_dict=model.scaling_dict,
-                            target_coef_ind=model.target_coef_ind,
-                            use_leaky_relu=getattr(model, "use_leaky_relu", False),
-                            weights=model.weights)
+            val_loss = loss_pure(
+                input=model.input[val_inds, :],
+                outputs=model.output[val_inds, :],
+                target_coef_ind=model.target_coef_ind,
+                use_leaky_relu=getattr(model, "use_leaky_relu", False),
+                weights=model.weights,
+            )
             val_hist.append(val_loss)
             print("Epoch {} in {:0.2f} sec  |  ".format(epoch, epoch_time) + \
                 "Training set accuracy {:e}  |  ".format(train_loss) + \
@@ -148,11 +147,6 @@ def train_nn(model, training_params):
     plt.savefig(os.path.join(out_dir, f"{model_name}_training_plot.png"), bbox_inches='tight')
 
     os.makedirs(out_dir, exist_ok=True)
-    # So generate_zerod_inputs can resolve training data (norm stats and/or output min/max for clipping)
-    if hasattr(model, "num_geos"):
-        sidecar = os.path.join(out_dir, "norm_data_num_geos.txt")
-        with open(sidecar, "w") as f:
-            f.write(str(model.num_geos))
     dill_save(model, os.path.join(out_dir, f"{model_name}_model"))
     dill_save(model, os.path.join(out_dir, f"{model_name2}_model"))
     # Return final validation loss (or NaN if 100% train)

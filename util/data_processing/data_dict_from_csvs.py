@@ -8,9 +8,10 @@ Inputs:
 
 Outputs:
   - A Python dict containing JAX arrays with keys expected by `NeuralNet`:
-      - input_o1, input_o2
-      - output_o1_rri, output_o2_rri (and optionally _ri/_rr)
-      - scaling_factors
+      - input, output_rri
+      - input_mean, input_std, output_mean, output_std (dataset stats; arrays stay raw)
+      - generation, output_min, output_max
+      - geometry_row_ranges, geometry_names_order
 
 This is intentionally "strict": missing columns raise ValueError.
 """
@@ -22,11 +23,7 @@ import os
 from typing import Dict, List, Optional, Tuple, Any
 
 import numpy as np
-
-try:
-    import jax.numpy as jnp  # type: ignore
-except (ImportError, ModuleNotFoundError):
-    jnp = None
+import jax.numpy as jnp
 
 # Try to import matplotlib for histogram generation
 try:
@@ -40,7 +37,10 @@ except ImportError:
 
 
 def _setup_latex_histograms() -> bool:
-    """Enable LaTeX rendering for matplotlib if available. Returns True if LaTeX is in use."""
+    """Enable LaTeX rendering for matplotlib if available.
+
+    Called by: :func:`_plot_column_histograms`.
+    """
     if not HAS_MATPLOTLIB:
         return False
     try:
@@ -55,19 +55,20 @@ def _setup_latex_histograms() -> bool:
         plt.rcParams["font.serif"] = ["DejaVu Serif"]
         return False
 
-
 def _feature_name_to_latex(name: str) -> str:
-    """Return LaTeX-safe string for feature name (escape underscores for text mode)."""
+    """Return LaTeX-safe string for a feature name (escape underscores).
+
+    Called by: :func:`_plot_column_histograms`.
+    """
     escaped = name.replace("_", r"\_")
     return rf"\texttt{{{escaped}}}"
 
-
 def get_default_include_features() -> List[str]:
     """
-    Get the default list of features to include in the neural network input.
-    
-    Returns:
-        List of feature names to include ( features total)
+    Default junction NN input column names (primary-outlet feature set).
+
+    Called by: :func:`filter_features_from_array`, :func:`build_data_dict_from_csvs`,
+    ``generate_zerod_inputs.py``.
     """
     return [
         "inlet_max_inscribed_radius",
@@ -121,10 +122,9 @@ def get_default_include_features() -> List[str]:
 
 def get_default_include_outputs() -> List[str]:
     """
-    Get the default list of outputs to include in the neural network output.
-    
-    Returns:
-        List of output names to include (3 outputs total)
+    Default junction NN output column names (R, stenosis, L for primary outlet).
+
+    Called by: :func:`filter_outputs_from_array`, :func:`build_data_dict_from_csvs`.
     """
     return [
         "R_poiseuille_outlet0",
@@ -132,11 +132,14 @@ def get_default_include_outputs() -> List[str]:
         "L_outlet0"
     ]
 
-
 def get_default_include_features_vessel() -> List[str]:
     """
-    Get the default list of vessel features to include in the vessel NN input.
-    Order must match the columns written by inputs_from_0d_config.load_vessel_geometric_features().
+    Default vessel NN input column names.
+
+    Order matches ``inputs_from_0d_config.load_vessel_geometric_features``.
+
+    Called by: :func:`filter_features_from_array`, :func:`build_data_dict_from_vessel_csvs`,
+    ``generate_zerod_inputs.py``.
     """
     return [
         "is_inlet",
@@ -165,10 +168,11 @@ def get_default_include_features_vessel() -> List[str]:
         "stenosis_coefficient_geometric",
     ]
 
-
 def get_default_include_outputs_vessel() -> List[str]:
     """
-    Get the default list of vessel outputs to include in the vessel NN output (R, S, L).
+    Default vessel NN output column names (R_poiseuille, stenosis_coefficient, L).
+
+    Called by: :func:`build_data_dict_from_vessel_csvs`, :func:`_read_vessel_lumped_parameters_csv`.
     """
     return [
         "R_poiseuille",
@@ -176,53 +180,32 @@ def get_default_include_outputs_vessel() -> List[str]:
         "L",
     ]
 
-
 def filter_features_from_array(
     X: np.ndarray,
     feature_names: List[str],
     include_features: Optional[List[str]] = None,
-    remap_tortuosity: bool = True,
 ) -> Tuple[np.ndarray, List[str]]:
     """
-    Filter features from an array to match the specified feature list.
-    
-    Args:
-        X: Input array of shape (n_samples, n_features)
-        feature_names: List of feature names corresponding to columns of X
-        include_features: List of feature names to include. If None, uses get_default_include_features()
-        remap_tortuosity: If True, remap tortuosity values < 1 to 1
-    
-    Returns:
-        Filtered array and list of selected feature names
+    Select and reorder feature columns from a numeric matrix.
+
+    Calls: :func:`get_default_include_features` (when ``include_features`` is omitted).
+    Called by: :func:`build_data_dict_from_csvs`, :func:`build_data_dict_from_vessel_csvs`,
+    ``generate_zerod_inputs.py``. Tortuosity clamping is done later via :func:`_clamp_tortuosity`.
     """
     if include_features is None:
         include_features = get_default_include_features()
-    
-    # Validate that all requested features exist
+
     missing_features = [f for f in include_features if f not in feature_names]
     if missing_features:
         raise ValueError(
             f"Missing requested features: {missing_features}. "
             f"Available features: {feature_names}"
         )
-    
-    # Get column indices for requested features in the specified order
+
     col_to_idx = {name: idx for idx, name in enumerate(feature_names)}
     feature_indices = [col_to_idx[f] for f in include_features]
-    
-    # Extract only the requested features in the specified order
     X_filtered = X[:, feature_indices]
-    
-    # Apply tortuosity remapping if requested
-    if remap_tortuosity:
-        tortuosity_indices = [
-            idx for idx, name in enumerate(include_features)
-            if 'tortuosity' in name.lower()
-        ]
-        if tortuosity_indices:
-            for idx in tortuosity_indices:
-                X_filtered[:, idx] = np.maximum(X_filtered[:, idx], 1.0)
-    
+
     return X_filtered, include_features
 
 
@@ -232,15 +215,10 @@ def filter_outputs_from_array(
     include_outputs: Optional[List[str]] = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """
-    Filter outputs from an array to match the specified output list.
-    
-    Args:
-        Y: Output array of shape (n_samples, n_outputs)
-        output_names: List of output names corresponding to columns of Y
-        include_outputs: List of output names to include. If None, uses get_default_include_outputs()
-    
-    Returns:
-        Filtered array and list of selected output names
+    Select and reorder output columns from a numeric matrix.
+
+    Calls: :func:`get_default_include_outputs` (when ``include_outputs`` is omitted).
+    Called by: :func:`build_data_dict_from_csvs`.
     """
     if include_outputs is None:
         include_outputs = get_default_include_outputs()
@@ -264,16 +242,28 @@ def filter_outputs_from_array(
 
 
 def _parse_float_cell(x: str) -> float:
-    """Parse a CSV cell as float; empty or whitespace-only cells become NaN."""
+    """Parse a CSV cell as float; empty or non-finite values raise ValueError.
+
+    Called by: :func:`_read_csv_matrix`, :func:`_read_csv_numeric_columns`,
+    :func:`_read_vessel_lumped_parameters_csv`.
+    """
     if x is None:
-        return float("nan")
+        raise ValueError("Empty numeric cell in CSV")
     s = str(x).strip()
     if s == "":
-        return float("nan")
-    return float(s)
+        raise ValueError("Empty numeric cell in CSV")
+    val = float(s)
+    if not np.isfinite(val):
+        raise ValueError(f"Non-finite numeric value in CSV cell: {s!r}")
+    return val
 
 
 def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
+    """Load an all-numeric CSV as (header, float matrix).
+
+    Calls: :func:`_parse_float_cell`.
+    Called by: :func:`build_data_dict_from_csvs`, :func:`build_data_dict_from_vessel_csvs`.
+    """
     if not os.path.exists(csv_path):
         raise ValueError(f"CSV not found: {csv_path}")
 
@@ -283,10 +273,14 @@ def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
         if header is None:
             raise ValueError(f"Empty CSV: {csv_path}")
         rows = []
-        for r in reader:
+        for row_idx, r in enumerate(reader, start=2):
             if not r:
                 continue
-            rows.append([_parse_float_cell(x) for x in r])
+            try:
+                row_vals = [_parse_float_cell(x) for x in r]
+            except ValueError as exc:
+                raise ValueError(f"{csv_path} row {row_idx}: {exc}") from exc
+            rows.append(row_vals)
 
     if not rows:
         raise ValueError(f"No data rows in CSV: {csv_path}")
@@ -300,7 +294,11 @@ def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
 
 
 def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[List[str], np.ndarray]:
-    """Read a CSV and return (full header, array of only the requested numeric columns in order)."""
+    """Read selected numeric columns from a CSV (full header, subset array).
+
+    Calls: :func:`_parse_float_cell`.
+    Called by: (none in-repo; kept for mixed-type CSV helpers).
+    """
     if not os.path.exists(csv_path):
         raise ValueError(f"CSV not found: {csv_path}")
     with open(csv_path, "r", newline="") as f:
@@ -310,10 +308,22 @@ def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[L
             raise ValueError(f"Empty CSV: {csv_path}")
         col_indices = [header.index(c) for c in column_names]
         rows = []
-        for r in reader:
+        for row_idx, r in enumerate(reader, start=2):
             if not r:
                 continue
-            rows.append([_parse_float_cell(r[i]) if i < len(r) else float("nan") for i in col_indices])
+            row_vals = []
+            for col_name, i in zip(column_names, col_indices):
+                if i >= len(r):
+                    raise ValueError(
+                        f"{csv_path} row {row_idx}: missing value for column '{col_name}'"
+                    )
+                try:
+                    row_vals.append(_parse_float_cell(r[i]))
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{csv_path} row {row_idx}, column '{col_name}': {exc}"
+                    ) from exc
+            rows.append(row_vals)
     if not rows:
         raise ValueError(f"No data rows in CSV: {csv_path}")
     return header, np.asarray(rows, dtype=float)
@@ -327,8 +337,10 @@ def _plot_column_histograms(
     num_geos: int,
 ) -> int:
     """
-    Generate one histogram per column (one PNG + PDF per column), with LaTeX formatting.
-    Returns the number of columns plotted.
+    Plot one histogram per column (PNG + PDF).
+
+    Calls: :func:`_setup_latex_histograms`, :func:`_feature_name_to_latex`.
+    Called by: :func:`plot_feature_histograms`, :func:`plot_lumped_param_histograms`.
     """
     if not HAS_MATPLOTLIB:
         return 0
@@ -427,8 +439,11 @@ def plot_feature_histograms(
     num_geos: int,
 ) -> None:
     """
-    Generate one histogram per feature (one file per feature), with LaTeX formatting.
-    Saves each figure as both PNG and PDF.
+    Plot one histogram per input feature.
+
+    Calls: :func:`_plot_column_histograms`.
+    Called by: :func:`_maybe_plot_histograms`, :func:`regenerate_feature_histograms` (via
+    :func:`build_data_dict_from_csvs` with ``plot_histograms=True``).
     """
     if not HAS_MATPLOTLIB:
         print("Warning: matplotlib not available, skipping histogram generation")
@@ -447,8 +462,10 @@ def plot_lumped_param_histograms(
     num_geos: int,
 ) -> None:
     """
-    Generate one histogram per junction lumped parameter (one PNG + PDF per parameter).
-    Saves into output_dir/lumped_parameters/.
+    Plot one histogram per lumped-parameter output column.
+
+    Calls: :func:`_plot_column_histograms`.
+    Called by: :func:`_maybe_plot_histograms`.
     """
     if not HAS_MATPLOTLIB:
         return
@@ -460,146 +477,418 @@ def plot_lumped_param_histograms(
         print(f"Saved {n} junction lumped parameter histograms (PNG + PDF) to: {lumped_dir}")
 
 
+OUTPUT_RRI_KEY = "output_rri"
+
+
+def feature_histograms_dir(
+    set_name: str,
+    geometry_variant: str,
+    set_type: str = "all",
+    run_config_suffix: Optional[str] = None,
+    data_root: str = "data",
+) -> str:
+    """
+    Default output directory for histograms and data-summary CSVs.
+
+    Mirrors ``jax_arrays`` layout::
+        {data_root}/feature_histograms/{set_name}/[{run_config}/]{geometry_variant}/{set_type}/
+
+    Called by: :func:`_finalize_stacked_ml_data`, ``regenerate_feature_histograms.py``.
+    """
+    parts = [data_root, "feature_histograms", set_name]
+    if run_config_suffix:
+        parts.append(run_config_suffix)
+    parts.extend([geometry_variant, set_type])
+    return os.path.join(*parts)
+
+
+def _require_consistent_column_order(
+    selected: List[str],
+    canonical: Optional[List[str]],
+    *,
+    kind: str,
+    geo: str,
+) -> List[str]:
+    """Return canonical column-name order; error if ``selected`` differs from a prior geometry.
+
+    Called by: :func:`build_data_dict_from_csvs`, :func:`build_data_dict_from_vessel_csvs`.
+    """
+    if canonical is None:
+        return list(selected)
+    if selected != canonical:
+        raise ValueError(
+            f"{kind} list mismatch: first geometry had {canonical}, but {geo} has {selected}"
+        )
+    return canonical
+
+
+def _clamp_tortuosity(input_array: np.ndarray, feature_order: Optional[List[str]]) -> None:
+    """In-place: clamp tortuosity feature columns to be at least 1.0.
+
+    Called by: :func:`_finalize_stacked_ml_data`, ``generate_zerod_inputs.py``.
+    """
+    if not feature_order:
+        return
+    for idx, name in enumerate(feature_order):
+        if "tortuosity" in name.lower():
+            input_array[:, idx] = np.maximum(input_array[:, idx], 1.0)
+
+
+def _read_vessel_lumped_parameters_csv(
+    csv_path: str,
+    include_outputs: List[str],
+) -> Tuple[np.ndarray, List[str], List[str]]:
+    """
+    Read ``vessel_lumped_parameters.csv`` (string ``vessel_name`` + numeric R/S/L columns).
+
+    Returns (lumped_params_array, output_column_names, vessel_names_per_row).
+
+    Calls: :func:`_parse_float_cell`.
+    Called by: :func:`build_data_dict_from_vessel_csvs`.
+    """
+    if not os.path.exists(csv_path):
+        raise ValueError(f"CSV not found: {csv_path}")
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            raise ValueError(f"Empty CSV: {csv_path}")
+        if "vessel_name" not in header:
+            raise ValueError(f"Missing required column 'vessel_name' in {csv_path}")
+        vn_idx = header.index("vessel_name")
+        try:
+            out_indices = [header.index(c) for c in include_outputs]
+        except ValueError as exc:
+            raise ValueError(f"Missing required output column in {csv_path}: {exc}") from exc
+        rows_y: List[List[float]] = []
+        vessel_names: List[str] = []
+        for row_idx, r in enumerate(reader, start=2):
+            if not r:
+                continue
+            if vn_idx >= len(r) or not str(r[vn_idx]).strip():
+                raise ValueError(f"{csv_path} row {row_idx}: missing vessel_name")
+            vessel_names.append(str(r[vn_idx]).strip())
+            row_y: List[float] = []
+            for col_name, i in zip(include_outputs, out_indices):
+                if i >= len(r):
+                    raise ValueError(
+                        f"{csv_path} row {row_idx}: missing value for column '{col_name}'"
+                    )
+                try:
+                    row_y.append(_parse_float_cell(r[i]))
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{csv_path} row {row_idx}, column '{col_name}': {exc}"
+                    ) from exc
+            rows_y.append(row_y)
+    if not rows_y:
+        raise ValueError(f"No data rows in CSV: {csv_path}")
+    return np.asarray(rows_y, dtype=float), list(include_outputs), vessel_names
+
+
+def _validate_no_nans(
+    input_array: np.ndarray,
+    output_array: np.ndarray,
+    *,
+    input_msg: str,
+    output_msg: str,
+) -> None:
+    """Raise if ``input_array`` or ``output_array`` contains NaN.
+
+    Called by: :func:`_finalize_stacked_ml_data`.
+    """
+    if np.any(np.isnan(input_array)):
+        raise ValueError(input_msg)
+    if np.any(np.isnan(output_array)):
+        raise ValueError(output_msg)
+
+
+def _maybe_plot_histograms(
+    *,
+    input_array: np.ndarray,
+    output_array: np.ndarray,
+    feature_order: List[str],
+    output_order: List[str],
+    set_name: str,
+    num_geos: int,
+    histogram_output_dir: str,
+    lumped_param_label: str = "junction",
+) -> None:
+    """Optionally write feature and lumped-parameter histograms.
+
+    Calls: :func:`plot_feature_histograms`, :func:`plot_lumped_param_histograms`.
+    Called by: :func:`_finalize_stacked_ml_data`.
+    """
+    print("Plotting feature histograms...")
+    plot_feature_histograms(
+        input_array=input_array,
+        feature_names=feature_order,
+        output_dir=histogram_output_dir,
+        set_name=set_name,
+        num_geos=num_geos,
+    )
+    print(f"Plotting {lumped_param_label} lumped parameter histograms...")
+    plot_lumped_param_histograms(
+        output_array=output_array,
+        output_names=output_order,
+        output_dir=histogram_output_dir,
+        set_name=set_name,
+        num_geos=num_geos,
+    )
+
+
+def _compute_dataset_stats(
+    input_array: np.ndarray,
+    output_array: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Compute mean/std/min/max stats for stacked input and output arrays.
+
+    Called by: :func:`_finalize_stacked_ml_data`.
+    """
+    input_mean = np.mean(input_array, axis=0)
+    input_std = np.std(input_array, axis=0)
+    input_std_safe = input_std.copy()
+    input_std_safe[input_std_safe == 0] = 1.0
+
+    output_mean = np.mean(output_array, axis=0)
+    output_std = np.std(output_array, axis=0)
+    output_std_safe = output_std.copy()
+    output_std_safe[output_std_safe == 0] = 1.0
+    output_min = np.min(output_array, axis=0)
+    output_max = np.max(output_array, axis=0)
+    return input_mean, input_std_safe, output_mean, output_std_safe, output_min, output_max
+
+
+def _write_data_summary_csv(
+    *,
+    input_array: np.ndarray,
+    output_array: np.ndarray,
+    feature_order: List[str],
+    output_order: List[str],
+    row_geo_names: List[str],
+    row_instance_names: List[str],
+    summary_path: str,
+) -> None:
+    """Write per-column summary statistics CSV with min/max row provenance.
+
+    Called by: :func:`_finalize_stacked_ml_data`.
+    """
+    summary_dir = os.path.dirname(summary_path)
+    os.makedirs(summary_dir, exist_ok=True)
+    with open(summary_path, "w", newline="") as sf:
+        writer = csv.writer(sf)
+        writer.writerow([
+            "variable", "type", "mean", "std", "min", "max",
+            "min_geometry", "min_outlet", "max_geometry", "max_outlet",
+        ])
+
+        def _summary_row_for_col(col: np.ndarray, kind: str, name: str) -> None:
+            min_idx = int(np.argmin(col))
+            max_idx = int(np.argmax(col))
+            writer.writerow([
+                name, kind,
+                f"{np.mean(col):.6g}", f"{np.std(col):.6g}",
+                f"{np.min(col):.6g}", f"{np.max(col):.6g}",
+                row_geo_names[min_idx], row_instance_names[min_idx],
+                row_geo_names[max_idx], row_instance_names[max_idx],
+            ])
+
+        for col_idx, fname in enumerate(feature_order):
+            _summary_row_for_col(input_array[:, col_idx], "input", fname)
+        for col_idx, oname in enumerate(output_order):
+            _summary_row_for_col(output_array[:, col_idx], "output", oname)
+    print(f"  Saved data summary to {summary_path}")
+
+
+def _finalize_stacked_ml_data(
+    *,
+    input_array: np.ndarray,
+    output_array: np.ndarray,
+    generation_array: np.ndarray,
+    feature_order: List[str],
+    output_order: List[str],
+    geometries: List[str],
+    geometry_row_ranges: List[Tuple[int, int]],
+    row_geo_names: List[str],
+    row_instance_names: List[str],
+    set_name: str,
+    geometry_variant: str,
+    input_nan_msg: str,
+    output_nan_msg: str,
+    summary_filename: str,
+    plot_histograms: bool = False,
+    histogram_output_dir: Optional[str] = None,
+    lumped_param_label: str = "junction",
+    cohort_set_name: Optional[str] = None,
+    run_config_suffix: Optional[str] = None,
+    set_type: str = "all",
+    data_root: str = "data",
+) -> Dict[str, Any]:
+    """Shared post-stack pipeline: clamp, validate, optional plots, summary CSV, JAX dict.
+
+    Calls: :func:`_clamp_tortuosity`, :func:`_validate_no_nans`, :func:`_maybe_plot_histograms`,
+    :func:`_compute_dataset_stats`, :func:`_write_data_summary_csv`.
+    Called by: :func:`build_data_dict_from_csvs`, :func:`build_data_dict_from_vessel_csvs`.
+    """
+    _clamp_tortuosity(input_array, feature_order)
+    _validate_no_nans(
+        input_array, output_array, input_msg=input_nan_msg, output_msg=output_nan_msg
+    )
+
+    label_set_name = cohort_set_name if cohort_set_name is not None else set_name
+    summary_dir = histogram_output_dir or feature_histograms_dir(
+        label_set_name,
+        geometry_variant,
+        set_type=set_type,
+        run_config_suffix=run_config_suffix,
+        data_root=data_root,
+    )
+    if plot_histograms:
+        _maybe_plot_histograms(
+            input_array=input_array,
+            output_array=output_array,
+            feature_order=feature_order,
+            output_order=output_order,
+            set_name=label_set_name,
+            num_geos=len(geometries),
+            histogram_output_dir=summary_dir,
+            lumped_param_label=lumped_param_label,
+        )
+
+    (
+        input_mean,
+        input_std_safe,
+        output_mean,
+        output_std_safe,
+        output_min,
+        output_max,
+    ) = _compute_dataset_stats(input_array, output_array)
+
+    summary_path = os.path.join(summary_dir, summary_filename)
+    _write_data_summary_csv(
+        input_array=input_array,
+        output_array=output_array,
+        feature_order=feature_order,
+        output_order=output_order,
+        row_geo_names=row_geo_names,
+        row_instance_names=row_instance_names,
+        summary_path=summary_path,
+    )
+
+    return {
+        "input": jnp.asarray(input_array),
+        OUTPUT_RRI_KEY: jnp.asarray(output_array),
+        "generation": jnp.asarray(generation_array, dtype=jnp.float32),
+        "input_mean": jnp.asarray(input_mean),
+        "input_std": jnp.asarray(input_std_safe),
+        "output_mean": jnp.asarray(output_mean),
+        "output_std": jnp.asarray(output_std_safe),
+        "output_min": jnp.asarray(output_min),
+        "output_max": jnp.asarray(output_max),
+        "geometry_row_ranges": geometry_row_ranges,
+        "geometry_names_order": list(geometries),
+    }
+
+
 def build_data_dict_from_csvs(
     set_name: str,
     geometries: List[str],
-    output_type: str = "rri",
     ml_inputs_root: str = "data/ml_inputs",
     require_same_rows: bool = True,
     plot_histograms: bool = False,
     histogram_output_dir: Optional[str] = None,
     geometry_variant: str = "bifurcations",
-    normalize: bool = False,
-    allow_nan_in_ml_csvs: bool = False,
-) -> Dict[str, "np.ndarray"]:
+    cohort_set_name: Optional[str] = None,
+    run_config_suffix: Optional[str] = None,
+    set_type: str = "all",
+    data_root: str = "data",
+) -> Dict[str, Any]:
     """
-    Concatenate multiple geometries' CSVs and build a `data_dict`.
+    Concatenate junction CSVs across geometries and build a JAX ``data_dict``.
 
-    Each junction contributes 2 rows (swapped outlet order), so we simply concatenate
-    all rows together into single `input` and `output` arrays.
+    Each junction contributes two rows (swapped outlet order). Outputs are R, stenosis, L
+    for the primary outlet (``output_rri``).
 
-    For output_type "rri": output columns are [R_poiseuille, stenosis_coefficient, L]
-    per outlet, flattened as [R_outlet0, stenosis_outlet0, L_outlet0, R_outlet1, ...].
-
-    Args:
-        set_name: Set name (e.g., "VMR")
-        geometries: List of geometry names to process
-        output_type: Output type ("rri", "ri", or "rr")
-        ml_inputs_root: Root directory for ML inputs
-        require_same_rows: Whether to require same number of rows in input and output CSVs
-        plot_histograms: Whether to generate histograms for selected features (default: False)
-        histogram_output_dir: Directory to save histogram plots. If None, saves to 
-                             "data/feature_histograms/{set_name}/{geometry_variant}"
-        geometry_variant: Geometry variant name (e.g., "bifurcations" or "bifurcations_EL")
-        allow_nan_in_ml_csvs: If True, empty/missing numeric cells (read as NaN) are allowed;
-            stats use nanmean/nanstd; training-style normalization is disallowed. Default False
-            (strict, for NN pipelines).
-
-    Returns:
-        Dictionary with keys "input", "output_{output_type}", "scaling_factors", and
-        "generation" (1-D float array, bifurcation depth per row for optional loss weighting; not part of "input").
+    Calls: :func:`_read_csv_matrix`, :func:`filter_features_from_array`,
+    :func:`filter_outputs_from_array`, :func:`_require_consistent_column_order`,
+    :func:`_finalize_stacked_ml_data`.
+    Called by: ``run_data_processing.py``, :func:`build_jax_arrays` CLI,
+    :func:`regenerate_feature_histograms`.
     """
-    if output_type not in {"rri", "ri", "rr"}:
-        raise ValueError(f"Unsupported output_type: {output_type}")
-    if allow_nan_in_ml_csvs and normalize:
-        raise ValueError("allow_nan_in_ml_csvs=True is incompatible with normalize=True")
+    if not geometries:
+        raise ValueError("geometries must be non-empty")
 
     all_inputs: List[np.ndarray] = []
     all_outputs: List[np.ndarray] = []
     all_generation: List[np.ndarray] = []
-    # Per-geometry row index ranges in the stacked jax arrays (same order as ``geometries``).
     geometry_row_ranges: List[Tuple[int, int]] = []
     row_offset = 0
-    # Per-row provenance: (geometry_name, primary_outlet_name) for every row
     row_geo_names: List[str] = []
-    row_outlet_names: List[str] = []
+    row_instance_names: List[str] = []
 
-    # Use default feature and output selection
     include_features = get_default_include_features()
     include_outputs = get_default_include_outputs()
-    # Track feature and output order for consistency across geometries
     feature_order: Optional[List[str]] = None
     output_order: Optional[List[str]] = None
 
-    def require_cols(col_to_idx: Dict[str, int], needed: List[str], ctx: str) -> List[int]:
-        missing = [c for c in needed if c not in col_to_idx]
-        if missing:
-            raise ValueError(f"Missing required columns in {ctx}: {missing}")
-        return [col_to_idx[c] for c in needed]
-
     for geo in geometries:
-        geom_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "geometric_features.csv")
-        out_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "junction_lumped_parameters.csv")
+        features_csv_path = os.path.join(
+            ml_inputs_root, set_name, geometry_variant, geo, "geometric_features.csv"
+        )
+        lumped_parameters_csv_path = os.path.join(
+            ml_inputs_root, set_name, geometry_variant, geo, "junction_lumped_parameters.csv"
+        )
 
-        geom_header, geom_X = _read_csv_matrix(geom_csv)
-        out_header, out_Y = _read_csv_matrix(out_csv)
+        features_header, features_array = _read_csv_matrix(features_csv_path)
+        lumped_params_header, lumped_params_array = _read_csv_matrix(lumped_parameters_csv_path)
 
-        # Generation (bifurcation depth) for loss weighting — kept out of NN inputs
-        col_to_idx = {name: i for i, name in enumerate(geom_header)}
+        col_to_idx = {name: i for i, name in enumerate(features_header)}
         gi = col_to_idx.get("generation")
         if gi is None:
-            raise ValueError(f"Missing required column 'generation' in {geom_csv}")
-        geo_gen = np.asarray(geom_X[:, gi], dtype=float).ravel()
+            raise ValueError(f"Missing required column 'generation' in {features_csv_path}")
+        geo_gen = np.asarray(features_array[:, gi], dtype=float).ravel()
 
-        if require_same_rows and geom_X.shape[0] != out_Y.shape[0]:
+        if require_same_rows and features_array.shape[0] != lumped_params_array.shape[0]:
             raise ValueError(
-                f"Row mismatch for geo {geo}: geometric_features has {geom_X.shape[0]} rows, "
-                f"junction_lumped_parameters has {out_Y.shape[0]} rows"
+                f"Row mismatch for geo {geo}: geometric_features has {features_array.shape[0]} rows, "
+                f"junction_lumped_parameters has {lumped_params_array.shape[0]} rows"
             )
 
-        # Load per-row metadata (geometry + primary outlet name)
-        meta_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "geometric_features_meta.csv")
+        meta_csv = os.path.join(
+            ml_inputs_root, set_name, geometry_variant, geo, "geometric_features_meta.csv"
+        )
         if os.path.exists(meta_csv):
             with open(meta_csv, "r", newline="") as fm:
                 reader = csv.reader(fm)
-                meta_header = next(reader, None)
+                next(reader, None)
                 for r in reader:
                     if len(r) >= 2:
                         row_geo_names.append(geo)
-                        row_outlet_names.append(r[1])  # primary_outlet_name
+                        row_instance_names.append(r[1])
         else:
-            # No meta file — fill with placeholder names
-            for _ in range(geom_X.shape[0]):
+            for _ in range(features_array.shape[0]):
                 row_geo_names.append(geo)
-                row_outlet_names.append("unknown")
+                row_instance_names.append("unknown")
 
-        # Filter features using the reusable function
-        geom_X, selected_features = filter_features_from_array(
-            geom_X, geom_header, include_features=include_features, remap_tortuosity=False
+        filtered_features_array, selected_features = filter_features_from_array(
+            features_array, features_header, include_features=include_features
         )
-        # Note: remap_tortuosity=False here because we'll do it after stacking all arrays
-        
-        # Validate feature order consistency across geometries
-        if feature_order is None:
-            feature_order = selected_features
-        else:
-            if selected_features != feature_order:
-                raise ValueError(
-                    f"Feature list mismatch: first geometry had {feature_order}, "
-                    f"but {geo} has {selected_features}"
-                )
-
-        # Filter outputs using the reusable function
-        out_Y, selected_outputs = filter_outputs_from_array(
-            out_Y, out_header, include_outputs=include_outputs
+        feature_order = _require_consistent_column_order(
+            selected_features, feature_order, kind="Feature", geo=geo
         )
-        
-        # Validate output order consistency across geometries
-        if output_order is None:
-            output_order = selected_outputs
-        else:
-            if selected_outputs != output_order:
-                raise ValueError(
-                    f"Output list mismatch: first geometry had {output_order}, "
-                    f"but {geo} has {selected_outputs}"
-                )
 
-        # Use filtered columns from geometric_features and junction_lumped_parameters
-        n_stack = int(geom_X.shape[0])
+        lumped_params_array, selected_outputs = filter_outputs_from_array(
+            lumped_params_array, lumped_params_header, include_outputs=include_outputs
+        )
+        output_order = _require_consistent_column_order(
+            selected_outputs, output_order, kind="Output", geo=geo
+        )
+
+        n_stack = int(filtered_features_array.shape[0])
         geometry_row_ranges.append((row_offset, row_offset + n_stack))
         row_offset += n_stack
-        all_inputs.append(geom_X)
-        all_outputs.append(out_Y)
+        all_inputs.append(filtered_features_array)
+        all_outputs.append(lumped_params_array)
         all_generation.append(geo_gen)
 
     input_array = np.vstack(all_inputs)
@@ -613,316 +902,172 @@ def build_data_dict_from_csvs(
         raise ValueError(
             f"generation row count {generation_array.shape[0]} != input rows {input_array.shape[0]}"
         )
+    assert feature_order is not None and output_order is not None
 
-    # Remap tortuosity values less than 1 to 1 (after stacking)
-    # Tortuosity should be >= 1 (straight line = 1, curved paths > 1)
-    if feature_order is not None:
-        # Find indices of tortuosity columns
-        tortuosity_indices = [
-            idx for idx, name in enumerate(feature_order)
-            if 'tortuosity' in name.lower()
-        ]
-        
-        if tortuosity_indices:
-            # Clamp tortuosity values to be at least 1.0 (leave NaN as NaN)
-            for idx in tortuosity_indices:
-                v = input_array[:, idx]
-                input_array[:, idx] = np.where(
-                    np.isfinite(v), np.maximum(v, 1.0), v
-                )
-
-    if not allow_nan_in_ml_csvs:
-        if np.any(np.isnan(input_array)):
-            raise ValueError(
-                "NaN found in junction input array (geometric features). "
-                "Check geometric_features.csv for all geometries (e.g. flow_split, flow_split_inv)."
-            )
-        if np.any(np.isnan(output_array)):
-            raise ValueError(
-                "NaN found in junction output array (lumped parameters). "
-                "Check junction_lumped_parameters.csv for all geometries."
-            )
-
-    # Generate histograms if requested (features and junction lumped parameters)
-    if plot_histograms:
-        if histogram_output_dir is None:
-            histogram_output_dir = os.path.join("data", "feature_histograms", set_name, geometry_variant)
-        if include_features is not None and feature_order is not None:
-            print("Plotting feature histograms...")
-            plot_feature_histograms(
-                input_array=input_array,
-                feature_names=feature_order,
-                output_dir=histogram_output_dir,
-                set_name=set_name,
-                num_geos=len(geometries),
-            )
-        if output_order is not None:
-            print("Plotting junction lumped parameter histograms...")
-            plot_lumped_param_histograms(
-                output_array=output_array,
-                output_names=output_order,
-                output_dir=histogram_output_dir,
-                set_name=set_name,
-                num_geos=len(geometries),
-            )
-
-    # --- Compute stats (always, for the summary CSV) ---
-    _mean = np.nanmean if allow_nan_in_ml_csvs else np.mean
-    _std = np.nanstd if allow_nan_in_ml_csvs else np.std
-    _min = np.nanmin if allow_nan_in_ml_csvs else np.min
-    _max = np.nanmax if allow_nan_in_ml_csvs else np.max
-
-    input_mean = _mean(input_array, axis=0)
-    input_std = _std(input_array, axis=0)
-    input_std_safe = input_std.copy()
-    input_std_safe[input_std_safe == 0] = 1.0
-
-    output_mean = _mean(output_array, axis=0)
-    output_std = _std(output_array, axis=0)
-    output_std_safe = output_std.copy()
-    output_std_safe[output_std_safe == 0] = 1.0
-    output_min = _min(output_array, axis=0)
-    output_max = _max(output_array, axis=0)
-
-    # --- Write summary CSV (always uses pre-normalization values) ---
-    summary_dir = histogram_output_dir or os.path.join("data", "feature_histograms", set_name, geometry_variant)
-    os.makedirs(summary_dir, exist_ok=True)
-    summary_path = os.path.join(summary_dir, f"data_summary_{set_name}_num_geos_{len(geometries)}.csv")
-
-    with open(summary_path, "w", newline="") as sf:
-        writer = csv.writer(sf)
-        writer.writerow([
-            "variable", "type", "mean", "std", "min", "max",
-            "min_geometry", "min_outlet", "max_geometry", "max_outlet",
-        ])
-
-        def _summary_row_for_col(
-            col: np.ndarray,
-            kind: str,
-            name: str,
-        ) -> None:
-            if allow_nan_in_ml_csvs and not np.any(np.isfinite(col)):
-                writer.writerow([name, kind, "nan", "nan", "nan", "nan", "", "", "", ""])
-                return
-            if allow_nan_in_ml_csvs:
-                min_idx = int(np.nanargmin(col))
-                max_idx = int(np.nanargmax(col))
-            else:
-                min_idx = int(np.argmin(col))
-                max_idx = int(np.argmax(col))
-            writer.writerow([
-                name, kind,
-                f"{_mean(col):.6g}", f"{_std(col):.6g}",
-                f"{_min(col):.6g}", f"{_max(col):.6g}",
-                row_geo_names[min_idx], row_outlet_names[min_idx],
-                row_geo_names[max_idx], row_outlet_names[max_idx],
-            ])
-
-        # Input features
-        for col_idx, fname in enumerate(feature_order or []):
-            _summary_row_for_col(input_array[:, col_idx], "input", fname)
-
-        # Output targets — include min/max instance provenance
-        for col_idx, oname in enumerate(output_order or []):
-            _summary_row_for_col(output_array[:, col_idx], "output", oname)
-
-    print(f"  Saved data summary to {summary_path}")
-
-    # --- Conditionally apply z-normalization ---
-    if normalize:
-        input_array = (input_array - input_mean) / input_std_safe
-        output_array = (output_array - output_mean) / output_std_safe
-
-        print(f"  Z-normalization applied:")
-        print(f"    Input  mean range: [{input_mean.min():.4f}, {input_mean.max():.4f}]")
-        print(f"    Input  std  range: [{input_std_safe.min():.4f}, {input_std_safe.max():.4f}]")
-        print(f"    Output mean range: [{output_mean.min():.4f}, {output_mean.max():.4f}]")
-        print(f"    Output std  range: [{output_std_safe.min():.4f}, {output_std_safe.max():.4f}]")
-    else:
-        print(f"  Z-normalization: OFF (raw values used)")
-
-    n = input_array.shape[0]
-    scaling_factors = np.ones((n, 1), dtype=float)
-
-    if jnp is not None:
-        data_dict: Dict[str, Any] = {
-            "input": jnp.asarray(input_array),
-            f"output_{output_type}": jnp.asarray(output_array),
-            "scaling_factors": jnp.asarray(scaling_factors),
-            "generation": jnp.asarray(generation_array, dtype=jnp.float32),
-            "normalized": normalize,
-            "output_min": jnp.asarray(output_min),
-            "output_max": jnp.asarray(output_max),
-            "geometry_row_ranges": geometry_row_ranges,
-            "geometry_names_order": list(geometries),
-        }
-        if normalize:
-            data_dict["input_mean"] = jnp.asarray(input_mean)
-            data_dict["input_std"] = jnp.asarray(input_std_safe)
-            data_dict["output_mean"] = jnp.asarray(output_mean)
-            data_dict["output_std"] = jnp.asarray(output_std_safe)
-    else:
-        data_dict = {
-            "input": input_array,
-            f"output_{output_type}": output_array,
-            "scaling_factors": scaling_factors,
-            "generation": np.asarray(generation_array, dtype=np.float32),
-            "normalized": normalize,
-            "output_min": output_min,
-            "output_max": output_max,
-            "geometry_row_ranges": geometry_row_ranges,
-            "geometry_names_order": list(geometries),
-        }
-        if normalize:
-            data_dict["input_mean"] = input_mean
-            data_dict["input_std"] = input_std_safe
-            data_dict["output_mean"] = output_mean
-            data_dict["output_std"] = output_std_safe
-    return data_dict
+    label_set_name = cohort_set_name if cohort_set_name is not None else set_name
+    return _finalize_stacked_ml_data(
+        input_array=input_array,
+        output_array=output_array,
+        generation_array=generation_array,
+        feature_order=feature_order,
+        output_order=output_order,
+        geometries=geometries,
+        geometry_row_ranges=geometry_row_ranges,
+        row_geo_names=row_geo_names,
+        row_instance_names=row_instance_names,
+        set_name=set_name,
+        geometry_variant=geometry_variant,
+        input_nan_msg=(
+            "NaN found in junction input array (geometric features). "
+            "Check geometric_features.csv for all geometries (e.g. flow_split, flow_split_inv)."
+        ),
+        output_nan_msg=(
+            "NaN found in junction output array (lumped parameters). "
+            "Check junction_lumped_parameters.csv for all geometries."
+        ),
+        summary_filename=f"data_summary_{label_set_name}_num_geos_{len(geometries)}.csv",
+        plot_histograms=plot_histograms,
+        histogram_output_dir=histogram_output_dir,
+        lumped_param_label="junction",
+        cohort_set_name=cohort_set_name,
+        run_config_suffix=run_config_suffix,
+        set_type=set_type,
+        data_root=data_root,
+    )
 
 
 def build_data_dict_from_vessel_csvs(
     set_name: str,
     geometries: List[str],
     ml_inputs_root: str = "data/ml_inputs",
+    require_same_rows: bool = True,
+    plot_histograms: bool = False,
+    histogram_output_dir: Optional[str] = None,
     geometry_variant: str = "bifurcations",
-    normalize: bool = False,
-) -> Dict[str, "np.ndarray"]:
+    cohort_set_name: Optional[str] = None,
+    run_config_suffix: Optional[str] = None,
+    set_type: str = "all",
+    data_root: str = "data",
+) -> Dict[str, Any]:
     """
-    Build a data_dict for vessel NN training from per-geometry vessel CSVs.
+    Concatenate vessel CSVs across geometries and build a JAX ``data_dict``.
 
-    Reads vessel_geometric_features.csv and vessel_lumped_parameters.csv for each
-    geometry, filters by get_default_include_features_vessel() and
-    get_default_include_outputs_vessel(), and concatenates into single input and
-    output arrays. Output columns are R_poiseuille, stenosis_coefficient, L (same
-    order as junction "rri").
+    Reads ``vessel_geometric_features.csv`` and ``vessel_lumped_parameters.csv`` per geometry.
+    Outputs are R_poiseuille, stenosis_coefficient, L (``output_rri``).
 
-    Returns:
-        Dictionary with "input", "output_rri", "scaling_factors", "generation" (same length as rows;
-        optional loss weights), and optionally normalization stats if normalize.
+    Calls: :func:`_read_csv_matrix`, :func:`filter_features_from_array`,
+    :func:`_read_vessel_lumped_parameters_csv`, :func:`_require_consistent_column_order`,
+    :func:`_finalize_stacked_ml_data`.
+    Called by: ``run_data_processing.py``.
     """
+    if not geometries:
+        raise ValueError("geometries must be non-empty")
+
     include_features = get_default_include_features_vessel()
-    output_cols = get_default_include_outputs_vessel()
+    include_outputs = get_default_include_outputs_vessel()
     all_inputs: List[np.ndarray] = []
     all_outputs: List[np.ndarray] = []
     all_generation: List[np.ndarray] = []
-    row_ranges: List[Tuple[int, int]] = []  # (start, end) per geometry in order
-    geometries_with_vessels: List[str] = []  # geometry names that contributed rows (same order as row_ranges)
+    geometry_row_ranges: List[Tuple[int, int]] = []
+    row_offset = 0
+    row_geo_names: List[str] = []
+    row_instance_names: List[str] = []
+    feature_order: Optional[List[str]] = None
+    output_order: Optional[List[str]] = None
 
     for geo in geometries:
-        feat_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "vessel_geometric_features.csv")
-        tgt_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "vessel_lumped_parameters.csv")
-        if not os.path.exists(feat_csv) or not os.path.exists(tgt_csv):
-            continue
-        feat_header, feat_X = _read_csv_matrix(feat_csv)
-        fmap = {name: i for i, name in enumerate(feat_header)}
-        gi = fmap.get("generation")
-        if gi is None:
-            raise ValueError(f"Missing required column 'generation' in {feat_csv}")
-        vessel_gen = np.asarray(feat_X[:, gi], dtype=float).ravel()
-        feat_X_filtered, _ = filter_features_from_array(
-            feat_X, feat_header, include_features=include_features, remap_tortuosity=False
+        features_csv_path = os.path.join(
+            ml_inputs_root, set_name, geometry_variant, geo, "vessel_geometric_features.csv"
         )
-        # vessel_lumped_parameters has string column vessel_name; read only numeric columns
-        tgt_header, tgt_Y = _read_csv_numeric_columns(tgt_csv, output_cols)
-        if feat_X_filtered.shape[0] != tgt_Y.shape[0]:
+        lumped_parameters_csv_path = os.path.join(
+            ml_inputs_root, set_name, geometry_variant, geo, "vessel_lumped_parameters.csv"
+        )
+
+        features_header, features_array = _read_csv_matrix(features_csv_path)
+        feature_name_to_idx = {name: i for i, name in enumerate(features_header)}
+        gi = feature_name_to_idx.get("generation")
+        if gi is None:
+            raise ValueError(f"Missing required column 'generation' in {features_csv_path}")
+        vessel_gen = np.asarray(features_array[:, gi], dtype=float).ravel()
+
+        filtered_features_array, selected_features = filter_features_from_array(
+            features_array, features_header, include_features=include_features
+        )
+        feature_order = _require_consistent_column_order(
+            selected_features, feature_order, kind="Feature", geo=geo
+        )
+
+        lumped_params_array, selected_outputs, vessel_names = _read_vessel_lumped_parameters_csv(
+            lumped_parameters_csv_path, include_outputs
+        )
+        output_order = _require_consistent_column_order(
+            selected_outputs, output_order, kind="Output", geo=geo
+        )
+
+        if require_same_rows and filtered_features_array.shape[0] != lumped_params_array.shape[0]:
             raise ValueError(
-                f"Vessel row mismatch for {geo}: features has {feat_X_filtered.shape[0]} rows, "
-                f"targets has {tgt_Y.shape[0]} rows"
+                f"Vessel row mismatch for {geo}: features has {filtered_features_array.shape[0]} rows, "
+                f"lumped parameters has {lumped_params_array.shape[0]} rows"
             )
-        start = sum(x.shape[0] for x in all_inputs)
-        all_inputs.append(feat_X_filtered)
-        all_outputs.append(tgt_Y)
+
+        n_stack = int(filtered_features_array.shape[0])
+        geometry_row_ranges.append((row_offset, row_offset + n_stack))
+        row_offset += n_stack
+        all_inputs.append(filtered_features_array)
+        all_outputs.append(lumped_params_array)
         all_generation.append(vessel_gen)
-        row_ranges.append((start, start + feat_X_filtered.shape[0]))
-        geometries_with_vessels.append(geo)
+        row_geo_names.extend([geo] * n_stack)
+        row_instance_names.extend(vessel_names)
 
-    if not all_inputs:
-        # No vessel CSVs found; return empty arrays (feature count from default vessel include list)
-        n_feat = len(get_default_include_features_vessel())
-        input_array = np.zeros((0, n_feat), dtype=float)
-        output_array = np.zeros((0, 3), dtype=float)
-    else:
-        input_array = np.vstack(all_inputs)
-        output_array = np.vstack(all_outputs)
+    input_array = np.vstack(all_inputs)
+    output_array = np.vstack(all_outputs)
+    generation_array = np.concatenate(all_generation, axis=0)
+    if row_offset != input_array.shape[0]:
+        raise ValueError(
+            f"internal row offset {row_offset} != stacked input rows {input_array.shape[0]}"
+        )
+    if generation_array.shape[0] != input_array.shape[0]:
+        raise ValueError(
+            f"generation row count {generation_array.shape[0]} != input rows {input_array.shape[0]}"
+        )
+    assert feature_order is not None and output_order is not None
 
-    n = input_array.shape[0]
-    if all_generation:
-        generation_array = np.concatenate(all_generation, axis=0)
-        if generation_array.shape[0] != n:
-            raise ValueError(
-                f"vessel generation rows {generation_array.shape[0]} != input rows {n}"
-            )
-    else:
-        generation_array = np.zeros(0, dtype=float)
-    if n > 0:
-        if np.any(np.isnan(input_array)):
-            raise ValueError(
-                "NaN found in vessel input array (vessel geometric features). "
-                "Check vessel_geometric_features.csv for all geometries."
-            )
-        if np.any(np.isnan(output_array)):
-            raise ValueError(
-                "NaN found in vessel output array (vessel lumped parameters). "
-                "Check vessel_lumped_parameters.csv for all geometries."
-            )
-
-    scaling_factors = np.ones((n, 1), dtype=float)
-
-    output_min = np.min(output_array, axis=0) if n > 0 else np.zeros(3, dtype=float)
-    output_max = np.max(output_array, axis=0) if n > 0 else np.zeros(3, dtype=float)
-
-    if normalize and n > 0:
-        input_mean = np.mean(input_array, axis=0)
-        input_std = np.std(input_array, axis=0)
-        input_std_safe = np.where(input_std == 0, 1.0, input_std)
-        output_mean = np.mean(output_array, axis=0)
-        output_std = np.std(output_array, axis=0)
-        output_std_safe = np.where(output_std == 0, 1.0, output_std)
-        input_array = (input_array - input_mean) / input_std_safe
-        output_array = (output_array - output_mean) / output_std_safe
-
-    if jnp is not None:
-        gen_jax = jnp.asarray(generation_array, dtype=jnp.float32) if n > 0 else jnp.zeros(0, dtype=jnp.float32)
-        data_dict = {
-            "input": jnp.asarray(input_array),
-            "output_rri": jnp.asarray(output_array),
-            "scaling_factors": jnp.asarray(scaling_factors),
-            "generation": gen_jax,
-            "normalized": normalize,
-            "row_ranges": row_ranges,
-            "geometries": geometries_with_vessels,
-            "output_min": jnp.asarray(output_min),
-            "output_max": jnp.asarray(output_max),
-        }
-        if normalize and n > 0:
-            data_dict["input_mean"] = jnp.asarray(input_mean)
-            data_dict["input_std"] = jnp.asarray(input_std_safe)
-            data_dict["output_mean"] = jnp.asarray(output_mean)
-            data_dict["output_std"] = jnp.asarray(output_std_safe)
-    else:
-        data_dict = {
-            "input": input_array,
-            "output_rri": output_array,
-            "scaling_factors": scaling_factors,
-            "generation": np.asarray(generation_array, dtype=np.float32) if n > 0 else np.zeros(0, dtype=np.float32),
-            "normalized": normalize,
-            "row_ranges": row_ranges,
-            "geometries": geometries_with_vessels,
-            "output_min": output_min,
-            "output_max": output_max,
-        }
-        if normalize and n > 0:
-            data_dict["input_mean"] = input_mean
-            data_dict["input_std"] = input_std_safe
-            data_dict["output_mean"] = output_mean
-            data_dict["output_std"] = output_std_safe
-    return data_dict
+    label_set_name = cohort_set_name if cohort_set_name is not None else set_name
+    return _finalize_stacked_ml_data(
+        input_array=input_array,
+        output_array=output_array,
+        generation_array=generation_array,
+        feature_order=feature_order,
+        output_order=output_order,
+        geometries=geometries,
+        geometry_row_ranges=geometry_row_ranges,
+        row_geo_names=row_geo_names,
+        row_instance_names=row_instance_names,
+        set_name=set_name,
+        geometry_variant=geometry_variant,
+        input_nan_msg=(
+            "NaN found in vessel input array (vessel geometric features). "
+            "Check vessel_geometric_features.csv for all geometries."
+        ),
+        output_nan_msg=(
+            "NaN found in vessel output array (vessel lumped parameters). "
+            "Check vessel_lumped_parameters.csv for all geometries."
+        ),
+        summary_filename=f"data_summary_vessel_{label_set_name}_num_geos_{len(geometries)}.csv",
+        plot_histograms=plot_histograms,
+        histogram_output_dir=histogram_output_dir,
+        lumped_param_label="vessel",
+        cohort_set_name=cohort_set_name,
+        run_config_suffix=run_config_suffix,
+        set_type=set_type,
+        data_root=data_root,
+    )
 
 
 __all__ = [
     "build_data_dict_from_csvs",
     "build_data_dict_from_vessel_csvs",
+    "feature_histograms_dir",
     "get_default_include_features",
     "get_default_include_features_vessel",
     "get_default_include_outputs",
