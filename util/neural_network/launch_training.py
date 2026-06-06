@@ -176,12 +176,12 @@ def launch_training(network_params, optimizer_params, training_params):
     if network_params["model_name_suffix"] == "_vessel":
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
-        training_params["num_epochs"] = 1000
+        training_params["num_epochs"] = 500#1000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10
     else:
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
-        training_params["num_epochs"] = 4000#5000
+        training_params["num_epochs"] = 500#4000#5000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 2000
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
@@ -192,12 +192,12 @@ def launch_training(network_params, optimizer_params, training_params):
     if network_params["model_name_suffix"] == "_vessel":
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
-        training_params["num_epochs"] = 2000
+        training_params["num_epochs"] = 500#2000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10
     else:
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
-        training_params["num_epochs"] = 2000
+        training_params["num_epochs"] = 500#2000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 100
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
@@ -208,12 +208,12 @@ def launch_training(network_params, optimizer_params, training_params):
     if network_params["model_name_suffix"] == "_vessel":
         network_params["layer_width"] = 10
         network_params["num_layers"] = 2
-        training_params["num_epochs"] = 2000
+        training_params["num_epochs"] = 500#2000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 1000
     else:
         network_params["layer_width"] = 20
         network_params["num_layers"] = 4
-        training_params["num_epochs"] = 2000#5000
+        training_params["num_epochs"] = 500#2000#5000
         network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10000
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)

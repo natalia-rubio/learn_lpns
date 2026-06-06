@@ -6,14 +6,6 @@ import subprocess
 import numpy as np
 import pandas as pd
 
-# try:
-#     import pysvzerod
-# except ImportError:
-#     print("Warning: pysvzerod not found. Calibration will not be available.")
-#     print("Install with: pip install svzerodsolver")
-#     pysvzerod = None
-
-
 def run_forward_simulation(input_json_path, output_csv_path):
     """
     Run forward 0D simulation and save results to CSV.

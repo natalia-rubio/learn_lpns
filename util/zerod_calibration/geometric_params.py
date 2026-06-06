@@ -1615,48 +1615,34 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
     return config
 
 
-def extract_and_add_geometric_params(centerline_soln_path, geometric_input_path, zerod_config_path, output_path=None, el_adjusted_geometric_input_path=None):
+def extract_and_add_geometric_params(centerline_soln_path, config_path, output_path=None):
     """
-    Convenience function that combines extract_vessel_junction_areas and add_geometric_params_to_config.
-    
+    Extract centerline areas and write geometric_params onto a 0D geometric config.
+
     Args:
         centerline_soln_path: Path to centerline solution VTP file
-        geometric_input_path: Path to geometric 0D input JSON (used if el_adjusted_geometric_input_path is None)
-        zerod_config_path: Path to 0D configuration JSON file to update
-        output_path: Optional output path for updated config. If None, overwrites zerod_config_path.
-        el_adjusted_geometric_input_path: Optional path to EL-adjusted geometric input JSON.
-                                        If provided, uses this instead of geometric_input_path to understand
-                                        the vessel/junction structure (for extracting parameters from EL-adjusted geometry).
-        
+        config_path: Geometric 0D input JSON whose vessel/junction topology defines
+            centerline sampling (e.g. bifurcations or bifurcations_EL variant).
+        output_path: Optional output path. If None, overwrites config_path.
+
     Returns:
         Modified config dictionary
     """
-    # Use EL-adjusted geometric input if provided, otherwise use regular geometric input
-    structure_input_path = el_adjusted_geometric_input_path if el_adjusted_geometric_input_path else geometric_input_path
-    
-    if el_adjusted_geometric_input_path:
-        print("=" * 60)
-        print("Extracting geometric parameters for EL-adjusted geometry")
-        print("=" * 60)
-        print(f"  Using EL-adjusted geometric input: {el_adjusted_geometric_input_path}")
-    else:
-        print("=" * 60)
-        print("Extracting geometric parameters (inlet/outlet areas)")
-        print("=" * 60)
-    
-    # Extract areas using the appropriate geometric input structure
-    geometric_areas_dict = extract_vessel_junction_areas(centerline_soln_path, structure_input_path)
-    
+    print("=" * 60)
+    print("Extracting geometric parameters (inlet/outlet areas)")
+    print("=" * 60)
+
+    geometric_areas_dict = extract_vessel_junction_areas(centerline_soln_path, config_path)
+
     print("\n" + "=" * 60)
     print("Adding geometric parameters to 0D config")
     print("=" * 60)
-    
-    # Add to config
-    config = add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, output_path)
-    
+
+    config = add_geometric_params_to_config(config_path, geometric_areas_dict, output_path)
+
     print("\n" + "=" * 60)
     print("Done!")
     print("=" * 60)
-    
+
     return config
 

@@ -5,6 +5,7 @@ import numpy as np
 import xml.etree.ElementTree as ET
 import vtk
 from vtk.util.numpy_support import vtk_to_numpy as v2n
+from util.zerod_calibration.generate_zerod_inputs_cli import DEFAULT_JUNCTION_TYPES
 
 # Time step sizes (sim_period / sim_steps_per_cycle) from data/vmr_models.json
 VMR_time_step_dict = {
@@ -467,7 +468,7 @@ def get_paths(base_dir, args):
     # Add paths for each junction type variant within each geometry variant
     for geo_variant in geometry_variants:
         prefix = '' if geo_variant == 'original' else f'{geo_variant}_'
-        for jtype in args.junction_types:
+        for jtype in DEFAULT_JUNCTION_TYPES:
             geometry_variants[geo_variant]['junction_types'][jtype] = {
                 'calibration_input': os.path.join(base_dir, f'{prefix}calibration_input_{jtype}.json'),
                 'calibrated_output': os.path.join(base_dir, f'{prefix}calibrated_output_{jtype}.json'),
