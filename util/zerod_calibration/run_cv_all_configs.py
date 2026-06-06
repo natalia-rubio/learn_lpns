@@ -100,7 +100,7 @@ def main():
     parser.add_argument(
         "--skip-per-config-barchart",
         action="store_true",
-        help="Do not run cv_pressure_max_pct_error_barchart after each CV.",
+        help="Pass --skip-barchart to run_cross_validation (CV generates barcharts by default).",
     )
     parser.add_argument(
         "--data-root",
@@ -152,6 +152,8 @@ def main():
                 "--data-root", args.data_root,
                 *cv_flags,
             ]
+            if args.skip_per_config_barchart:
+                cmd.append("--skip-barchart")
             ret = subprocess.run(cmd, cwd=REPO_ROOT)
             if ret.returncode != 0:
                 print(
@@ -160,21 +162,6 @@ def main():
                     file=sys.stderr,
                 )
                 sys.exit(ret.returncode)
-            if not args.skip_per_config_barchart:
-                print(f"\nRunning per-config barchart for {entry_key}...")
-                cmd_barchart = [
-                    sys.executable, "-m", "util.visualizations.cv_pressure_max_pct_error_barchart",
-                    set_name, cfg_geometry_variant,
-                    "--run-config", run_config_suffix,
-                    "--data-root", "results",
-                ]
-                ret_b = subprocess.run(cmd_barchart, cwd=REPO_ROOT)
-                if ret_b.returncode != 0:
-                    print(
-                        f"Warning: per-config barchart failed for {entry_key} "
-                        f"(exit {ret_b.returncode}).",
-                        file=sys.stderr,
-                    )
     else:
         # Only barcharts: run per-config barchart for each config that has data
         if not args.skip_per_config_barchart:

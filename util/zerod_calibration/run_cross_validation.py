@@ -31,31 +31,114 @@ from util.data_processing.generate_split_indices import (
 from util.data_processing.data_dict_from_csvs import get_default_include_features
 from util.tools.basic import load_dict, save_dict
 from util.zerod_calibration.post_processing import calculate_mse_between_3d_and_0d
-from util.zerod_calibration.generate_zerod_inputs import get_run_config_suffix
 from util.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
-    canonical_run_config_for_data_paths,
+    resolve_run_config_suffix,
     run_config_suffix_to_flags,
 )
-from util.zerod_calibration.batch_generate_zerod_inputs_vmr import get_vmr_geometries
+from util.zerod_calibration.batch_generate_zerod_inputs_vmr import (
+    check_geometry_complete,
+    get_vmr_geometries,
+)
 
 
-# Recognized --run-config values. Add new configs here when introducing them.
-ALLOWED_RUN_CONFIGS = frozenset({
-    "base",
-    "penalty_off",
-    "penalty_off_gen_loss",
-    "symmetric_penalty_off_gen_loss",
-    "symmetric_penalty_off",
-    "stenosis_off",
-    "stenosis_off_symmetric",
-    "stenosis_off_symmetric_gen_loss",
-    "normalized",
-    "normalized_penalty_off",
-    "normalized_stenosis_off",
-    "symmetric",
-    "symmetric_gen_loss",
-})
+def _ensure_ml_inputs_and_jax_for_config(
+    set_name,
+    geometry_variant,
+    run_config_suffix,
+    data_root,
+    set_type,
+    batch_geometries,
+    dp_geometries,
+    reasons,
+    no_redo=False,
+):
+    """Run batch_generate_zerod_inputs_vmr and/or run_data_processing for missing prerequisites."""
+    script_dir = os.path.dirname(__file__)
+    batch_script = os.path.join(script_dir, "batch_generate_zerod_inputs_vmr.py")
+    data_processing_script = os.path.join(
+        os.path.dirname(script_dir), "data_processing", "run_data_processing.py"
+    )
+    reason_text = "; ".join(reasons)
+    print(f"Run config {run_config_suffix}: {reason_text}")
+
+    if batch_geometries:
+        print(
+            f"  Running batch generate for {len(batch_geometries)} geometry/ies: "
+            f"{batch_geometries[:5]}{'...' if len(batch_geometries) > 5 else ''}"
+        )
+        cmd_batch = [
+            sys.executable,
+            batch_script,
+            "--set-name",
+            set_name,
+            "--geometries",
+            *batch_geometries,
+            "--run-config",
+            run_config_suffix,
+        ]
+        if no_redo:
+            cmd_batch.append("--no-redo")
+        result = subprocess.run(cmd_batch, cwd=REPO_ROOT, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"batch_generate_zerod_inputs_vmr failed (return code {result.returncode}). "
+                "Fix the error above and re-run."
+            )
+
+    if dp_geometries:
+        print(
+            f"  Running data processing for {len(dp_geometries)} geometry/ies: "
+            f"{dp_geometries[:5]}{'...' if len(dp_geometries) > 5 else ''}"
+        )
+        cmd_dp = [
+            sys.executable, data_processing_script,
+            "--set-name", set_name,
+            "--geometry-variant", geometry_variant,
+            "--run-config", run_config_suffix,
+            "--geometries", *dp_geometries,
+        ]
+        result_dp = subprocess.run(cmd_dp, cwd=REPO_ROOT, text=True)
+        if result_dp.returncode != 0:
+            raise RuntimeError(
+                f"run_data_processing failed with --run-config {run_config_suffix} "
+                f"(return code {result_dp.returncode}). Fix the error above and re-run."
+            )
+
+    print(f"  Done: prerequisites ready for config {run_config_suffix}")
+
+
+def _generate_cv_barcharts(
+    set_name,
+    geometry_variant,
+    run_config_suffix,
+    *,
+    normalize=False,
+    results_root="results",
+):
+    """Generate pressure error barcharts from the CV summary CSVs in results/cross_validation."""
+    norm_suffix = "_normalized" if normalize else ""
+    gv = f"{geometry_variant}{norm_suffix}"
+    print(f"\nGenerating CV pressure error barcharts (run-config={run_config_suffix})...")
+    cmd = [
+        sys.executable,
+        "-m",
+        "util.visualizations.cv_pressure_max_pct_error_barchart",
+        set_name,
+        gv,
+        "--run-config",
+        run_config_suffix,
+        "--data-root",
+        results_root,
+    ]
+    result = subprocess.run(cmd, cwd=REPO_ROOT, text=True)
+    if result.returncode != 0:
+        print(
+            f"Warning: cv_pressure_max_pct_error_barchart failed (exit {result.returncode}). "
+            "CV summary CSVs were written successfully."
+        )
+        return False
+    return True
 
 
 def _check_val_out_of_train_range(X, train_ind, val_ind, row_ranges, geometries, feature_names):
@@ -166,59 +249,6 @@ def _parse_mse_csv_extended(csv_path):
     return result
 
 
-def _ensure_ml_inputs_and_jax_for_config(
-    set_name,
-    geometry_variant,
-    run_config_suffix,
-    data_root,
-    set_type,
-    normalize,
-    stenosis_off,
-    symmetric_loss,
-    penalty_off,
-    geometries,
-    no_redo=False,
-):
-    """Run batch_generate_zerod_inputs_vmr then run_data_processing with --run-config."""
-    script_dir = os.path.dirname(__file__)
-    batch_script = os.path.join(script_dir, "batch_generate_zerod_inputs_vmr.py")
-    data_processing_script = os.path.join(os.path.dirname(script_dir), "data_processing", "run_data_processing.py")
-    print(f"Run config {run_config_suffix}: ml_inputs/jax not found. Running batch generate (VMR) then data processing...")
-    cmd_batch = [sys.executable, batch_script, "--set-name", set_name, "--geometries", *geometries]
-    if no_redo:
-        cmd_batch.append("--no-redo")
-    if stenosis_off:
-        cmd_batch.append("--stenosis-off")
-    if penalty_off:
-        cmd_batch.append("--penalty-off")
-    if symmetric_loss:
-        cmd_batch.append("--symmetric-loss")
-    if run_config_suffix:
-        cmd_batch.extend(["--run-config", run_config_suffix])
-    result = subprocess.run(cmd_batch, cwd=REPO_ROOT, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"batch_generate_zerod_inputs_vmr failed (return code {result.returncode}). "
-            "Fix the error above and re-run."
-        )
-    cmd_dp = [
-        sys.executable, data_processing_script,
-        "--set-name", set_name,
-        "--geometry-variant", geometry_variant,
-        "--run-config", run_config_suffix,
-        "--geometries", *geometries,
-    ]
-    if normalize:
-        cmd_dp.append("--normalize")
-    result_dp = subprocess.run(cmd_dp, cwd=REPO_ROOT, text=True)
-    if result_dp.returncode != 0:
-        raise RuntimeError(
-            f"run_data_processing failed with --run-config {run_config_suffix} (return code {result_dp.returncode}). "
-            "Fix the error above and re-run."
-        )
-    print(f"  Done: ml_inputs and jax_arrays created for config {run_config_suffix}")
-
-
 def run_cross_validation(
     set_name,
     geometry_variant,
@@ -227,42 +257,30 @@ def run_cross_validation(
     set_type="all",
     ml_inputs_root=None,
     trial_index=None,
-    normalize=False,
     nn_vessel=True,
     skip_training_if_exists=False,
-    stenosis_off=False,
-    penalty_off=False,
-    symmetric_loss=False,
     percent_train=0.9,
     no_redo=False,
-    run_config_cli=None,
+    run_config_suffix=None,
+    skip_barchart=False,
 ):
     if ml_inputs_root is None:
         ml_inputs_root = os.path.join(data_root, "ml_inputs")
-    if stenosis_off and penalty_off:
-        raise ValueError("Cannot use both --stenosis-off and --penalty-off.")
+
+    if run_config_suffix is None:
+        run_config_suffix = DEFAULT_CLI_RUN_CONFIG
+    flags = run_config_suffix_to_flags(run_config_suffix)
+    if flags["stenosis_off"] and flags["penalty_off"]:
+        raise ValueError("Cannot use both stenosis_off and penalty_off in run config.")
+
+    normalize = flags["normalize"]
+    stenosis_off = flags["stenosis_off"]
+    symmetric_loss = flags["symmetric_loss"]
+    penalty_off = flags["penalty_off"]
+    data_paths_suffix = run_config_suffix
+    print(f"Run config: {data_paths_suffix!r}")
 
     norm_suffix = "_normalized" if normalize else ""
-    run_config_suffix = get_run_config_suffix(
-        normalize=normalize,
-        stenosis_off=stenosis_off,
-        symmetric_loss=symmetric_loss,
-        penalty_off=penalty_off,
-    )
-    # All on-disk paths (zeroD, ml_inputs, jax, splits, models, CV) use the full CLI suffix when set,
-    # e.g. stenosis_off_symmetric_gen_loss is its own tree (duplicate of physics vs ..._symmetric).
-    data_paths_suffix = (
-        run_config_cli.strip() if run_config_cli is not None else run_config_suffix
-    )
-    if run_config_cli is not None:
-        cli_canon = canonical_run_config_for_data_paths(run_config_cli) or run_config_cli.strip()
-        if cli_canon != run_config_suffix:
-            raise ValueError(
-                f"--run-config {run_config_cli!r} canonicalizes to {cli_canon!r}, "
-                f"but flags from that config correspond to {run_config_suffix!r}."
-            )
-    if run_config_suffix or run_config_cli:
-        print(f"Run config: flags->{run_config_suffix!r}, paths->{data_paths_suffix!r}")
 
     # When data_paths_suffix is set, get canonical geometry list from richter-0d; if any missing from ml_inputs or jax missing, run batch + data processing
     if data_paths_suffix:
@@ -288,22 +306,46 @@ def run_cross_validation(
             f"jax_arrays_num_geos_{_num_geos}{norm_suffix}.pkl",
         )
         _jax_missing = not os.path.exists(_jax_path)
-        if _missing_geos or _jax_missing:
+        # CV needs calibrated zeroD outputs for labels; NN forward files are created per trial at deploy.
+        _missing_calib = []
+        for _geo in _geometries:
+            if not check_geometry_complete(
+                set_name,
+                _geo,
+                ["BloodVesselJunction"],
+                skip_forward=False,
+                run_config_suffix=data_paths_suffix,
+                require_nn_outputs=False,
+            ):
+                _missing_calib.append(_geo)
+        if _missing_geos or _jax_missing or _missing_calib:
+            reasons = []
             if _missing_geos:
-                print(f"Run config {data_paths_suffix}: missing ml_inputs for {len(_missing_geos)} geometries (e.g. {_missing_geos[:3]}{'...' if len(_missing_geos) > 3 else ''})")
+                reasons.append(
+                    f"missing ml_inputs for {len(_missing_geos)} geometries "
+                    f"(e.g. {_missing_geos[:3]}{'...' if len(_missing_geos) > 3 else ''})"
+                )
             if _jax_missing:
-                print(f"Run config {data_paths_suffix}: jax_arrays pkl not found")
+                reasons.append("jax_arrays pkl not found")
+            if _missing_calib:
+                reasons.append(
+                    f"incomplete calibrated zeroD for {len(_missing_calib)} geometries "
+                    f"(e.g. {_missing_calib[:3]}{'...' if len(_missing_calib) > 3 else ''})"
+                )
+            batch_geometries = sorted(set(_missing_geos + _missing_calib))
+            if _jax_missing:
+                dp_geometries = _geometries
+            else:
+                dp_geometries = batch_geometries
             _ensure_ml_inputs_and_jax_for_config(
                 set_name=set_name,
                 geometry_variant=geometry_variant,
                 run_config_suffix=data_paths_suffix,
                 data_root=data_root,
                 set_type=set_type,
-                normalize=normalize,
-                stenosis_off=stenosis_off,
-                symmetric_loss=symmetric_loss,
-                penalty_off=penalty_off,
-                geometries=_geometries,
+                batch_geometries=batch_geometries,
+                dp_geometries=dp_geometries,
+                reasons=reasons,
                 no_redo=no_redo,
             )
 
@@ -564,9 +606,8 @@ def run_cross_validation(
                 cmd_train.append("--normalize")
             if symmetric_loss:
                 cmd_train.append("--symmetric-loss")
-            launch_rc = run_config_cli if run_config_cli is not None else run_config_suffix
-            if launch_rc:
-                cmd_train.extend(["--run-config", launch_rc])
+            if run_config_suffix:
+                cmd_train.extend(["--run-config", run_config_suffix])
             print(f"  Running: {' '.join(cmd_train)}")
             result_train = subprocess.run(cmd_train, cwd=REPO_ROOT, text=True)
             if result_train.returncode != 0:
@@ -608,9 +649,8 @@ def run_cross_validation(
                     cmd_vessel.append("--normalize")
                 if symmetric_loss:
                     cmd_vessel.append("--symmetric-loss")
-                launch_rc = run_config_cli if run_config_cli is not None else run_config_suffix
-                if launch_rc:
-                    cmd_vessel.extend(["--run-config", launch_rc])
+                if run_config_suffix:
+                    cmd_vessel.extend(["--run-config", run_config_suffix])
                 print(f"  Running vessel training: {' '.join(cmd_vessel)}")
                 result_vessel = subprocess.run(cmd_vessel, cwd=REPO_ROOT, text=True)
                 if result_vessel.returncode != 0:
@@ -636,24 +676,9 @@ def run_cross_validation(
                 "--trial-id",
                 str(trial),
             ]
-            if normalize:
-                cmd_deploy.append("--normalize")
-                cmd_deploy.append("--norm-data-path")
-                cmd_deploy.append(jax_path)
-                if nn_vessel and vessel_jax_path and os.path.exists(vessel_jax_path):
-                    cmd_deploy.append("--vessel-norm-data-path")
-                    cmd_deploy.append(vessel_jax_path)
             if nn_vessel:
                 cmd_deploy.append("--NN-vessel")
-            if stenosis_off:
-                cmd_deploy.append("--stenosis-off")
-            if penalty_off:
-                cmd_deploy.append("--penalty-off")
-            if symmetric_loss:
-                cmd_deploy.append("--symmetric-loss")
-            deploy_rc = run_config_cli if run_config_cli is not None else run_config_suffix
-            if deploy_rc:
-                cmd_deploy.extend(["--run-config", deploy_rc])
+            cmd_deploy.extend(["--run-config", run_config_suffix])
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
             result_deploy = subprocess.run(cmd_deploy, cwd=REPO_ROOT, text=True)
             if result_deploy.returncode != 0:
@@ -843,6 +868,13 @@ def run_cross_validation(
 
     print(f"\nWrote CV summary to {summary_path}")
     print(f"  Also wrote: pressure_mse, flow_mse, max_error, pressure_max_error, flow_max_error, max_rel_error, pressure_max_rel_error, flow_max_rel_error")
+    if not skip_barchart and data_paths_suffix:
+        _generate_cv_barcharts(
+            set_name,
+            geometry_variant,
+            data_paths_suffix,
+            normalize=normalize,
+        )
     return summary_path
 
 
@@ -1085,10 +1117,6 @@ def regenerate_location_plots(
     geometry_variant,
     data_root="data",
     run_config_suffix="",
-    stenosis_off=False,
-    normalize=False,
-    penalty_off=False,
-    symmetric_loss=False,
 ):
     """
     Regenerate location comparison plots from existing zeroD data by running
@@ -1138,20 +1166,9 @@ def regenerate_location_plots(
             set_name,
             "--geo-name",
             geo_name,
-            "--skip-base-generation",
-            "--skip-observation",
-            "--skip-calibration",
-            "--skip-forward",
-            "--skip-mse-calculation",
+            "--skip-steps",
+            "base_generation_observation_calibration_forward_mse",
         ]
-        if stenosis_off:
-            cmd.append("--stenosis-off")
-        if normalize:
-            cmd.append("--normalize")
-        if penalty_off:
-            cmd.append("--penalty-off")
-        if symmetric_loss:
-            cmd.append("--symmetric-loss")
         if run_config_suffix:
             cmd.extend(["--run-config", run_config_suffix])
         # Include NN modalities (Learned Junctions, Learned Junctions and Vessels, Learned Vessels) in plots when CSVs exist
@@ -1196,8 +1213,12 @@ def main():
     parser.add_argument(
         "--run-config",
         default=DEFAULT_CLI_RUN_CONFIG,
-        metavar="SUFFIX",
-        help="Run config suffix for paths and behavior (default: %(default)s). E.g. base, symmetric, symmetric_gen_loss, penalty_off, penalty_off_gen_loss, symmetric_penalty_off, symmetric_penalty_off_gen_loss, stenosis_off, stenosis_off_symmetric. zeroD/ml_inputs/jax/results use .../set_name/SUFFIX/....",
+        metavar="TOKENS",
+        help=(
+            "Run-config tokens in any order, underscore-separated "
+            f"(default: {DEFAULT_CLI_RUN_CONFIG}). "
+            "Full canonical suffixes are also accepted."
+        ),
     )
     parser.add_argument(
         "--NN-vessel",
@@ -1240,14 +1261,17 @@ def main():
         action="store_true",
         help="Regenerate location comparison plots from existing zeroD data. No training or deploy.",
     )
+    parser.add_argument(
+        "--skip-barchart",
+        action="store_true",
+        help="Do not run cv_pressure_max_pct_error_barchart after writing CV summary CSVs.",
+    )
     args = parser.parse_args()
 
-    run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
-    if run_config_suffix not in ALLOWED_RUN_CONFIGS:
-        parser.error(
-            f"Unrecognized --run-config: {run_config_suffix!r}. "
-            f"Allowed: {', '.join(sorted(ALLOWED_RUN_CONFIGS))}."
-        )
+    try:
+        run_config_suffix = resolve_run_config_suffix(args.run_config)
+    except ValueError as exc:
+        parser.error(str(exc))
     flags = run_config_suffix_to_flags(run_config_suffix)
     if flags["stenosis_off"] and flags["penalty_off"]:
         parser.error("Cannot use both stenosis_off and penalty_off in --run-config.")
@@ -1259,10 +1283,6 @@ def main():
             geometry_variant=args.geometry_variant,
             data_root=args.data_root,
             run_config_suffix=run_config_suffix,
-            stenosis_off=flags["stenosis_off"],
-            normalize=flags["normalize"],
-            penalty_off=flags["penalty_off"],
-            symmetric_loss=flags["symmetric_loss"],
         )
         return
     if args.metrics_only:
@@ -1273,6 +1293,13 @@ def main():
             normalize=flags["normalize"],
             run_config_suffix=run_config_suffix,
         )
+        if not args.skip_barchart:
+            _generate_cv_barcharts(
+                args.set_name,
+                args.geometry_variant,
+                run_config_suffix,
+                normalize=flags["normalize"],
+            )
         return
 
     run_cross_validation(
@@ -1282,15 +1309,12 @@ def main():
         data_root=args.data_root,
         set_type=args.set_type,
         trial_index=args.trial,
-        normalize=flags["normalize"],
         nn_vessel=args.nn_vessel,
         skip_training_if_exists=args.skip_training_if_exists,
-        stenosis_off=flags["stenosis_off"],
-        penalty_off=flags["penalty_off"],
-        symmetric_loss=flags["symmetric_loss"],
         percent_train=args.percent_train,
         no_redo=getattr(args, "no_redo", False),
-        run_config_cli=run_config_suffix,
+        run_config_suffix=run_config_suffix,
+        skip_barchart=args.skip_barchart,
     )
 
 
