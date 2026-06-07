@@ -115,7 +115,56 @@ VMR_time_step_dict = {
     '0188_0001': 0.0009677,
     '0189_0001': 0.0013044,
 }
-        
+
+
+def read_zerod_csv(csv_path):
+    """
+    Read 0D simulation results from CSV.
+    Handles both 'location' and 'name' as the vessel identifier column.
+
+    Returns:
+        results: Dictionary {location: {time: {field: value}}}
+        times: Sorted list of time values
+    """
+    results = {}
+    times = set()
+
+    if not os.path.exists(csv_path):
+        return results, sorted(times)
+
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+        if fieldnames is None:
+            return results, sorted(times)
+
+        if 'location' in fieldnames:
+            vessel_col = 'location'
+        elif 'name' in fieldnames:
+            vessel_col = 'name'
+        else:
+            return results, sorted(times)
+
+        for row in reader:
+            location = row[vessel_col]
+            time = float(row['time'])
+            times.add(time)
+
+            if location not in results:
+                results[location] = {}
+            if time not in results[location]:
+                results[location][time] = {}
+
+            for key, value in row.items():
+                if key not in (vessel_col, 'time'):
+                    try:
+                        results[location][time][key] = float(value)
+                    except (ValueError, TypeError):
+                        continue
+
+    return results, sorted(times)
+
+
 def load_from_json(json_path):
     """
     Load JSON file from path.
@@ -426,11 +475,7 @@ def timestep_from_1D(centerline_soln_path, geo_dir):
             if time_step_size_elem is not None:
                 threeD_time_step_size = float(time_step_size_elem.text)
 
-    # if we are using a VMR type geometry, get the dt from dictionary
-    if "priya" in centerline_soln_path:
-        threeD_time_step_size = 0.001
-        print(f"Assume Priya always uses a time step size of 0.001 s")
-    elif 'VMR' in centerline_soln_path:
+    if 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
         threeD_time_step_size = VMR_time_step_dict[geometry_name]
         print(f"  Found time_step_size in VMR dictionary: {threeD_time_step_size:.6f} s")

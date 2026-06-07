@@ -12,6 +12,7 @@ Based on the workflow in richter2024-paper-tools.
 import glob
 import os
 import sys
+import subprocess
 sys.path.append("/Users/natalia/cursor_access/learn_lpns")
 import json
 import vtk
@@ -28,13 +29,11 @@ from util.zerod_calibration.generate_zerod_inputs_cli import (
 )
 from util.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
 from util.zerod_calibration.oned_to_zerod import *
-from util.zerod_calibration.post_processing import *
+from util.zerod_calibration.forward_mse import calculate_mse_between_3d_and_0d
+from util.zerod_calibration.modality_paths import modality_csv_paths, nn_forward_sim_specs
+from util.visualizations.run_zerod_comparison_plots import run_zerod_comparison_plots
 from util.zerod_calibration.bifurcation_splitting import *
-from util.zerod_calibration.file_io import *
-from util.zerod_calibration.bc_fitting import *
-from util.zerod_calibration.post_processing import *
-from util.zerod_calibration.bifurcation_splitting import *
-from util.zerod_calibration.file_io import *
+from util.zerod_calibration.tools.file_io import *
 from util.zerod_calibration.bc_fitting import *
 from util.zerod_calibration.inflow_handling import *
 from util.zerod_calibration.zerod_handling import *
@@ -59,25 +58,26 @@ from vtk.util.numpy_support import vtk_to_numpy as v2n
 JUNCTION_TYPE = DEFAULT_JUNCTION_TYPES[0]
 
 
-def _evaluation_set_type_for_data_processing(args):
-    """
-    Return the jax_arrays subfolder to use when we run data processing from generate_zerod_inputs.
-    - In cross-validation mode (--model-dir with _trial_ or --trial-id set): use "trial_{N}" so we
-      don't overwrite the "test" data used for training.
-    - Otherwise: use "forward" so we don't overwrite "test" (training/splits).
-    """
-    if getattr(args, 'model_dir', None):
-        base = os.path.basename(args.model_dir.rstrip(os.sep))
-        if '_trial_' in base:
-            try:
-                trial_part = base.split('_trial_')[-1]
-                trial_num = int(trial_part.split('_')[0])
-                return f"trial_{trial_num}"
-            except (ValueError, IndexError):
-                pass
-    if getattr(args, 'trial_id', None) is not None:
-        return f"trial_{args.trial_id}"
-    return "forward"
+def _ml_inputs_paths(ml_inputs_base, geometry_variant, geo_name):
+    """Paths to per-geometry ML CSVs under ml_inputs."""
+    geo_dir = os.path.join(ml_inputs_base, geometry_variant, geo_name)
+    return {
+        "features": os.path.join(geo_dir, "geometric_features.csv"),
+        "meta": os.path.join(geo_dir, "geometric_features_meta.csv"),
+    }
+
+
+def _assert_multi_outlet_junctions_type(nn_config, junction_type):
+    """Multi-outlet junctions must already use the calibratable junction type (Step 1)."""
+    for junc in nn_config.get("junctions", []):
+        if len(junc.get("outlet_vessels", [])) >= 2:
+            if junc.get("junction_type") != junction_type:
+                jname = junc.get("junction_name", "?")
+                raise ValueError(
+                    f"Junction {jname!r} has junction_type {junc.get('junction_type')!r} "
+                    f"(expected {junction_type}). Re-run Step 1 geometric params / "
+                    f"junction conversion for this variant."
+                )
 
 
 def _convert_bifurcations_junctions(config_path):
@@ -88,6 +88,61 @@ def _convert_bifurcations_junctions(config_path):
     with open(config_path, 'w') as f:
         json.dump(cfg, f, indent=4)
 
+
+def _bc_source_for_nn_forward(geo_variant_paths, junction_type=JUNCTION_TYPE):
+    """BC JSON for inlet refinement on NN forward sims (calibration input, else geometric)."""
+    calib = geo_variant_paths['junction_types'][junction_type]['calibration_input']
+    geometric = geo_variant_paths['geometric_input']
+    if os.path.exists(calib):
+        return calib
+    if os.path.exists(geometric):
+        return geometric
+    raise FileNotFoundError(f"No BC source found: neither {calib} nor {geometric}")
+
+
+def _nn_forward_sim_specs(base_dir, geo_variant_name, junction_type, nn_vessel):
+    """(step_label, sim_input, results_csv) for NN modality forward sims."""
+    return [
+        (f"NN forward simulation for {geo_variant_name}/{junction_type}", sim_input, results_csv)
+        for _, sim_input, results_csv in nn_forward_sim_specs(
+            base_dir, geo_variant_name, junction_type, nn_vessel,
+        )
+    ]
+
+
+def _mse_csv_results_dict(geo_variant_paths, base_dir, geo_variant_name, junction_type, nn_vessel):
+    """Modality name -> forward results CSV for calculate_mse_between_3d_and_0d."""
+    return modality_csv_paths(
+        geo_variant_paths, base_dir, geo_variant_name, junction_type, nn_vessel,
+    )
+
+
+def _run_forward_simulation_step(
+    sim_input,
+    results_csv,
+    *,
+    bc_source,
+    step_label,
+    check_and_track_file,
+    generated_files,
+    skip_missing_input=False,
+):
+    """Run one forward sim with inlet BC refinement; honor no-redo via check_and_track_file."""
+    if check_and_track_file(results_csv, step_label):
+        return
+    if not os.path.exists(sim_input):
+        if skip_missing_input:
+            print(f"      ⊘ Skipping: input not found: {sim_input}")
+            return
+        raise FileNotFoundError(f"Forward sim input not found: {sim_input} ({step_label})")
+    print(f"\n    Running {step_label}...")
+    try:
+        refine_inlet_bc_for_forward_simulation(sim_input, calibration_input_path=bc_source)
+        run_forward_simulation(sim_input, results_csv)
+        generated_files.append(results_csv)
+        print(f"      ✓ {step_label} completed successfully")
+    except Exception as e:
+        raise Exception(f"{step_label} failed: {e}") from e
 
 def main():
     parser = argparse.ArgumentParser(
@@ -243,11 +298,35 @@ def main():
             soln_path = os.path.join('data', 'oneD', 'VMR', args.geo_name, 'unsteady_soln.vtp')
             geometric_input_path = geometry_variants['original']['geometric_input']
             geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
-            if os.path.exists(soln_path):
-                observations = extract_observations_from_1d(soln_path, geometric_input_path, geo_dir=geo_dir, start_idx=0)
-            else:
+            if not os.path.exists(soln_path):
                 raise FileNotFoundError(f"1D solution not found: {soln_path}")
 
+            # --- Extract 1D observations for each geometry variant ---
+            variant_observations = {}
+
+            print("\n  Extracting observations for original geometry...")
+            variant_observations['original'] = extract_observations_from_1d(
+                soln_path, geometric_input_path, geo_dir=geo_dir, start_idx=0
+            )
+
+            for geo_variant_name in ('bifurcations', 'bifurcations_EL'):
+                if geo_variant_name not in geometry_variants:
+                    continue
+                variant_geometric_input = geometry_variants[geo_variant_name]['geometric_input']
+                print(
+                    f"\n  Extracting observations for {geo_variant_name} "
+                    f"(centerline_node_ids + connector flow cascade)..."
+                )
+                variant_observations[geo_variant_name] = extract_observations_from_1d_with_node_ids(
+                    soln_path,
+                    variant_geometric_input,
+                    geo_dir=geo_dir,
+                    start_idx=0,
+                    derivative_method='central',
+                    cascade_split_connector_flows=True,
+                )
+
+            # --- Fit outlet BCs from original-geometry observations ---
             time_step_size = None
             try:
                 time_step_size = timestep_from_1D(soln_path, geo_dir)
@@ -255,12 +334,12 @@ def main():
                 time_step_size = None
             try:
                 fitted_outlet_bcs = fit_bcs_from_observations(
-                    geometric_input_path, observations, dt=time_step_size
+                    geometric_input_path, variant_observations['original'], dt=time_step_size
                 )
             except Exception as e:
                 raise Exception(f"Outlet BC fitting failed: {e}") from e
 
-            # Process geometry variants: original, bifurcations, and bifurcations_EL
+            # --- Create calibration inputs per geometry variant ---
             for geo_variant_name, geo_variant_paths in geometry_variants.items():
                 print(f"\n" + "-"*50)
                 print(f"Processing {geo_variant_name.upper()} geometry variant")
@@ -284,61 +363,7 @@ def main():
                 else:
                     print(f"\n  Creating base calibration input for {geo_variant_name}...")
                     try:
-                        # For bifurcations and bifurcations_EL geometries:
-                        # - Always rename existing observations to match bifurcated junction names
-                        # - Optionally add synthetic connector-vessel observations (only for bifurcations, not EL)
-                        if geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-                            with open(variant_geometric_input, 'r') as f:
-                                bifurcated_geometric_input = json.load(f)
-                            
-                            # For bifurcations: generate synthetic connector observations
-                            # For bifurcations_EL: skip synthetic observations (vessels already merged/converted)
-                            if geo_variant_name == 'bifurcations':
-                                include_synthetic_observations = True
-                                if include_synthetic_observations:
-                                    # Load the original geometric input and centerline data
-                                    original_geometric_input_path = geometry_variants['original']['geometric_input']
-                                    with open(original_geometric_input_path, 'r') as f:
-                                        original_geometric_input = json.load(f)
-
-                                    # Read centerline data
-                                    centerline_data, _ = read_centerline_vtp(centerline_path)
-
-                                    print(f"    Generating synthetic observations for connector vessels...")
-                                    augmented_observations = generate_connector_observations(
-                                        observations,
-                                        original_geometric_input,
-                                        bifurcated_geometric_input,
-                                        centerline_data
-                                    )
-                                else:
-                                    print(f"    Skipping synthetic observations for connector vessels")
-                                    print(f"    Renaming existing observation keys to match bifurcated junction names...")
-                                    augmented_observations = rename_observations_for_bifurcations(
-                                        observations, bifurcated_geometric_input
-                                    )
-                            else:  # bifurcations_EL
-                                # Extract observations directly from 1D solution using centerline_node_ids
-                                print(f"    Extracting observations from 1D solution using centerline_node_ids...")
-                                from util.zerod_calibration.oned_to_zerod import extract_observations_from_1d_with_node_ids
-                                augmented_observations = extract_observations_from_1d_with_node_ids(
-                                    centerline_path,
-                                    variant_geometric_input,
-                                    geo_dir=geo_dir,
-                                    start_idx=0,
-                                    derivative_method='central'
-                                )
-
-                            obs_for_calib = augmented_observations
-                        else:
-                            # Original geometry: use original observations
-                            obs_for_calib = observations
-
-                        # For set names including "priya", 1D solution is short: repeat flow/pressure 5x with time increasing
-                        if 'priya' in args.set_name:
-                            from util.zerod_calibration.calibration import repeat_observations_in_time
-                            obs_for_calib = repeat_observations_in_time(obs_for_calib, num_repeats=5)
-                            print(f"    Repeated observation series 5x for extended time (set_name contains 'priya')")
+                        obs_for_calib = variant_observations[geo_variant_name]
 
                         create_calibration_input(
                             variant_geometric_input, obs_for_calib, variant_calibration_input,
@@ -349,14 +374,6 @@ def main():
                         )
                         generated_files.append(variant_calibration_input)
                         print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
-                        
-                        if fitted_outlet_bcs:
-                            print(f"\n  Updating base calibration input with fitted outlet BCs...")
-                            apply_fitted_outlet_bcs_to_file(
-                                variant_calibration_input,
-                                fitted_outlet_bcs,
-                                f"{geo_variant_name} calibration input",
-                            )
 
                         # Update geometric input with BC from calibration input
                         update_geometric_input_with_calibration_bc(variant_geometric_input, variant_calibration_input)
@@ -387,11 +404,10 @@ def main():
 
     # Step 3: Run calibration for each junction type
     if not args.skip_calibration:
-        # Process each geometry variant
         for geo_variant_name, geo_variant_paths in geometry_variants.items():
             print(f"\n  Running calibration for {geo_variant_name} geometry...")
             variant_junction_paths = geo_variant_paths['junction_types']
-            
+
             jtype_input_path = variant_junction_paths[JUNCTION_TYPE]['calibration_input']
             jtype_output_path = variant_junction_paths[JUNCTION_TYPE]['calibrated_output']
 
@@ -401,1085 +417,531 @@ def main():
             print(f"\n    Calibrating {geo_variant_name}/{JUNCTION_TYPE}...")
 
             try:
-                calibrated_config = run_calibration(jtype_input_path, jtype_output_path)
+                run_calibration(jtype_input_path, jtype_output_path)
                 generated_files.append(jtype_output_path)
                 print(f"      ✓ Calibration completed for {geo_variant_name}/{JUNCTION_TYPE}")
-                # Junction types are now preserved by the calibrator
             except Exception as e:
-                raise Exception(f"Calibration failed for {geo_variant_name}/{JUNCTION_TYPE}: {e}")
-    
-    # Step 3.5: Run data processing pipeline for neural network training data (after calibration)
-    # Process each geometry variant separately (bifurcations and bifurcations_EL)
-    if not args.skip_calibration:
-        print(f"\n  Running data processing pipeline for neural network...")
-        geo_name_for_ml = args.geo_name.replace('tree_', '')
-        
-        # Process each geometry variant that has been calibrated
-        for geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-            if geo_variant_name not in geometry_variants:
-                continue
-            
-            geo_variant_paths = geometry_variants[geo_variant_name]
-            variant_calibration_input = geo_variant_paths['calibration_input']
-            
-            # Check if this variant has been processed (has calibration input)
-            if not os.path.exists(variant_calibration_input):
-                print(f"  ⊘ Skipping data processing for {geo_variant_name} (no calibration input)")
-                continue
-            
-            variant_junction_paths = geo_variant_paths['junction_types']
-            calib_output_path = variant_junction_paths[JUNCTION_TYPE]['calibrated_output']
-            
-            if not os.path.exists(calib_output_path):
-                print(f"  ⊘ Skipping data processing for {geo_variant_name} (BloodVesselJunction calibration output not found)")
-                continue
-            
-            print(f"\n  Processing {geo_variant_name} geometry variant for ML pipeline...")
-            try:
-                import subprocess
-                evaluation_set_type = _evaluation_set_type_for_data_processing(args)
-                run_data_processing_cmd = [
-                    sys.executable,
-                    os.path.join(os.path.dirname(__file__), '..', 'data_processing', 'run_data_processing.py'),
-                    '--set-name', args.set_name,
-                    '--geometry-variant', geo_variant_name,
-                    '--set-type', evaluation_set_type,
-                    '--geometries', geo_name_for_ml,
-                    '--percent-train', '1',
-                    '--seed', '0',
-                    '--data-root', 'data',
-                    '--run-config', run_config_suffix,
-                ]
-                if verbose:
-                    run_data_processing_cmd.append('--verbose')
-                result = subprocess.run(
-                    run_data_processing_cmd,
-                    cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                    capture_output=False,
-                    text=True
-                )
+                raise Exception(f"Calibration failed for {geo_variant_name}/{JUNCTION_TYPE}: {e}") from e
 
-                if result.returncode != 0:
-                    raise RuntimeError(f"Data processing failed for {geo_variant_name}: {result.stderr}")
-                print(f"  ✓ Data processing pipeline completed for {geo_variant_name}")
-                
-            except Exception as e:
-                raise Exception(f"Failed to run data processing pipeline for {geo_variant_name}: {e}")
-            
-        
-    # Step 3.6: After calibration, run NN inference for BloodVesselJunction on bifurcations and bifurcations_EL geometries
-    # (Also runs in NN-only mode, using geometric input instead of calibrated output)
-    # Process both bifurcations and bifurcations_EL geometry variants
-    for geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-        if geo_variant_name not in geometry_variants:
-            continue
-        
-        geo_variant_paths = geometry_variants[geo_variant_name]
-        variant_junction_paths = geo_variant_paths['junction_types']
-        variant_geometric_input = geo_variant_paths['geometric_input']
-        
-        # Skip if bifurcations_EL depends on bifurcations and it doesn't exist
-        # if geo_variant_name == 'bifurcations_EL':
-        #     bifurcations_input = geometry_variants['bifurcations']['geometric_input']
-        #     if not os.path.exists(bifurcations_input):
-        #         print(f"  ⊘ Skipping NN inference for {geo_variant_name} (bifurcations geometric input not found)")
-        #         continue
-        
-        # Check if geometric input exists
-        if not os.path.exists(variant_geometric_input):
-            print(f"  ⊘ Skipping NN inference for {geo_variant_name} (geometric input not found)")
-            continue
-        
-        # Construct output path with geometry variant name
-        nn_output_path = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
-        
-        if check_and_track_file(nn_output_path, f"NN inference for {geo_variant_name}/BloodVesselJunction"):
-            # File exists and no-redo is set, skip NN inference
-            pass
-        else:
-            print(f"\n    Running neural network inference for {geo_variant_name}/BloodVesselJunction...")
-            try:
-                # Import NN-related modules
-                from util.data_processing.inputs_from_0d_config import (
-                    load_junction_geometric_features,
-                    compute_junction_flow_splits,
-                )
-                from util.neural_network.nn_model import predict
-                from util.neural_network.nn_util import dill_load
-                import jax.numpy as jnp
-                
-                # Load geometric config as base (no calibrated params); only junction R/S/L will be overwritten by NN
-                if not os.path.exists(variant_geometric_input):
-                    raise FileNotFoundError(f"Geometric input not found: {variant_geometric_input}")
-                
-                with open(variant_geometric_input, 'r') as f:
-                    nn_config = json.load(f)
-                
-                # For bifurcations (non-EL), convert NORMAL_JUNCTION -> BloodVesselJunction and set
-                # junction_values from geometric_params; NN prediction loop will overwrite with predictions.
-                if geo_variant_name == 'bifurcations':
-                    convert_el_normal_junctions_to_blood_vessel_junction(nn_config)
-                
-                # Extract geometric features using the same workflow as data processing
-                # This ensures we use the same 13 features that the model was trained on
-                from util.data_processing.data_dict_from_csvs import (
-                    _read_csv_matrix,
-                    _clamp_tortuosity,
-                    filter_features_from_array,
-                )
-                
-                # Check if CSV file exists (from data processing); use run-config-specific path when set
-                csv_path = os.path.join(ml_inputs_base, geo_variant_name, args.geo_name, 'geometric_features.csv')
-                
-                # if os.path.exists(csv_path):
-                #     # Read from CSV and apply same feature selection as in data processing
-                #     print(f"  Reading features from CSV: {csv_path}")
-                #     geom_header, geom_X = _read_csv_matrix(csv_path)
-                    
-                #     # Apply the same feature selection using the reusable function
-                #     X, feature_names = filter_features_from_array(
-                #         geom_X, geom_header, remap_tortuosity=True
-                #     )
-                    
-                #     # Extract junction names from geometric input (needed for mapping predictions)
-                #     X_full, _, junction_names, _ = load_junction_geometric_features(
-                #         variant_geometric_input,
-                #         require_two_outlets=True,
-                #         verbose=False
-                #     )
-                #     # Match rows: CSV should have same number of rows as feature extraction
-                #     if len(X) != len(X_full):
-                #         raise ValueError(
-                #             f"Row count mismatch: CSV has {len(X)} rows, but feature extraction has {len(X_full)} rows"
-                #         )
-                # else:
+    # Step 3.5: ML prep — per-geo CSVs + jax_arrays (run_data_processing)
+    # TODO: Consider no_redo / skip-if-done when ml_inputs CSVs already exist.
+    # run_data_processing writes per-geo CSVs (Step 3.7 reads these) and jax_arrays
+    # pickles under data/jax_arrays/.../forward/ (used by launch_training for cohort
+    # NN training). We do not load the jax pickle for NN inference in this script.
+    print(f"\n  Running data processing pipeline for neural network ({args.geometry_variant})...")
+    geo_variant_paths = geometry_variants[args.geometry_variant]
+    variant_geometric_input = geo_variant_paths['geometric_input']
+    calib_output_path = geo_variant_paths['junction_types'][JUNCTION_TYPE]['calibrated_output']
 
-                    # CSV doesn't exist, extract features directly and filter
-                print(f"  Extracting features directly from geometric input")
-                X_full, feature_names_full, junction_names, outlet_primary_names = load_junction_geometric_features(
-                    variant_geometric_input,
-                    require_two_outlets=True,
-                    verbose=True
-                )
-                # Add flow_split from geometric results when available (same as run_data_processing)
-                geometric_results_path = variant_geometric_input.replace(
-                    "_geometric_input.json", "_geometric_results.csv"
-                )
-                if os.path.exists(geometric_results_path):
-                    flow_splits = compute_junction_flow_splits(
-                        variant_geometric_input, geometric_results_path
-                    )
-                    flow_split_col = []
-                    for i, jname in enumerate(junction_names):
-                        (out0_name, out1_name), (fs0, fs1) = flow_splits.get(
-                            jname, (("", ""), (float("nan"), float("nan")))
-                        )
-                        primary = outlet_primary_names[i]
-                        val = fs0 if primary == out0_name else (
-                            fs1 if primary == out1_name else float("nan")
-                        )
-                        flow_split_col.append(val)
-                    X_full = np.column_stack([X_full, flow_split_col])
-                    feature_names_full = feature_names_full + ["flow_split"]
-                    flow_split_arr = np.asarray(flow_split_col, dtype=float)
-                    with np.errstate(divide="ignore", invalid="ignore"):
-                        flow_split_inv = np.where(
-                            np.isfinite(flow_split_arr) & (flow_split_arr > 0),
-                            100.0 / flow_split_arr,
-                            np.nan,
-                        )
-                    X_full = np.column_stack([X_full, flow_split_inv])
-                    feature_names_full = feature_names_full + ["flow_split_inv"]
-                else:
-                    # Geometric results not available; add flow_split and flow_split_inv as NaN
-                    n_rows = X_full.shape[0]
-                    X_full = np.column_stack([X_full, np.full(n_rows, np.nan), np.full(n_rows, np.nan)])
-                    feature_names_full = feature_names_full + ["flow_split", "flow_split_inv"]
-                #save X_full to a csv file
-                import pandas as pd
-                os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-                pd.DataFrame(X_full, columns=feature_names_full).to_csv(csv_path, index=False)
-                
-                # Apply the same feature selection using the reusable function
-                X, feature_names = filter_features_from_array(
-                    X_full, feature_names_full
-                )
-                _clamp_tortuosity(X, feature_names)
-                
-                if len(X) == 0:
-                    raise ValueError("No junctions found in geometric features")
-                
-                # Count unique junction names (some may have been skipped for swapped row)
-                unique_junction_names = list(set(junction_names))
-                print(f"  Loaded {len(X)} feature rows for {len(unique_junction_names)} unique junctions")
-                print(f"  Junction names in feature extraction: {unique_junction_names}")
-                print(f"  Selected {len(feature_names)} features (matching training data): {feature_names}")
-                
-                X_jax = jnp.array(X, dtype=jnp.float32)
-                print(f"  Neural network input dimensions: {X_jax.shape} (rows={X_jax.shape[0]}, features={X_jax.shape[1]})")
-            
-                # Load the three trained models (use --model-dir if set, e.g. for CV trials)
-                if getattr(args, 'model_dir', None):
-                    model_dir = args.model_dir
-                else:
-                    model_dir = os.path.join('results', 'models', args.set_name, geo_variant_name)
-                model_base_name = f"rri_{args.set_name}_pred"
-                model_paths = [
-                    os.path.join(model_dir, f"{model_base_name}_0_model"),
-                    os.path.join(model_dir, f"{model_base_name}_1_model"),
-                    os.path.join(model_dir, f"{model_base_name}_2_model"),
-                ]
-                
-                for i, model_path in enumerate(model_paths):
-                    if not os.path.exists(model_path):
-                        print(f"  NN model not found: {model_path}")
-                        raise FileNotFoundError(f"Model not found: {model_path}")
-                
-                # Load models and get predictions
-                raw_predictions = []
-                for i, model_path in enumerate(model_paths):
-                    print(f"      Loading model {i+1}/3: {model_path}")
-                    model = dill_load(model_path)
-                    use_leaky = getattr(model, "use_leaky_relu", False)
-                    pred = predict(X_jax, model.weights, use_leaky)
-                    raw_predictions.append(np.array(pred).flatten())
-                
-                output_names = ['R_poiseuille', 'stenosis_coefficient', 'L']
-                predictions = raw_predictions
-                for coef_idx, pred in enumerate(predictions):
-                    print(f"      {output_names[coef_idx]}: "
-                          f"pred range=[{pred.min():.4f}, {pred.max():.4f}]")
-                
-                # predictions[0] = R_poiseuille (one value per row)
-                # predictions[1] = stenosis_coefficient (one value per row)
-                # predictions[2] = L (one value per row)
-                pred_R = np.array(predictions[0])
-                pred_S = np.zeros_like(pred_R) if getattr(args, 'stenosis_off', False) else np.array(predictions[1])
-                pred_L = np.array(predictions[2])
+    if not os.path.exists(variant_geometric_input):
+        raise FileNotFoundError(f"Geometric input not found: {variant_geometric_input}")
+    if not os.path.exists(calib_output_path):
+        raise FileNotFoundError(f"Calibration output not found: {calib_output_path}")
 
-                # Verify prediction array sizes match input
-                 # Note: junction_names may have duplicates (same junction appears twice for swapped rows)
-                 # So we compare against the actual number of input rows
-                if len(pred_R) != len(X):
-                    raise ValueError(
-                        f"Prediction array size mismatch: input has {len(X)} rows, "
-                        f"but predictions have {len(pred_R)} values. "
-                        f"Expected one prediction per input row."
-                    )
-                
-                # Build a mapping from (junction_name, primary_outlet_name) -> row_idx
-                # This is the authoritative mapping: each row's prediction applies to
-                # the primary_outlet of that row (the outlet whose features are in the
-                # outlet0 position for that row).
-                primary_outlet_to_row = {}  # (junc_name, outlet_name) -> row_idx
-                junction_name_to_row_indices = {}
-                for row_idx, (junc_name, pout_name) in enumerate(zip(junction_names, outlet_primary_names)):
-                    primary_outlet_to_row[(junc_name, pout_name)] = row_idx
-                    if junc_name not in junction_name_to_row_indices:
-                        junction_name_to_row_indices[junc_name] = []
-                    junction_name_to_row_indices[junc_name].append(row_idx)
-                
-                print(f"      Built prediction mapping: {len(primary_outlet_to_row)} (junction, outlet) entries")
-                for (jn, on), ri in primary_outlet_to_row.items():
-                    vid = int(X_full[ri, 0])  # outlet_vessel_id is first column
-                    print(f"        ({jn}, {on}) -> row {ri}, vessel_id={vid}")
-            
-                # Map predictions back to junction_values
-                vessels = nn_config.get('vessels', [])
-                vessel_id_to_name = {v.get('vessel_id'): v.get('vessel_name', '') for v in vessels}
-                vessel_name_to_id = {v.get('vessel_name', ''): v.get('vessel_id') for v in vessels}
-                
-                # Process each junction in the config
-                for junc in nn_config.get('junctions', []):
-                    junc_name = junc.get('junction_name', '')
-                    
-                    # Skip if this junction wasn't in the feature extraction
-                    if junc_name not in junction_name_to_row_indices:
-                        if junc.get('junction_type') == 'BloodVesselJunction':
-                            if 'junction_values' not in junc:
-                                outlet_vessel_ids = junc.get('outlet_vessels', [])
-                                num_outlets = len(outlet_vessel_ids)
-                                junc['junction_values'] = {
-                                    'R_poiseuille': [0.0] * num_outlets,
-                                    'stenosis_coefficient': [0.0] * num_outlets,
-                                    'L': [0.0] * num_outlets,
-                                }
-                        continue
-                    
-                    # Get outlet vessels in file order (junction's outlet_vessels list)
-                    outlet_vessel_ids = junc.get('outlet_vessels', [])
-                    if len(outlet_vessel_ids) != 2:
-                        continue
-                    
-                    outlet_vessel_names = [vessel_id_to_name.get(vid, '') for vid in outlet_vessel_ids]
-                    
-                    # Initialize junction_values
-                    if 'junction_values' not in junc:
-                        junc['junction_values'] = {}
-                    
-                    R_values = [0.0] * len(outlet_vessel_ids)
-                    S_values = [0.0] * len(outlet_vessel_ids)
-                    L_values = [0.0] * len(outlet_vessel_ids)
-                    
-                    # For each outlet vessel (in file order), find its prediction row
-                    for file_idx, (vid, vname) in enumerate(zip(outlet_vessel_ids, outlet_vessel_names)):
-                        # Skip non-EL connectors (zero parameters)
-                        if 'connector' in vname and 'connectorEL' not in vname:
-                            print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> connector, set to 0")
-                            continue
-                        
-                        # Look up the row where this outlet was the primary outlet
-                        row_idx = primary_outlet_to_row.get((junc_name, vname))
-                        
-                        if row_idx is not None:
-                            # Verify vessel_id consistency
-                            expected_vid = int(X_full[row_idx, 0])
-                            if expected_vid != vid:
-                                raise ValueError(
-                                    f"Vessel ID mismatch for {junc_name}/{vname}: "
-                                    f"config has vessel_id={vid}, but feature row {row_idx} has "
-                                    f"outlet_vessel_id={expected_vid}"
-                                )
-                            
-                            R_values[file_idx] = float(pred_R[row_idx])
-                            S_values[file_idx] = float(pred_S[row_idx])
-                            L_values[file_idx] = float(pred_L[row_idx])
-                            print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
-                                  f"row {row_idx}: R={R_values[file_idx]:.4f}, S={S_values[file_idx]:.4f}, L={L_values[file_idx]:.4f}")
-                        else:
-                            # No dedicated prediction row for this outlet (e.g., it was
-                            # only in the secondary/outlet1 position). Fall back to the
-                            # other outlet's row if available.
-                            other_outlet = [on for on in outlet_vessel_names if on != vname]
-                            fallback_row = None
-                            if other_outlet:
-                                fallback_row = primary_outlet_to_row.get((junc_name, other_outlet[0]))
-                            if fallback_row is not None:
-                                R_values[file_idx] = float(pred_R[fallback_row])
-                                S_values[file_idx] = float(pred_S[fallback_row])
-                                L_values[file_idx] = float(pred_L[fallback_row])
-                                print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
-                                      f"fallback from row {fallback_row} (primary={other_outlet[0]}): "
-                                      f"R={R_values[file_idx]:.4f}, S={S_values[file_idx]:.4f}, L={L_values[file_idx]:.4f}")
-                            else:
-                                print(f"        ⚠ {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
-                                      f"no prediction row found, keeping zeros")
-                    
-                    junc['junction_values']['R_poiseuille'] = R_values
-                    junc['junction_values']['stenosis_coefficient'] = S_values
-                    junc['junction_values']['L'] = L_values
-                
-                # Vessels already geometric (nn_config was loaded from variant_geometric_input)
-                # Save the NN-modified config (already checked at start of block)
-                with open(nn_output_path, 'w') as f:
-                    json.dump(nn_config, f, indent=4)
-                generated_files.append(nn_output_path)
-                print(f"      ✓ Neural network predictions applied and saved to {nn_output_path}")
-            
-            except Exception as e:
-                print(f"  Neural network inference failed for {geo_variant_name}/BloodVesselJunction: {e}")
-                print(f"  Skipping NN junction predictions and forward simulation for this variant (models may be missing).")
+    run_data_processing_cmd = [
+        sys.executable,
+        os.path.join(os.path.dirname(__file__), '..', 'data_processing', 'run_data_processing.py'),
+        '--set-name', args.set_name,
+        '--geometry-variant', args.geometry_variant,
+        '--set-type', 'forward',
+        '--geometries', args.geo_name,
+        '--percent-train', '1',
+        '--run-config', run_config_suffix,
+    ]
+    if verbose:
+        run_data_processing_cmd.append('--verbose')
+    try:
+        result = subprocess.run(
+            run_data_processing_cmd,
+            cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout, end='')
+        if result.returncode != 0:
+            err = result.stderr or result.stdout or "(no output)"
+            raise RuntimeError(f"Data processing failed: {err}")
+        print(f"  ✓ Data processing pipeline completed ({args.geometry_variant})")
+    except Exception as e:
+        raise Exception(f"Failed to run data processing pipeline: {e}") from e
 
-        # Step 3.7 (optional): Vessel NN inference: predict vessel R/S/L and write NN_JunctionAndVessel config
-        if getattr(args, 'NN_vessel', False):
-            from util.data_processing.inputs_from_0d_config import load_vessel_geometric_features
+    # Step 3.7: Junction NN inference on the specified bifurcation variant
+    # (Also runs in NN-only mode.) Reads CSVs from Step 3.5, not the jax pickle.
+    # NN inference reads geometric_features.csv + meta from Step 3.5, not the jax
+    # pickle from run_data_processing. Training loads jax_arrays via launch_training/
+    # NeuralNet; deploy uses dill_load(model.weights) + predict(X, weights).
+    nn_output_path = os.path.join(base_dir, f'{args.geometry_variant}_NN_{JUNCTION_TYPE}.json')
+
+    if check_and_track_file(nn_output_path, f"NN inference for {args.geometry_variant}/{JUNCTION_TYPE}"):
+        pass
+    else:
+        print(f"\n    Running neural network inference for {args.geometry_variant}/{JUNCTION_TYPE}...")
+        try:
             from util.data_processing.data_dict_from_csvs import (
+                _read_csv_matrix,
                 _clamp_tortuosity,
                 filter_features_from_array,
-                get_default_include_features_vessel,
             )
-            from util.neural_network.nn_model import predict as nn_predict
+            from util.neural_network.nn_model import predict
             from util.neural_network.nn_util import dill_load
             import jax.numpy as jnp
-            # When model_dir is trial-specific (CV), vessel models exist only for that variant
-            model_dir_basename = os.path.basename(getattr(args, 'model_dir', '') or '')
-            if '_trial_' in model_dir_basename:
-                _model_variant = model_dir_basename.split('_trial_')[0]
+
+            csv_paths = _ml_inputs_paths(ml_inputs_base, args.geometry_variant, args.geo_name)
+            if not os.path.exists(csv_paths["features"]):
+                raise FileNotFoundError(
+                    f"geometric_features.csv not found: {csv_paths['features']}. "
+                    f"Run Step 3.5 (run_data_processing) or the full pipeline first."
+                )
+            if not os.path.exists(csv_paths["meta"]):
+                raise FileNotFoundError(
+                    f"geometric_features_meta.csv not found: {csv_paths['meta']}. "
+                    f"Run Step 3.5 (run_data_processing) or the full pipeline first."
+                )
+
+            with open(variant_geometric_input, 'r') as f:
+                nn_config = json.load(f)
+            _assert_multi_outlet_junctions_type(nn_config, JUNCTION_TYPE)
+
+            print(f"  Reading features from CSV: {csv_paths['features']}")
+            geom_header, geom_X = _read_csv_matrix(csv_paths["features"])
+            X, feature_names = filter_features_from_array(geom_X, geom_header)
+            _clamp_tortuosity(X, feature_names)
+
+            junction_names = []
+            outlet_primary_names = []
+            with open(csv_paths["meta"], 'r', newline='') as fmeta:
+                meta_reader = csv.reader(fmeta)
+                next(meta_reader, None)
+                for row in meta_reader:
+                    if len(row) >= 2:
+                        junction_names.append(row[0])
+                        outlet_primary_names.append(row[1])
+
+            if len(X) == 0:
+                raise ValueError("No junctions found in geometric features")
+            if len(junction_names) != len(X) or len(outlet_primary_names) != len(X):
+                raise ValueError(
+                    f"Row count mismatch for {args.geometry_variant}: "
+                    f"features={len(X)}, meta junction rows={len(junction_names)}"
+                )
+
+            vid_col_idx = geom_header.index("outlet_vessel_id")
+
+            unique_junction_names = list(set(junction_names))
+            print(f"  Loaded {len(X)} feature rows for {len(unique_junction_names)} unique junctions")
+            print(f"  Junction names: {unique_junction_names}")
+            print(f"  Selected {len(feature_names)} features (matching training data): {feature_names}")
+
+            X_jax = jnp.array(X, dtype=jnp.float32)
+            print(f"  Neural network input dimensions: {X_jax.shape} (rows={X_jax.shape[0]}, features={X_jax.shape[1]})")
+
+            if getattr(args, 'model_dir', None):
+                model_dir = args.model_dir
             else:
-                _model_variant = None
-            for geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-                if geo_variant_name not in geometry_variants:
+                model_dir = os.path.join('results', 'models', args.set_name, args.geometry_variant)
+            model_base_name = f"rri_{args.set_name}_pred"
+            model_paths = [
+                os.path.join(model_dir, f"{model_base_name}_0_model"),
+                os.path.join(model_dir, f"{model_base_name}_1_model"),
+                os.path.join(model_dir, f"{model_base_name}_2_model"),
+            ]
+
+            for model_path in model_paths:
+                if not os.path.exists(model_path):
+                    print(f"  NN model not found: {model_path}")
+                    raise FileNotFoundError(f"Model not found: {model_path}")
+
+            raw_predictions = []
+            for i, model_path in enumerate(model_paths):
+                print(f"      Loading model {i+1}/3: {model_path}")
+                model = dill_load(model_path)
+                use_leaky = getattr(model, "use_leaky_relu", False)
+                pred = predict(X_jax, model.weights, use_leaky)
+                raw_predictions.append(np.array(pred).flatten())
+
+            output_names = ['R_poiseuille', 'stenosis_coefficient', 'L']
+            for coef_idx, pred in enumerate(raw_predictions):
+                print(
+                    f"      {output_names[coef_idx]}: "
+                    f"pred range=[{pred.min():.4f}, {pred.max():.4f}]"
+                )
+
+            pred_R = np.array(raw_predictions[0])
+            pred_S = np.zeros_like(pred_R) if getattr(args, 'stenosis_off', False) else np.array(raw_predictions[1])
+            pred_L = np.array(raw_predictions[2])
+
+            if len(pred_R) != len(X):
+                raise ValueError(
+                    f"Prediction array size mismatch: input has {len(X)} rows, "
+                    f"but predictions have {len(pred_R)} values."
+                )
+
+            primary_outlet_to_row = {}
+            junction_name_to_row_indices = {}
+            for row_idx, (junc_name, pout_name) in enumerate(zip(junction_names, outlet_primary_names)):
+                primary_outlet_to_row[(junc_name, pout_name)] = row_idx
+                junction_name_to_row_indices.setdefault(junc_name, []).append(row_idx)
+
+            print(f"      Built prediction mapping: {len(primary_outlet_to_row)} (junction, outlet) entries")
+            for (jn, on), ri in primary_outlet_to_row.items():
+                vid = int(geom_X[ri, vid_col_idx])
+                print(f"        ({jn}, {on}) -> row {ri}, vessel_id={vid}")
+
+            vessels = nn_config.get('vessels', [])
+            vessel_id_to_name = {v.get('vessel_id'): v.get('vessel_name', '') for v in vessels}
+
+            for junc in nn_config.get('junctions', []):
+                junc_name = junc.get('junction_name', '')
+
+                if junc_name not in junction_name_to_row_indices:
+                    if junc.get('junction_type') == JUNCTION_TYPE:
+                        if 'junction_values' not in junc:
+                            outlet_vessel_ids = junc.get('outlet_vessels', [])
+                            num_outlets = len(outlet_vessel_ids)
+                            junc['junction_values'] = {
+                                'R_poiseuille': [0.0] * num_outlets,
+                                'stenosis_coefficient': [0.0] * num_outlets,
+                                'L': [0.0] * num_outlets,
+                            }
                     continue
-                if _model_variant is not None and geo_variant_name != _model_variant:
-                    if args.verbose:
-                        print(f"  ⊘ Skipping vessel NN for {geo_variant_name} (trial model dir is for {_model_variant})")
+
+                outlet_vessel_ids = junc.get('outlet_vessels', [])
+                if len(outlet_vessel_ids) != 2:
                     continue
-                nn_output_path = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
-                if not os.path.exists(nn_output_path):
-                    print(f"  ⊘ Skipping vessel NN for {geo_variant_name}: NN junction config not found")
-                    continue
-                nn_jv_path = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
-                nn_vessel_only_path = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
-                if (check_and_track_file(nn_jv_path, f"Vessel NN inference for {geo_variant_name}") and
-                        os.path.exists(nn_vessel_only_path)):
-                    continue
-                print(f"\n    Running vessel NN inference for {geo_variant_name}...")
-                try:
-                    with open(nn_output_path, 'r') as f:
-                        jv_config = json.load(f)
-                    # Use geometric input for vessel features (same as training) so feature
-                    # distribution matches; predictions are still written into jv_config by vessel_id.
-                    variant_geometric_input = geometry_variants[geo_variant_name]['geometric_input']
-                    if not os.path.exists(variant_geometric_input):
-                        raise FileNotFoundError(
-                            f"Geometric input not found for vessel features: {variant_geometric_input}"
-                        )
-                    X_v, feat_names_v, vessel_ids, vessel_names = load_vessel_geometric_features(
-                        variant_geometric_input, verbose=args.verbose
-                    )
-                    if len(X_v) == 0:
-                        print(f"      No non-connector vessels, skipping vessel NN for {geo_variant_name}")
+
+                outlet_vessel_names = [vessel_id_to_name.get(vid, '') for vid in outlet_vessel_ids]
+
+                if 'junction_values' not in junc:
+                    junc['junction_values'] = {}
+
+                R_values = [0.0] * len(outlet_vessel_ids)
+                S_values = [0.0] * len(outlet_vessel_ids)
+                L_values = [0.0] * len(outlet_vessel_ids)
+
+                for file_idx, (vid, vname) in enumerate(zip(outlet_vessel_ids, outlet_vessel_names)):
+                    if 'connector' in vname and 'connectorEL' not in vname:
+                        print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> connector, set to 0")
                         continue
-                    # Filter to same 21 features used in vessel NN training (avoids 21 vs 25 shape mismatch)
-                    X_v, feat_names_v = filter_features_from_array(
-                        X_v, feat_names_v,
-                        include_features=get_default_include_features_vessel(),
-                    )
-                    _clamp_tortuosity(X_v, feat_names_v)
-                    if getattr(args, 'model_dir', None) and '_trial_' in os.path.basename(args.model_dir):
-                        _base = os.path.dirname(args.model_dir)
-                        _name = os.path.basename(args.model_dir).replace('_trial_', '_vessel_trial_', 1)
-                        vessel_model_dir = os.path.join(_base, _name)
+
+                    row_idx = primary_outlet_to_row.get((junc_name, vname))
+
+                    if row_idx is not None:
+                        expected_vid = int(geom_X[row_idx, vid_col_idx])
+                        if expected_vid != vid:
+                            raise ValueError(
+                                f"Vessel ID mismatch for {junc_name}/{vname}: "
+                                f"config has vessel_id={vid}, but feature row {row_idx} has "
+                                f"outlet_vessel_id={expected_vid}"
+                            )
+
+                        R_values[file_idx] = float(pred_R[row_idx])
+                        S_values[file_idx] = float(pred_S[row_idx])
+                        L_values[file_idx] = float(pred_L[row_idx])
+                        print(
+                            f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
+                            f"row {row_idx}: R={R_values[file_idx]:.4f}, "
+                            f"S={S_values[file_idx]:.4f}, L={L_values[file_idx]:.4f}"
+                        )
                     else:
-                        vessel_model_dir = os.path.join(
-                            'results', 'models', args.set_name, geo_variant_name + '_vessel')
-                    X_v_jax = jnp.array(np.array(X_v, dtype=np.float64), dtype=jnp.float32)
-                    model_paths = [os.path.join(vessel_model_dir, f"rri_{args.set_name}_vessel_pred_{i}_model") for i in range(3)]
-                    for mp in model_paths:
-                        if not os.path.exists(mp):
-                            raise FileNotFoundError(f"Vessel model not found: {mp}")
-                    raw_predictions_v = []
-                    for i, mp in enumerate(model_paths):
-                        model = dill_load(mp)
-                        use_leaky_v = getattr(model, "use_leaky_relu", False)
-                        pred = nn_predict(X_v_jax, model.weights, use_leaky_v)
-                        raw_predictions_v.append(np.array(pred).flatten())
-                    pred_R_v = np.array(raw_predictions_v[0])
-                    pred_S_v = np.array(raw_predictions_v[1])
-                    pred_L_v = np.array(raw_predictions_v[2])
-                    if getattr(args, 'stenosis_off', False):
-                        pred_S_v = np.zeros_like(pred_R_v)
-                    vessel_id_to_row = {vid: i for i, vid in enumerate(vessel_ids)}
-                    for v in jv_config.get('vessels', []):
-                        vname = (v.get('vessel_name') or '').lower()
-                        if 'connector' in vname:
-                            continue
-                        vid = v.get('vessel_id')
-                        row = vessel_id_to_row.get(vid)
-                        if row is None:
-                            continue
-                        z = dict(v.get('zero_d_element_values') or {})
-                        z['R_poiseuille'] = float(pred_R_v[row])
-                        z['stenosis_coefficient'] = float(pred_S_v[row])
-                        z['L'] = float(pred_L_v[row])
-                        v['zero_d_element_values'] = z
-                    with open(nn_jv_path, 'w') as f:
-                        json.dump(jv_config, f, indent=4)
-                    generated_files.append(nn_jv_path)
-                    print(f"      ✓ Vessel NN predictions applied and saved to {nn_jv_path}")
-                    # NN_vessel modality: geometric junctions + NN vessel params (default when --NN-vessel)
-                    with open(variant_geometric_input, 'r') as f:
-                        vessel_only_config = json.load(f)
-                    for v in vessel_only_config.get('vessels', []):
-                        vname = (v.get('vessel_name') or '').lower()
-                        if 'connector' in vname:
-                            continue
-                        vid = v.get('vessel_id')
-                        row = vessel_id_to_row.get(vid)
-                        if row is None:
-                            continue
-                        if 'zero_d_element_values' not in v:
-                            v['zero_d_element_values'] = {}
-                        v['zero_d_element_values']['R_poiseuille'] = float(pred_R_v[row])
-                        v['zero_d_element_values']['stenosis_coefficient'] = float(pred_S_v[row])
-                        v['zero_d_element_values']['L'] = float(pred_L_v[row])
-                    with open(nn_vessel_only_path, 'w') as f:
-                        json.dump(vessel_only_config, f, indent=4)
-                    generated_files.append(nn_vessel_only_path)
-                    print(f"      ✓ NN_vessel (geometric junctions + NN vessels) saved to {nn_vessel_only_path}")
-                except Exception as e:
-                    print(f"      Vessel NN inference failed for {geo_variant_name}: {e}")
-                    print(f"      Skipping vessel NN predictions and related forward simulations for this variant.")
+                        other_outlet = [on for on in outlet_vessel_names if on != vname]
+                        fallback_row = None
+                        if other_outlet:
+                            fallback_row = primary_outlet_to_row.get((junc_name, other_outlet[0]))
+                        if fallback_row is not None:
+                            R_values[file_idx] = float(pred_R[fallback_row])
+                            S_values[file_idx] = float(pred_S[fallback_row])
+                            L_values[file_idx] = float(pred_L[fallback_row])
+                            print(
+                                f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
+                                f"fallback from row {fallback_row} (primary={other_outlet[0]})"
+                            )
+                        else:
+                            print(
+                                f"        ⚠ {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> "
+                                f"no prediction row found, keeping zeros"
+                            )
+
+                junc['junction_values']['R_poiseuille'] = R_values
+                junc['junction_values']['stenosis_coefficient'] = S_values
+                junc['junction_values']['L'] = L_values
+
+            with open(nn_output_path, 'w') as f:
+                json.dump(nn_config, f, indent=4)
+            generated_files.append(nn_output_path)
+            print(f"      ✓ Neural network predictions applied and saved to {nn_output_path}")
+
+        except Exception as e:
+            raise Exception(
+                f"Neural network inference failed for {args.geometry_variant}/{JUNCTION_TYPE}: {e}"
+            ) from e
+
+    # Step 3.8 (optional): Vessel NN inference: predict vessel R/S/L and write NN_JunctionAndVessel config
+    if getattr(args, 'NN_vessel', False):
+        from util.data_processing.inputs_from_0d_config import load_vessel_geometric_features
+        from util.data_processing.data_dict_from_csvs import (
+            _clamp_tortuosity,
+            filter_features_from_array,
+            get_default_include_features_vessel,
+        )
+        from util.neural_network.nn_model import predict as nn_predict
+        from util.neural_network.nn_util import dill_load
+        import jax.numpy as jnp
+
+        model_dir_basename = os.path.basename(getattr(args, 'model_dir', '') or '')
+        if '_trial_' in model_dir_basename:
+            trial_model_variant = model_dir_basename.split('_trial_')[0]
+            if args.geometry_variant != trial_model_variant:
+                raise ValueError(
+                    f"Vessel NN trial model dir is for {trial_model_variant!r}, "
+                    f"but --geometry-variant is {args.geometry_variant!r}"
+                )
+
+        if not os.path.exists(nn_output_path):
+            raise FileNotFoundError(f"NN junction config not found: {nn_output_path}")
+
+        nn_junction_and_vessel_path = os.path.join(base_dir, f'{args.geometry_variant}_NN_JunctionAndVessel.json')
+        nn_vessel_only_path = os.path.join(base_dir, f'{args.geometry_variant}_NN_VesselOnly.json')
+        if check_and_track_file(nn_junction_and_vessel_path, f"Vessel NN inference for {args.geometry_variant}") and os.path.exists(nn_vessel_only_path):
+            pass
+        else:
+            print(f"\n    Running vessel NN inference for {args.geometry_variant}...")
+            try:
+                with open(nn_output_path, 'r') as f:
+                    junction_and_vessel_config = json.load(f)
+                vessel_X, vessel_feature_names, vessel_ids, vessel_names = load_vessel_geometric_features(
+                    variant_geometric_input, verbose=args.verbose
+                )
+                if len(vessel_X) == 0:
+                    raise ValueError(
+                        f"No non-connector vessels for vessel NN ({args.geometry_variant})"
+                    )
+                vessel_X, vessel_feature_names = filter_features_from_array(
+                    vessel_X, vessel_feature_names,
+                    include_features=get_default_include_features_vessel(),
+                )
+                _clamp_tortuosity(vessel_X, vessel_feature_names)
+                if getattr(args, 'model_dir', None) and '_trial_' in os.path.basename(args.model_dir):
+                    vessel_model_dir = os.path.join(
+                        os.path.dirname(args.model_dir),
+                        os.path.basename(args.model_dir).replace('_trial_', '_vessel_trial_', 1),
+                    )
+                else:
+                    vessel_model_dir = os.path.join(
+                        'results', 'models', args.set_name, f'{args.geometry_variant}_vessel')
+                vessel_X_jax = jnp.array(np.array(vessel_X, dtype=np.float64), dtype=jnp.float32)
+                model_paths = [
+                    os.path.join(vessel_model_dir, f"rri_{args.set_name}_vessel_pred_{i}_model")
+                    for i in range(3)
+                ]
+                for mp in model_paths:
+                    if not os.path.exists(mp):
+                        raise FileNotFoundError(f"Vessel model not found: {mp}")
+                vessel_raw_predictions = []
+                for i, mp in enumerate(model_paths):
+                    model = dill_load(mp)
+                    vessel_use_leaky = getattr(model, "use_leaky_relu", False)
+                    pred = nn_predict(vessel_X_jax, model.weights, vessel_use_leaky)
+                    vessel_raw_predictions.append(np.array(pred).flatten())
+                vessel_pred_R = np.array(vessel_raw_predictions[0])
+                vessel_pred_S = np.array(vessel_raw_predictions[1])
+                vessel_pred_L = np.array(vessel_raw_predictions[2])
+                if getattr(args, 'stenosis_off', False):
+                    vessel_pred_S = np.zeros_like(vessel_pred_R)
+                vessel_id_to_row = {vessel_id: i for i, vessel_id in enumerate(vessel_ids)}
+                for vessel in junction_and_vessel_config.get('vessels', []):
+                    vessel_name = (vessel.get('vessel_name') or '').lower()
+                    if 'connector' in vessel_name:
+                        continue
+                    vessel_id = vessel.get('vessel_id')
+                    row = vessel_id_to_row.get(vessel_id)
+                    if row is None:
+                        continue
+                    z = dict(vessel.get('zero_d_element_values') or {})
+                    z['R_poiseuille'] = float(vessel_pred_R[row])
+                    z['stenosis_coefficient'] = float(vessel_pred_S[row])
+                    z['L'] = float(vessel_pred_L[row])
+                    vessel['zero_d_element_values'] = z
+                with open(nn_junction_and_vessel_path, 'w') as f:
+                    json.dump(junction_and_vessel_config, f, indent=4)
+                generated_files.append(nn_junction_and_vessel_path)
+                print(f"      ✓ Vessel NN predictions applied and saved to {nn_junction_and_vessel_path}")
+                with open(variant_geometric_input, 'r') as f:
+                    vessel_only_config = json.load(f)
+                for vessel in vessel_only_config.get('vessels', []):
+                    vessel_name = (vessel.get('vessel_name') or '').lower()
+                    if 'connector' in vessel_name:
+                        continue
+                    vessel_id = vessel.get('vessel_id')
+                    row = vessel_id_to_row.get(vessel_id)
+                    if row is None:
+                        continue
+                    if 'zero_d_element_values' not in vessel:
+                        vessel['zero_d_element_values'] = {}
+                    vessel['zero_d_element_values']['R_poiseuille'] = float(vessel_pred_R[row])
+                    vessel['zero_d_element_values']['stenosis_coefficient'] = float(vessel_pred_S[row])
+                    vessel['zero_d_element_values']['L'] = float(vessel_pred_L[row])
+                with open(nn_vessel_only_path, 'w') as f:
+                    json.dump(vessel_only_config, f, indent=4)
+                generated_files.append(nn_vessel_only_path)
+                print(f"      ✓ NN_vessel (geometric junctions + NN vessels) saved to {nn_vessel_only_path}")
+            except Exception as e:
+                raise Exception(
+                    f"Vessel NN inference failed for {args.geometry_variant}: {e}"
+                ) from e
 
     # Sync BCs from calibrated output into NN configs so RCR (and other outlet BCs) match
-    # Run even if calibration was skipped, so we can use a preexisting calibrated output file
-    for geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-        if geo_variant_name not in geometry_variants:
-            continue
-        variant_junction_paths = geometry_variants[geo_variant_name]['junction_types']
-        calib_output_path = variant_junction_paths.get('BloodVesselJunction', {}).get('calibrated_output')
-        if not calib_output_path or not os.path.exists(calib_output_path):
-            continue
-        nn_output_path = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
-        nn_jv_path = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
-        nn_vessel_only_path = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
-        nn_paths = [p for p in [nn_output_path, nn_jv_path, nn_vessel_only_path] if os.path.exists(p)]
-        if nn_paths:
-            n_updated = sync_nn_config_bcs_from_calibration(nn_paths, calib_output_path, verbose=args.verbose)
-            if n_updated and args.verbose:
-                print(f"  Synced boundary conditions from calibrated output into {n_updated} NN config(s) for {geo_variant_name}")
+    if not os.path.exists(nn_output_path):
+        raise FileNotFoundError(f"NN junction config not found: {nn_output_path}")
+    nn_junction_and_vessel_path = os.path.join(base_dir, f'{args.geometry_variant}_NN_JunctionAndVessel.json')
+    nn_vessel_only_path = os.path.join(base_dir, f'{args.geometry_variant}_NN_VesselOnly.json')
+    nn_paths = [p for p in [nn_output_path, nn_junction_and_vessel_path, nn_vessel_only_path] if os.path.exists(p)]
+    n_updated = sync_nn_config_bcs_from_calibration(nn_paths, calib_output_path, verbose=args.verbose)
+    if n_updated and args.verbose:
+        print(
+            f"  Synced boundary conditions from calibrated output into {n_updated} "
+            f"NN config(s) for {args.geometry_variant}"
+        )
 
     # Step 4: Run forward simulations for each geometry variant
     if not args.skip_forward:
-        # # Adjust refinement factor based on length of inlet flow waveform
-        # inlet_flow_waveform = get_inlet_flow_waveform(args.set_name, args.geo_name)
-        # if len(inlet_flow_waveform) > 500:
-        #     refinement_factor = 1
-        # else:
-        #     refinement_factor = int(500/len(inlet_flow_waveform))
-        # print(f"Refinement factor: {refinement_factor}")
+        forward_variant_names = (
+            [args.geometry_variant] if args.NN_only else list(geometry_variants.keys())
+        )
         if args.NN_only:
-            # In NN-only mode, only run forward simulation on NN input
-            print(f"\n  Running forward simulation (NN-only mode)...")
-            # Process both bifurcations and bifurcations_EL
-            for geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-                if geo_variant_name not in geometry_variants:
-                    continue
-                
-                geo_variant_paths = geometry_variants[geo_variant_name]
-                variant_junction_paths = geo_variant_paths['junction_types']
-                
-                # Run forward simulation for NN-modified BloodVesselJunction
-                nn_output_path = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
-                nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
-                
-                if os.path.exists(nn_output_path):
-                    if check_and_track_file(nn_results_csv, f"NN forward simulation for {geo_variant_name}/BloodVesselJunction"):
-                        pass
-                    else:
-                        print(f"\n    Running simulation with NN-modified {geo_variant_name}/BloodVesselJunction input...")
-                        try:
-                            # Use same BC source as full pipeline when available: BloodVesselJunction calibration input.
-                            # Fall back to geometric input only when calibration was not run (e.g. NN-only / CV val geometry).
-                            bvj_calib_input = geo_variant_paths['junction_types']['BloodVesselJunction']['calibration_input']
-                            if os.path.exists(bvj_calib_input):
-                                bvj_input_path = bvj_calib_input
-                            else:
-                                bvj_input_path = geo_variant_paths['geometric_input']
-                            if not os.path.exists(bvj_input_path):
-                                raise FileNotFoundError(
-                                    f"No BC source found: neither {bvj_calib_input} nor {bvj_input_path}"
-                                )
-                            print(f"    Refining inlet BC for forward simulation with input: {bvj_input_path}")
-                            refine_inlet_bc_for_forward_simulation(nn_output_path, calibration_input_path=bvj_input_path)
-                            run_forward_simulation(nn_output_path, nn_results_csv)
-                            generated_files.append(nn_results_csv)
-                            print(f"      ✓ NN-modified {geo_variant_name}/BloodVesselJunction simulation completed successfully")
-                        except Exception as e:
-                            raise Exception(f"NN-modified {geo_variant_name}/BloodVesselJunction simulation failed: {e}")
-                else:
-                    print(f"      ⊘ Skipping: NN output file not found: {nn_output_path}")
-                # Forward sim for NN junction + vessel when --NN-vessel
-                if getattr(args, 'NN_vessel', False):
-                    nn_jv_path = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
-                    nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
-                    if os.path.exists(nn_jv_path):
-                        if check_and_track_file(nn_jv_results_csv, f"NN Junction+Vessel forward simulation for {geo_variant_name}"):
-                            pass
-                        else:
-                            print(f"\n    Running simulation with NN Junction+Vessel {geo_variant_name} input...")
-                            try:
-                                bvj_input_path = geo_variant_paths['junction_types']['BloodVesselJunction']['calibration_input']
-                                if not os.path.exists(bvj_input_path):
-                                    bvj_input_path = geo_variant_paths['geometric_input']
-                                refine_inlet_bc_for_forward_simulation(nn_jv_path, calibration_input_path=bvj_input_path)
-                                run_forward_simulation(nn_jv_path, nn_jv_results_csv)
-                                generated_files.append(nn_jv_results_csv)
-                                print(f"      ✓ NN Junction+Vessel {geo_variant_name} simulation completed successfully")
-                            except Exception as e:
-                                raise Exception(f"NN Junction+Vessel {geo_variant_name} simulation failed: {e}")
-                        # Forward sim for NN_vessel (geometric junctions + NN vessels)
-                        nn_vessel_only_path = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
-                        nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
-                        if os.path.exists(nn_vessel_only_path):
-                            if check_and_track_file(nn_vessel_only_results_csv, f"NN_vessel forward simulation for {geo_variant_name}"):
-                                pass
-                            else:
-                                print(f"\n    Running simulation with NN_vessel {geo_variant_name} input...")
-                                try:
-                                    bvj_input_path = geo_variant_paths['junction_types']['BloodVesselJunction']['calibration_input']
-                                    if not os.path.exists(bvj_input_path):
-                                        bvj_input_path = geo_variant_paths['geometric_input']
-                                    refine_inlet_bc_for_forward_simulation(nn_vessel_only_path, calibration_input_path=bvj_input_path)
-                                    run_forward_simulation(nn_vessel_only_path, nn_vessel_only_results_csv)
-                                    generated_files.append(nn_vessel_only_results_csv)
-                                    print(f"      ✓ NN_vessel {geo_variant_name} simulation completed successfully")
-                                except Exception as e:
-                                    raise Exception(f"NN_vessel {geo_variant_name} simulation failed: {e}")
-        else:
-            # Normal mode: run all forward simulations for each geometry variant
-            for geo_variant_name, geo_variant_paths in geometry_variants.items():
-                print(f"\n  Running forward simulations for {geo_variant_name} geometry...")
-                
-                # Extract paths for this variant
-                variant_geometric_input = geo_variant_paths['geometric_input']
-                variant_geometric_results = geo_variant_paths['geometric_results']
-                variant_calibration_input = geo_variant_paths['calibration_input']
-                variant_junction_paths = geo_variant_paths['junction_types']
-                
-                # Run simulation with geometric input (uncalibrated).
-                # Uses this variant's geometric input file (e.g. bifurcations_EL_geometric_input.json for bifurcations_EL).
-                geometric_results_path = variant_geometric_results
-                if check_and_track_file(geometric_results_path, f"geometric forward simulation for {geo_variant_name}"):
-                    print(f"    ⊘ Skipping geometric simulation (results already exist)")
-                else:
-                    print(f"\n    Running simulation with {geo_variant_name} geometric input...")
-                    if not os.path.exists(variant_geometric_input):
-                        print(f"      ✗ Skipping: geometric input not found: {variant_geometric_input}")
-                    else:
-                        try:
-                            # For geometric input, use the variant's calibration input as source
-                            refine_inlet_bc_for_forward_simulation(variant_geometric_input, calibration_input_path=variant_calibration_input)
-                            run_forward_simulation(variant_geometric_input, variant_geometric_results)
-                            generated_files.append(variant_geometric_results)
-                            print(f"      ✓ Geometric simulation completed successfully")
-                        except Exception as e:
-                            raise Exception(f"Geometric simulation failed: {e}")
-                
-                # Run simulation with calibrated input
-                jtype_output_path = variant_junction_paths[JUNCTION_TYPE]['calibrated_output']
-                jtype_input_path = variant_junction_paths[JUNCTION_TYPE]['calibration_input']
-                calibrated_results_csv = variant_junction_paths[JUNCTION_TYPE]['calibrated_results']
+            print(f"\n  Running forward simulation (NN-only mode, {args.geometry_variant})...")
 
-                if not os.path.exists(jtype_output_path):
-                    print(f"      ✗ Skipping: calibrated output not found: {jtype_output_path}")
-                elif check_and_track_file(calibrated_results_csv, f"calibrated forward simulation for {geo_variant_name}/{JUNCTION_TYPE}"):
-                    pass
+        for geo_variant_name in forward_variant_names:
+            if geo_variant_name not in geometry_variants:
+                continue
+            geo_variant_paths = geometry_variants[geo_variant_name]
+            variant_junction_paths = geo_variant_paths['junction_types']
+
+            if not args.NN_only:
+
+                # Run geometric forward simulation  
+                print(f"\n  Running forward simulations for {geo_variant_name} geometry...")
+                _run_forward_simulation_step(
+                    geo_variant_paths['geometric_input'],
+                    geo_variant_paths['geometric_results'],
+                    bc_source=geo_variant_paths['calibration_input'],
+                    step_label=f"geometric forward simulation for {geo_variant_name}",
+                    check_and_track_file=check_and_track_file,
+                    generated_files=generated_files,
+                    skip_missing_input=True,
+                )
+
+                # Run calibrated forward simulation
+                jtype_output = variant_junction_paths[JUNCTION_TYPE]['calibrated_output']
+                if not os.path.exists(jtype_output):
+                    print(f"      ✗ Skipping: calibrated output not found: {jtype_output}")
                 else:
-                    print(f"\n    Running simulation with calibrated {geo_variant_name}/{JUNCTION_TYPE} input...")
-                    try:
-                        refine_inlet_bc_for_forward_simulation(jtype_output_path, calibration_input_path=jtype_input_path)
-                        run_forward_simulation(jtype_output_path, calibrated_results_csv)
-                        generated_files.append(calibrated_results_csv)
-                        print(f"      ✓ Calibrated {geo_variant_name}/{JUNCTION_TYPE} simulation completed successfully")
-                    except Exception as e:
-                        raise Exception(f"Calibrated {geo_variant_name}/{JUNCTION_TYPE} simulation failed: {e}")
-                
-                # Run forward simulation for NN-modified BloodVesselJunction on bifurcations and bifurcations_EL
-                if geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-                    nn_output_path = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
-                    nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
-                    
-                    if os.path.exists(nn_output_path):
-                        if check_and_track_file(nn_results_csv, f"NN forward simulation for {geo_variant_name}/BloodVesselJunction"):
-                            pass
-                        else:
-                            print(f"\n    Running simulation with NN-modified {geo_variant_name}/BloodVesselJunction input...")
-                            try:
-                                # Use BloodVesselJunction calibration input as source
-                                bvj_input_path = variant_junction_paths['BloodVesselJunction']['calibration_input']
-                                refine_inlet_bc_for_forward_simulation(nn_output_path, calibration_input_path=bvj_input_path)
-                                run_forward_simulation(nn_output_path, nn_results_csv)
-                                generated_files.append(nn_results_csv)
-                                print(f"      ✓ NN-modified {geo_variant_name}/BloodVesselJunction simulation completed successfully")
-                            except Exception as e:
-                                raise Exception(f"NN-modified {geo_variant_name}/BloodVesselJunction simulation failed: {e}")
-                    # Forward sim for NN Junction+Vessel when --NN-vessel (normal mode)
-                    if getattr(args, 'NN_vessel', False):
-                        nn_jv_path = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
-                        nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
-                        if os.path.exists(nn_jv_path):
-                            if check_and_track_file(nn_jv_results_csv, f"NN Junction+Vessel forward simulation for {geo_variant_name}"):
-                                pass
-                            else:
-                                print(f"\n    Running simulation with NN Junction+Vessel {geo_variant_name} input...")
-                                try:
-                                    bvj_input_path = variant_junction_paths['BloodVesselJunction']['calibration_input']
-                                    if not os.path.exists(bvj_input_path):
-                                        bvj_input_path = variant_geometric_input
-                                    refine_inlet_bc_for_forward_simulation(nn_jv_path, calibration_input_path=bvj_input_path)
-                                    run_forward_simulation(nn_jv_path, nn_jv_results_csv)
-                                    generated_files.append(nn_jv_results_csv)
-                                    print(f"      ✓ NN Junction+Vessel {geo_variant_name} simulation completed successfully")
-                                except Exception as e:
-                                    raise Exception(f"NN Junction+Vessel {geo_variant_name} simulation failed: {e}")
-                            # Forward sim for NN_vessel (geometric junctions + NN vessels) in normal mode
-                            nn_vessel_only_path = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
-                            nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
-                            if os.path.exists(nn_vessel_only_path):
-                                if check_and_track_file(nn_vessel_only_results_csv, f"NN_vessel forward simulation for {geo_variant_name}"):
-                                    pass
-                                else:
-                                    print(f"\n    Running simulation with NN_vessel {geo_variant_name} input...")
-                                    try:
-                                        bvj_input_path = variant_junction_paths['BloodVesselJunction']['calibration_input']
-                                        if not os.path.exists(bvj_input_path):
-                                            bvj_input_path = variant_geometric_input
-                                        refine_inlet_bc_for_forward_simulation(nn_vessel_only_path, calibration_input_path=bvj_input_path)
-                                        run_forward_simulation(nn_vessel_only_path, nn_vessel_only_results_csv)
-                                        generated_files.append(nn_vessel_only_results_csv)
-                                        print(f"      ✓ NN_vessel {geo_variant_name} simulation completed successfully")
-                                    except Exception as e:
-                                        raise Exception(f"NN_vessel {geo_variant_name} simulation failed: {e}")
-    
+                    _run_forward_simulation_step(
+                        jtype_output,
+                        variant_junction_paths[JUNCTION_TYPE]['calibrated_results'],
+                        bc_source=variant_junction_paths[JUNCTION_TYPE]['calibration_input'],
+                        step_label=(
+                            f"calibrated forward simulation for {geo_variant_name}/{JUNCTION_TYPE}"
+                        ),
+                        check_and_track_file=check_and_track_file,
+                        generated_files=generated_files,
+                    )
+
+            if geo_variant_name not in ('bifurcations', 'bifurcations_EL'):
+                continue
+
+            bc_source = _bc_source_for_nn_forward(geo_variant_paths)
+            for step_label, sim_input, results_csv in _nn_forward_sim_specs(
+                base_dir,
+                geo_variant_name,
+                JUNCTION_TYPE,
+                getattr(args, 'NN_vessel', False),
+            ):
+                # Run NN forward simulation
+                _run_forward_simulation_step(
+                    sim_input,
+                    results_csv,
+                    bc_source=bc_source,
+                    step_label=step_label,
+                    check_and_track_file=check_and_track_file,
+                    generated_files=generated_files,
+                    skip_missing_input=not args.NN_only,
+                )
+
     # Step 5: Calculate and print MSE between 3D and 0D solutions
     if not args.skip_mse_calculation:
         print("\n" + "="*60)
         print("Step 5: Calculating MSE between 3D and 0D solutions")
         print("="*60)
-        
-        # Calculate MSE only for bifurcations geometry variant
-        for geo_variant_name, geo_variant_paths in geometry_variants.items():
-            # Skip original geometry variant
-            if geo_variant_name == 'original':
-                continue
-                
-            print(f"\n  MSE calculation for {geo_variant_name.upper()} geometry:")
-            
-            variant_calibration_input = geo_variant_paths['calibration_input']
-            variant_geometric_results = geo_variant_paths['geometric_results']
-            variant_geometric_input = geo_variant_paths['geometric_input']
-            variant_junction_paths = geo_variant_paths['junction_types']
-            
-            # Build dictionary of CSV results for all modalities
-            csv_results_dict = {}
-            
-            # Add geometric results
-            if os.path.exists(variant_geometric_results):
-                csv_results_dict['geometric'] = variant_geometric_results
-            
-            # Add calibrated results
-            calibrated_results_csv = variant_junction_paths[JUNCTION_TYPE]['calibrated_results']
-            if os.path.exists(calibrated_results_csv):
-                csv_results_dict[JUNCTION_TYPE] = str(calibrated_results_csv)
-            
-            # Add NN-modified BloodVesselJunction results for bifurcations and bifurcations_EL
-            if geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-                nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
-                if os.path.exists(nn_results_csv):
-                    csv_results_dict['BloodVesselJunction_NN'] = str(nn_results_csv)
-                if getattr(args, 'NN_vessel', False):
-                    nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
-                    if os.path.exists(nn_jv_results_csv):
-                        csv_results_dict['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
-                    nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
-                    if os.path.exists(nn_vessel_only_results_csv):
-                        csv_results_dict['NN_vessel'] = str(nn_vessel_only_results_csv)
-            
-            if csv_results_dict and os.path.exists(variant_calibration_input):
-                # Generate CSV output path
-                prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
-                mse_csv_path = os.path.join(base_dir, f'{prefix}mse_comparison.csv')
-                
-                if check_and_track_file(mse_csv_path, f"MSE calculation for {geo_variant_name}"):
-                    pass
-                else:
-                    try:
-                        calculate_mse_between_3d_and_0d(
-                            variant_calibration_input,
-                            csv_results_dict,
-                            geometric_input_path=variant_geometric_input,
-                            output_csv_path=mse_csv_path,
-                            verbose=verbose,
-                            set_name=args.set_name
-                        )
-                        generated_files.append(mse_csv_path)
-                    except Exception as e:
-                        raise Exception(f"Error calculating MSE for {geo_variant_name}: {e}")
+
+        print(f"\n  MSE calculation for {args.geometry_variant.upper()} geometry:")
+        geo_variant_paths = geometry_variants[args.geometry_variant]
+        csv_results_dict = _mse_csv_results_dict(
+            geo_variant_paths,
+            base_dir,
+            args.geometry_variant,
+            JUNCTION_TYPE,
+            getattr(args, 'NN_vessel', False),
+        )
+        variant_calibration_input = geo_variant_paths['calibration_input']
+        if not csv_results_dict or not os.path.exists(variant_calibration_input):
+            print(f"    Skipping MSE calculation for {args.geometry_variant} (missing files)")
+        else:
+            mse_csv_path = os.path.join(base_dir, f'{args.geometry_variant}_mse_comparison.csv')
+            if check_and_track_file(mse_csv_path, f"MSE calculation for {args.geometry_variant}"):
+                pass
             else:
-                print(f"    Skipping MSE calculation for {geo_variant_name} (missing files)")
-    
-    #Step 6: Generate comparison plots (always run if not skipped, including in plot-only mode)
+                try:
+                    calculate_mse_between_3d_and_0d(
+                        variant_calibration_input,
+                        csv_results_dict,
+                        output_csv_path=mse_csv_path,
+                        verbose=verbose,
+                    )
+                    generated_files.append(mse_csv_path)
+                except Exception as e:
+                    raise Exception(f"Error calculating MSE for {args.geometry_variant}: {e}") from e
+
+    # Step 6: Generate comparison plots (always run if not skipped, including in plot-only mode)
     if not args.skip_plots:
         print("\n" + "="*60)
         print("Step 6: Generating comparison plots")
         print("="*60)
-        trial_suffix = f"_trial_{args.trial_id}" if args.trial_id is not None else ""
-        plot_config = run_config_suffix
-        
-        # Specify which plot types to generate: 'original', 'bifurcations', 'combined'
-        plot_types = ["bifurcations","bifurcations_EL"]
-        
         try:
-            # Import plotting functions from unified location comparison script
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'visualizations'))
-            from plot_location_comparison import (
-                plot_location_comparison, 
-                get_all_locations_from_calibration_input,
-                get_time_period as get_time_period_func
+            run_zerod_comparison_plots(
+                args.geometry_variant,
+                geometry_variants,
+                base_dir,
+                JUNCTION_TYPE,
+                set_name=args.set_name,
+                geo_name=args.geo_name,
+                run_config=run_config_suffix,
+                trial_id=args.trial_id,
+                nn_vessel=getattr(args, 'NN_vessel', False),
+                verbose=verbose,
             )
-            
-            # Get time period (for plotting)
-            time_period = None
-            try:
-                time_period = get_time_period_func(args.set_name, args.geo_name)
-            except Exception:
-                pass
-            
-            # Generate plots for each requested plot type (outputs under config-specific subfolder)
-            for plot_type in plot_types:
-                    if plot_type == 'combined':
-                        # Generate combined comparison plots (original vs bifurcations for each junction type)
-                        print(f"\n  Creating combined geometry variant comparison plots...")
-                        combined_output_dir = os.path.join('results', 'location_comparison', plot_config, args.set_name, args.geo_name, f'combined{trial_suffix}')
-                        os.makedirs(combined_output_dir, exist_ok=True)
-                        
-                        # Use original geometry calibration input for location list (for combined plots)
-                        original_calibration_input = geometry_variants['original']['calibration_input']
-                        orig_geometric_results = geometry_variants['original']['geometric_results']
-                        
-                        if not os.path.exists(original_calibration_input) or not os.path.exists(orig_geometric_results):
-                            print(f"    Skipping combined plots (missing original geometry files)")
-                            continue
-                        
-                        all_locations = get_all_locations_from_calibration_input(str(original_calibration_input))
-                        
-                        # Build combined CSV paths dict: keys are "original_jtype" and "bifurcations_jtype"
-                        combined_csv_paths = {}
-                        # Build separate dictionaries for geometric and calibrated results
-                        geometric_csv_paths = {}
-                        for geo_variant_name, geo_variant_paths in geometry_variants.items():
-                            variant_geometric_results = geo_variant_paths['geometric_results']
-                            if os.path.exists(variant_geometric_results):
-                                geometric_csv_paths[geo_variant_name] = str(variant_geometric_results)
-                            
-                            calibrated_results_csv = geo_variant_paths['junction_types'][JUNCTION_TYPE]['calibrated_results']
-                            if os.path.exists(calibrated_results_csv):
-                                combined_csv_paths[f'{geo_variant_name}_{JUNCTION_TYPE}'] = str(calibrated_results_csv)
-                            
-                            # Add NN-modified BloodVesselJunction for bifurcations and bifurcations_EL
-                            if geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-                                nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
-                                if os.path.exists(nn_results_csv):
-                                    combined_csv_paths[f'{geo_variant_name}_BloodVesselJunction_NN'] = str(nn_results_csv)
-                                # Plot NN vessel modalities whenever CSVs exist (same as plot_location_comparison CLI).
-                                # --NN-vessel still controls whether earlier steps generate these files.
-                                nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
-                                if os.path.exists(nn_jv_results_csv):
-                                    combined_csv_paths[f'{geo_variant_name}_BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
-                                nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
-                                if os.path.exists(nn_vessel_only_results_csv):
-                                    combined_csv_paths[f'{geo_variant_name}_NN_vessel'] = str(nn_vessel_only_results_csv)
-                        
-                        if combined_csv_paths or geometric_csv_paths:
-                            success_count = 0
-                            for location in all_locations:
-                                safe_location = location.replace(':', '_')
-                                plot_path = os.path.join(combined_output_dir, f"{safe_location}{trial_suffix}_combined.png")
-                                try:
-                                    success = plot_location_comparison(
-                                        str(original_calibration_input),
-                                        str(orig_geometric_results),
-                                        combined_csv_paths,
-                                        location,
-                                        plot_path,
-                                        set_name=args.set_name,
-                                        geo_name=args.geo_name,
-                                        time_period=time_period,
-                                        geometric_input_path=str(geometry_variants['original']['geometric_input']),
-                                        verbose=False,
-                                        geometric_csv_paths=geometric_csv_paths
-                                    )
-                                    if success:
-                                        success_count += 1
-                                except Exception as e:
-                                    print(f"      ✗ Failed to create combined plot for {location}: {e}")
-                                    import traceback
-                                    traceback.print_exc()
-                            
-                            print(f"    Created {success_count}/{len(all_locations)} combined comparison plots")
-                            print(f"    Combined plot output directory: {combined_output_dir}")
-                        else:
-                            print(f"    Skipping combined plots (no CSV results found)")
-                    
-                    elif plot_type in ['original', 'bifurcations', 'bifurcations_EL']:
-                        # Generate plots for individual geometry variant
-                        geo_variant_name = plot_type
-                        print(f"\n  Creating {geo_variant_name} geometry variant comparison plots...")
-                        variant_output_dir = os.path.join('results', 'location_comparison', plot_config, args.set_name, args.geo_name, f'{geo_variant_name}{trial_suffix}')
-                        os.makedirs(variant_output_dir, exist_ok=True)
-                        
-                        geo_variant_paths = geometry_variants[geo_variant_name]
-                        variant_calibration_input = geo_variant_paths['calibration_input']
-                        variant_geometric_results = geo_variant_paths['geometric_results']
-                        variant_geometric_input = geo_variant_paths['geometric_input']
-                        
-                        if not os.path.exists(variant_calibration_input) or not os.path.exists(variant_geometric_results):
-                            print(f"    Skipping {geo_variant_name} plots (missing files)")
-                            continue
-                        
-                        # Extract locations from this variant's calibration input (all locations, not just INFLOW)
-                        variant_locations = get_all_locations_from_calibration_input(str(variant_calibration_input))
-                        # Filter to only INFLOW locations by default
-                        variant_locations = [loc for loc in variant_locations if loc.startswith('INFLOW:')]
-                        
-                        if not variant_locations:
-                            print(f"    Skipping {geo_variant_name} plots (no locations found in calibration input)")
-                            continue
-                        
-                        # Build CSV paths for this variant
-                        variant_csv_paths = {}
-                        variant_geometric_csv_paths = {}
-                        
-                        if os.path.exists(variant_geometric_results):
-                            variant_geometric_csv_paths[geo_variant_name] = str(variant_geometric_results)
-                        
-                        calibrated_results_csv = geo_variant_paths['junction_types'][JUNCTION_TYPE]['calibrated_results']
-                        if os.path.exists(calibrated_results_csv):
-                            variant_csv_paths[JUNCTION_TYPE] = str(calibrated_results_csv)
-                        
-                        # Add NN-modified BloodVesselJunction for bifurcations and bifurcations_EL
-                        if geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-                            nn_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction_results.csv')
-                            if os.path.exists(nn_results_csv):
-                                variant_csv_paths['BloodVesselJunction_NN'] = str(nn_results_csv)
-                            # Plot NN vessel modalities whenever CSVs exist (same as plot_location_comparison CLI).
-                            nn_jv_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel_results.csv')
-                            if os.path.exists(nn_jv_results_csv):
-                                variant_csv_paths['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_results_csv)
-                            nn_vessel_only_results_csv = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly_results.csv')
-                            if os.path.exists(nn_vessel_only_results_csv):
-                                variant_csv_paths['NN_vessel'] = str(nn_vessel_only_results_csv)
-                        
-                        if variant_csv_paths or variant_geometric_csv_paths:
-                            # Build vessel name mapping for EL-adjusted geometry
-                            vessel_name_mapping = None
-                            if geo_variant_name == 'bifurcations_EL':
-                                from util.visualizations.plot_location_comparison import build_vessel_name_mapping
-                                bifurcations_input = geometry_variants['bifurcations']['geometric_input']
-                                if os.path.exists(bifurcations_input) and os.path.exists(variant_geometric_input):
-                                    vessel_name_mapping = build_vessel_name_mapping(
-                                        bifurcations_input, variant_geometric_input
-                                    )
-                            
-                            success_count = 0
-                            for location in variant_locations:
-                                safe_location = location.replace(':', '_')
-                                plot_path = os.path.join(variant_output_dir, f"{safe_location}{trial_suffix}_comparison.png")
-                                try:
-                                    success = plot_location_comparison(
-                                        str(variant_calibration_input),
-                                        str(variant_geometric_results),
-                                        variant_csv_paths,
-                                        location,
-                                        plot_path,
-                                        set_name=args.set_name,
-                                        geo_name=args.geo_name,
-                                        time_period=time_period,
-                                        geometric_input_path=str(variant_geometric_input),
-                                        verbose=False,
-                                        geometric_csv_paths=variant_geometric_csv_paths,
-                                        vessel_name_mapping=vessel_name_mapping
-                                    )
-                                    if success:
-                                        success_count += 1
-                                except Exception as e:
-                                    print(f"      ✗ Failed to create {geo_variant_name} plot for {location}: {e}")
-                                    import traceback
-                                    traceback.print_exc()
-                            
-                            print(f"    Created {success_count}/{len(variant_locations)} {geo_variant_name} comparison plots")
-                            print(f"    {geo_variant_name.capitalize()} plot output directory: {variant_output_dir}")
-                        else:
-                            print(f"    Skipping {geo_variant_name} plots (no CSV results found)")
-                
-        except ImportError as e:
-            print(f"  ✗ Could not import plotting functions: {e}")
-            print("  Make sure plot_location_comparison.py is available")
         except Exception as e:
             print(f"  ✗ Error generating plots: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    # Plot junction pressure differences for each geometry variant (off by default)
-    # By default: skip original, only plot first 5 junctions for bifurcations
-    if not args.skip_plots and args.plot_junction_pressure_diff:
-        for geo_variant_name, geo_variant_paths in geometry_variants.items():
-            # Skip original geometry variant
-            if geo_variant_name == 'original':
-                continue
-                
-            variant_calibration_input = geo_variant_paths['calibration_input']
-            variant_geometric_input = geo_variant_paths['geometric_input']
-            
-            if os.path.exists(variant_calibration_input) and os.path.exists(variant_geometric_input):
-                try:
-                    print(f"\n  Creating junction pressure difference plots for {geo_variant_name}...")
-                    prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
-                    trial_suffix_plots = f"_trial_{args.trial_id}" if args.trial_id is not None else ""
-                    output_subdir = os.path.join(base_dir, f'{prefix}junction_pressure_diff{trial_suffix_plots}') if prefix else base_dir
-                    
-                    # Limit to first 5 junctions for bifurcations
-                    max_junctions = 5 if geo_variant_name == 'bifurcations' else None
-                    
-                    plot_junction_pressure_differences(
-                        str(variant_calibration_input),
-                        str(variant_geometric_input),
-                        output_subdir,
-                        set_name=args.set_name,
-                        geo_name=args.geo_name,
-                        verbose=verbose,
-                        max_junctions=max_junctions
-                    )
-                except Exception as e:
-                    raise Exception(f"Error generating junction pressure difference plots for {geo_variant_name}: {e}")
+            if verbose:
+                import traceback
+                traceback.print_exc()
 
-    # Plot zero-D parameter bar charts (R, stenosis, L) comparing modalities
-    if not args.skip_plots:
-        for geo_variant_name, geo_variant_paths in geometry_variants.items():
-            try:
-                print(f"\n  Creating zero-D parameter bar charts for {geo_variant_name}...")
-                prefix = '' if geo_variant_name == 'original' else f'{geo_variant_name}_'
-                trial_suffix_param = f"_trial_{args.trial_id}" if args.trial_id is not None else ""
-                # Save parameter comparison plots under results/param_comparison/<run_config>/<set>/<geo>/<variant>
-                output_subdir = os.path.join('results', 'param_comparison', plot_config, args.set_name, args.geo_name, f'{geo_variant_name}{trial_suffix_param}')
-                os.makedirs(output_subdir, exist_ok=True)
-
-                # Build modality -> calibrated JSON path mapping
-                modality_jsons = {}
-                # geometric input
-                geom_json = geo_variant_paths.get('geometric_input')
-                if geom_json and os.path.exists(geom_json):
-                    modality_jsons['geometric'] = str(geom_json)
-
-                # calibrated output
-                jpath = geo_variant_paths['junction_types'].get(JUNCTION_TYPE, {}).get('calibrated_output')
-                if jpath and os.path.exists(jpath):
-                    modality_jsons[JUNCTION_TYPE] = str(jpath)
-                
-                # Add NN-modified BloodVesselJunction for bifurcations and bifurcations_EL
-                if geo_variant_name in ['bifurcations', 'bifurcations_EL']:
-                    nn_json = os.path.join(base_dir, f'{geo_variant_name}_NN_BloodVesselJunction.json')
-                    if os.path.exists(nn_json):
-                        modality_jsons['BloodVesselJunction_NN'] = str(nn_json)
-                    if getattr(args, 'NN_vessel', False):
-                        nn_jv_json = os.path.join(base_dir, f'{geo_variant_name}_NN_JunctionAndVessel.json')
-                        if os.path.exists(nn_jv_json):
-                            modality_jsons['BloodVesselJunction_NN_plus_Vessel_NN'] = str(nn_jv_json)
-                        nn_vessel_only_json = os.path.join(base_dir, f'{geo_variant_name}_NN_VesselOnly.json')
-                        if os.path.exists(nn_vessel_only_json):
-                            modality_jsons['NN_vessel'] = str(nn_vessel_only_json)
-
-                if not modality_jsons:
-                    print(f"    Warning: No modality JSONs found for {geo_variant_name}, skipping zero-D parameter bar chart")
-                    continue
-
-                out_name = f"{prefix}trial_{args.trial_id} zero_d_parameter_bars.png" if args.trial_id is not None else f"{prefix} zero_d_parameter_bars.png"
-                out_path = plot_zero_d_parameter_bars(modality_jsons, output_dir=output_subdir, output_name=out_name, verbose=verbose)
-                if out_path:
-                    print(f"    ✓ Saved zero-D parameter bar chart: {out_path}")
-                else:
-                    print(f"    ✗ Failed to create zero-D parameter bar chart for {geo_variant_name}")
-            except Exception as e:
-                print(f"    ✗ Error creating zero-D parameter bar chart for {geo_variant_name}: {e}")
-    
     if verbose:
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Done!")
-        print("="*60)
-        
-        for geo_variant_name, geo_variant_paths in geometry_variants.items():
-            print(f"\n{geo_variant_name.upper()} geometry:")
-            print(f"  Geometric input: {geo_variant_paths['geometric_input']}")
-            print(f"  Geometric simulation results: {geo_variant_paths['geometric_results']}")
-            
-            if not args.skip_calibration:
-                print(f"  Base calibration input: {geo_variant_paths['calibration_input']}")
-                print(f"  Junction type ({JUNCTION_TYPE}):")
-                print(f"    Calibration input: {geo_variant_paths['junction_types'][JUNCTION_TYPE]['calibration_input']}")
-                print(f"    Calibrated output: {geo_variant_paths['junction_types'][JUNCTION_TYPE]['calibrated_output']}")
-                print(f"    Simulation results: {geo_variant_paths['junction_types'][JUNCTION_TYPE]['calibrated_results']}")
-    
+        print("=" * 60)
+        geo_variant_paths = geometry_variants[args.geometry_variant]
+        jpaths = geo_variant_paths['junction_types'][JUNCTION_TYPE]
+        print(f"\n{args.geometry_variant.upper()} geometry:")
+        print(f"  Geometric input: {geo_variant_paths['geometric_input']}")
+        print(f"  Geometric simulation results: {geo_variant_paths['geometric_results']}")
+        if not args.skip_calibration:
+            print(f"  Base calibration input: {geo_variant_paths['calibration_input']}")
+            print(f"  Junction type ({JUNCTION_TYPE}):")
+            print(f"    Calibration input: {jpaths['calibration_input']}")
+            print(f"    Calibrated output: {jpaths['calibrated_output']}")
+            print(f"    Simulation results: {jpaths['calibrated_results']}")
+
     # Output generated files as JSON if --no-redo was used (for batch script to parse)
     if args.no_redo:
         print(json.dumps({"generated_files": generated_files}))

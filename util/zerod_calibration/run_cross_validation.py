@@ -30,7 +30,7 @@ from util.data_processing.generate_split_indices import (
 )
 from util.data_processing.data_dict_from_csvs import get_default_include_features
 from util.tools.basic import load_dict, save_dict
-from util.zerod_calibration.post_processing import calculate_mse_between_3d_and_0d
+from util.zerod_calibration.forward_mse import calculate_mse_between_3d_and_0d
 from util.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
     resolve_run_config_suffix,
@@ -679,6 +679,7 @@ def run_cross_validation(
             if nn_vessel:
                 cmd_deploy.append("--NN-vessel")
             cmd_deploy.extend(["--run-config", run_config_suffix])
+            cmd_deploy.extend(["--geometry-variant", geometry_variant])
             print(f"  Deploy on {val_geo}: {' '.join(cmd_deploy)}")
             result_deploy = subprocess.run(cmd_deploy, cwd=REPO_ROOT, text=True)
             if result_deploy.returncode != 0:
@@ -974,12 +975,8 @@ def regenerate_cv_metrics_from_existing(
             calculate_mse_between_3d_and_0d(
                 calibration_input,
                 csv_results_dict,
-                geometric_input_path=geometric_input if os.path.exists(geometric_input) else None,
-                zoom_start_idx=None,
-                zoom_end_idx=None,
                 output_csv_path=mse_csv_path,
                 verbose=False,
-                set_name=set_name,
             )
             print(f"  ✓ {val_geo}")
         except Exception as e:

@@ -25,7 +25,7 @@ For each junction we currently store:
 
 import json
 import numpy as np
-from util.zerod_calibration.file_io import read_centerline_vtp
+from util.zerod_calibration.tools.file_io import read_centerline_vtp
 import re
 
 

@@ -55,6 +55,8 @@ def resolve_namespace_run_config(ns: argparse.Namespace) -> str:
 
 
 DEFAULT_JUNCTION_TYPES = ["BloodVesselJunction"]
+DEFAULT_GEOMETRY_VARIANT = "bifurcations_EL"
+BIFURCATION_GEOMETRY_VARIANTS = frozenset({"bifurcations", "bifurcations_EL"})
 
 
 def add_generate_zerod_inputs_arguments(
@@ -85,6 +87,17 @@ def add_generate_zerod_inputs_arguments(
         ),
     )
     parser.add_argument(
+        "--geometry-variant",
+        default=DEFAULT_GEOMETRY_VARIANT,
+        choices=sorted(BIFURCATION_GEOMETRY_VARIANTS),
+        help=(
+            "Bifurcation geometry variant for ML prep and NN inference "
+            f"(default: {DEFAULT_GEOMETRY_VARIANT}). "
+            "Steps 3.5/3.7 use this variant only; Step 1 still builds both variants "
+            "for comparison when not skipped."
+        ),
+    )
+    parser.add_argument(
         "--skip-steps",
         default="",
         metavar="STEPS",
@@ -110,11 +123,6 @@ def add_generate_zerod_inputs_arguments(
         action="store_true",
         dest="NN_vessel",
         help="Also run vessel NN inference and forward sim (*_NN_JunctionAndVessel)",
-    )
-    parser.add_argument(
-        "--plot-junction-pressure-diff",
-        action="store_true",
-        help="Generate junction pressure difference plots (off by default)",
     )
     parser.add_argument(
         "--model-dir",
@@ -226,6 +234,7 @@ def namespace_to_generate_zerod_argv(
 
     suffix = getattr(ns, "run_config_suffix", None) or resolve_namespace_run_config(ns)
     cmd.extend(["--run-config", suffix])
+    cmd.extend(["--geometry-variant", getattr(ns, "geometry_variant", DEFAULT_GEOMETRY_VARIANT)])
 
     skip_steps_spec = (getattr(ns, "skip_steps", "") or "").strip()
     if skip_steps_spec:
@@ -236,7 +245,6 @@ def namespace_to_generate_zerod_argv(
         ("no_redo", "--no-redo"),
         ("NN_only", "--NN-only"),
         ("NN_vessel", "--NN-vessel"),
-        ("plot_junction_pressure_diff", "--plot-junction-pressure-diff"),
     ]
     for attr, flag in bool_flags:
         if getattr(ns, attr, False):

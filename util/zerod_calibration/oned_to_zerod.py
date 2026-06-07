@@ -9,9 +9,9 @@ import numpy as np
 import xml.etree.ElementTree as ET
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 import json
-from util.zerod_calibration.file_io import read_centerline_vtp
-from util.zerod_calibration.file_io import parse_simulation_xml
-from util.zerod_calibration.file_io import VMR_time_step_dict
+from util.zerod_calibration.tools.file_io import read_centerline_vtp
+from util.zerod_calibration.tools.file_io import parse_simulation_xml
+from util.zerod_calibration.tools.file_io import VMR_time_step_dict
 
 try:
     from scipy.interpolate import CubicSpline, interp1d
@@ -112,10 +112,6 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
             time_step_size = sim_params['time_step_size']
             print(f"  Found XML time_step_size: {time_step_size:.6f} s")
             print(f"  Timestep increment in solution: {timestep_increment}")
-    # If we are using a VMR type geometry, get the dt from dictionary
-    elif "priya" in centerline_soln_path:
-        time_step_size = 0.001
-        print(f"Assume Priya always uses a time step size of 0.001 s")
     elif 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
         time_step_size = VMR_time_step_dict[geometry_name]
@@ -417,7 +413,14 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     return observations
 
 
-def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0, derivative_method='central'):
+def extract_observations_from_1d_with_node_ids(
+    centerline_soln_path,
+    geometric_input_path,
+    geo_dir=None,
+    start_idx=0,
+    derivative_method='central',
+    cascade_split_connector_flows=True,
+):
     """
     Extract observation data from 1D centerline solution VTP file using centerline_node_ids.
     
@@ -431,6 +434,9 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
         geo_dir: Geometry directory containing XML file (optional, will try to infer from paths)
         start_idx: Starting index for observations (default: 0). Observations will be sliced from this index.
         derivative_method: Method for computing derivatives ('central', 'forward', or 'backward', default: 'forward').
+        cascade_split_connector_flows: If True (default), overwrite flow observations on split cascade
+            connectors (*_connector{N}) using mass conservation after node-based extraction.
+            Pressures remain node-based. Set False to use raw 1D flows at junction GIDs everywhere.
         
     Returns:
         Dictionary with observation data (y, dy) for calibration
@@ -494,9 +500,6 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
         if sim_params and 'time_step_size' in sim_params:
             time_step_size = sim_params['time_step_size']
             print(f"  Found XML time_step_size: {time_step_size:.6f} s")
-    elif "priya" in centerline_soln_path:
-        time_step_size = 0.001
-        print(f"Assume Priya always uses a time step size of 0.001 s")
     elif 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
         if geometry_name in VMR_time_step_dict:
@@ -669,6 +672,10 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
                     observations["y"][f"flow:{junc_name}:{vessel_name}"] = f_ref[start_idx:end_idx]
                     observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
     
+    if cascade_split_connector_flows:
+        from util.zerod_calibration.bifurcation_splitting import apply_split_connector_flow_cascade
+        observations = apply_split_connector_flow_cascade(observations, geometric_input)
+
     return observations
 
 

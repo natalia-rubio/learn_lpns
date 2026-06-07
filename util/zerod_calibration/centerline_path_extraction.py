@@ -25,7 +25,7 @@ import os
 import sys
 import numpy as np
 
-from util.zerod_calibration.file_io import read_centerline_vtp
+from util.zerod_calibration.tools.file_io import read_centerline_vtp
 
 
 def get_path_length_from_gid_list(gid_list, centerline_data):
