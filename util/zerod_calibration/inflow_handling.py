@@ -2,8 +2,8 @@ import os
 import json
 import numpy as np
 from scipy.interpolate import interp1d
-from util.zerod_calibration.file_io import read_centerline_vtp
-from util.zerod_calibration.file_io import parse_simulation_xml
+from util.zerod_calibration.tools.file_io import read_centerline_vtp
+from util.zerod_calibration.tools.file_io import parse_simulation_xml
 
 
 # def replace_inlet_bc_in_calibrated_output(calibrated_output_path, calibration_input_path):

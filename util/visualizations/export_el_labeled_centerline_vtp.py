@@ -41,7 +41,7 @@ try:
 except ImportError as e:
     raise SystemExit("VTK is required: pip install vtk") from e
 
-from util.zerod_calibration.file_io import read_centerline_vtp
+from util.zerod_calibration.tools.file_io import read_centerline_vtp
 
 
 def find_centerline_file(
@@ -51,7 +51,7 @@ def find_centerline_file(
     Find centerline VTP under data/oneD or data/threeD for a geometry.
 
     VMR cohort set names (e.g. VMR_rigid_aorta_adults) store 1D solutions under
-    data/oneD/VMR/{geo_name}/, matching ``file_io.get_paths`` and
+    data/oneD/VMR/{geo_name}/, matching ``tools.file_io.get_paths`` and
     ``generate_zerod_inputs.py``.
     """
     possible_paths = [

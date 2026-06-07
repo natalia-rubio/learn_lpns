@@ -20,7 +20,7 @@ repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if repo_dir not in sys.path:
     sys.path.insert(0, repo_dir)
 
-from util.zerod_calibration.post_processing import plot_zero_d_parameter_bars
+from util.visualizations.plot_zero_d_parameter_bars import plot_zero_d_parameter_bars
 
 
 def find_modality_jsons(data_dir):

@@ -23,6 +23,7 @@ from util.visualizations.cv_pressure_errors_to_latex import (
     format_modality_display_for_legend,
     MODALITY_DISPLAY,
 )
+from util.zerod_calibration.tools.file_io import read_zerod_csv
 
 # Suppress matplotlib warnings about redundant linestyle
 warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
@@ -423,57 +424,6 @@ def parse_location(location):
             return source, target, source, False, 'outlet'
         else:
             return source, target, target, True, 'inlet'
-
-
-def read_zerod_csv(csv_path):
-    """
-    Read 0D simulation results from CSV.
-    Handles both 'location' and 'name' as the vessel identifier column.
-    
-    Returns:
-        results: Dictionary {location: {time: {field: value}}}
-        times: Sorted list of time values
-    """
-    results = {}
-    times = set()
-    
-    if not os.path.exists(csv_path):
-        return results, sorted(times)
-    
-    with open(csv_path, 'r') as f:
-        reader = csv.DictReader(f)
-        # Check which column name is used for vessel identifier
-        fieldnames = reader.fieldnames
-        if fieldnames is None:
-            return results, sorted(times)
-        
-        vessel_col = None
-        if 'location' in fieldnames:
-            vessel_col = 'location'
-        elif 'name' in fieldnames:
-            vessel_col = 'name'
-        else:
-            return results, sorted(times)
-        
-        for row in reader:
-            location = row[vessel_col]
-            time = float(row['time'])
-            times.add(time)
-            
-            if location not in results:
-                results[location] = {}
-            if time not in results[location]:
-                results[location][time] = {}
-            
-            # Extract all numeric fields
-            for key, value in row.items():
-                if key not in [vessel_col, 'time']:
-                    try:
-                        results[location][time][key] = float(value)
-                    except (ValueError, TypeError):
-                        continue
-    
-    return results, sorted(times)
 
 
 def build_vessel_name_mapping(bifurcations_geometric_input_path, el_geometric_input_path):
