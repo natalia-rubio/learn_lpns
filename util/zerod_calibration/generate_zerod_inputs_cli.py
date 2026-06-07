@@ -119,6 +119,12 @@ def add_generate_zerod_inputs_arguments(
         help="Only NN inference + forward sim (skips observation and calibration)",
     )
     parser.add_argument(
+        "--plots-only",
+        action="store_true",
+        dest="plots_only",
+        help="Only Step 6 comparison plots (location + zero-D parameter bars); requires existing zeroD outputs",
+    )
+    parser.add_argument(
         "--NN-vessel",
         action="store_true",
         dest="NN_vessel",
@@ -199,7 +205,15 @@ def prepare_generate_zerod_namespace(ns: argparse.Namespace) -> str:
     """
     _init_skip_flags(ns)
     ns.junction_types = list(DEFAULT_JUNCTION_TYPES)
-    if getattr(ns, "NN_only", False):
+    if getattr(ns, "plots_only", False):
+        if getattr(ns, "NN_only", False):
+            raise SystemExit("--plots-only and --NN-only are mutually exclusive")
+        ns.skip_base_generation = True
+        ns.skip_observation = True
+        ns.skip_calibration = True
+        ns.skip_forward = True
+        ns.skip_mse_calculation = True
+    elif getattr(ns, "NN_only", False):
         ns.skip_observation = True
         ns.skip_calibration = True
     apply_skip_steps_to_namespace(ns)
@@ -209,7 +223,6 @@ def prepare_generate_zerod_namespace(ns: argparse.Namespace) -> str:
     ns.penalty_off = flags["penalty_off"]
     ns.symmetric_loss = flags["symmetric_loss"]
     ns.normalize = flags["normalize"]
-    ns.gen_loss = flags["gen_loss"]
     return suffix
 
 
@@ -244,6 +257,7 @@ def namespace_to_generate_zerod_argv(
         ("verbose", "--verbose"),
         ("no_redo", "--no-redo"),
         ("NN_only", "--NN-only"),
+        ("plots_only", "--plots-only"),
         ("NN_vessel", "--NN-vessel"),
     ]
     for attr, flag in bool_flags:

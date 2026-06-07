@@ -22,6 +22,37 @@ if REPO_ROOT not in sys.path:
 from util.tools.basic import load_dict, save_dict
 
 
+def _ml_inputs_dir(
+    ml_inputs_root: str,
+    set_name: str,
+    geometry_variant: str,
+    run_config_suffix: Optional[str] = None,
+) -> str:
+    if run_config_suffix:
+        return os.path.join(ml_inputs_root, set_name, run_config_suffix, geometry_variant)
+    return os.path.join(ml_inputs_root, set_name, geometry_variant)
+
+
+def list_ml_input_geometries(
+    ml_inputs_root: str,
+    set_name: str,
+    geometry_variant: str,
+    run_config_suffix: Optional[str] = None,
+) -> List[str]:
+    """Return sorted geometry folder names under ml_inputs that have geometric_features.csv."""
+    ml_inputs_dir = _ml_inputs_dir(ml_inputs_root, set_name, geometry_variant, run_config_suffix)
+    if not os.path.exists(ml_inputs_dir):
+        raise FileNotFoundError(f"ML inputs dir not found: {ml_inputs_dir}")
+    geometries = []
+    for geo_dir in glob.glob(os.path.join(ml_inputs_dir, "*")):
+        if not os.path.isdir(geo_dir):
+            continue
+        geo_name = os.path.basename(geo_dir)
+        if os.path.exists(os.path.join(geo_dir, "geometric_features.csv")):
+            geometries.append(geo_name)
+    return sorted(geometries)
+
+
 def get_geometry_row_ranges(
     ml_inputs_root: str,
     set_name: str,
@@ -35,24 +66,12 @@ def get_geometry_row_ranges(
     Geometries are in sorted order if discovered from disk.
     When run_config_suffix is set, ml_inputs path is .../set_name/run_config_suffix/geometry_variant/...
     """
-    if run_config_suffix:
-        ml_inputs_dir = os.path.join(ml_inputs_root, set_name, run_config_suffix, geometry_variant)
-        geom_csv_template = os.path.join(ml_inputs_root, set_name, run_config_suffix, geometry_variant, "%s", "geometric_features.csv")
-    else:
-        ml_inputs_dir = os.path.join(ml_inputs_root, set_name, geometry_variant)
-        geom_csv_template = os.path.join(ml_inputs_root, set_name, geometry_variant, "%s", "geometric_features.csv")
+    ml_inputs_dir = _ml_inputs_dir(ml_inputs_root, set_name, geometry_variant, run_config_suffix)
+    geom_csv_template = os.path.join(ml_inputs_dir, "%s", "geometric_features.csv")
     if geometries is None:
-        if not os.path.exists(ml_inputs_dir):
-            raise FileNotFoundError(f"ML inputs dir not found: {ml_inputs_dir}")
-        geometries = []
-        for geo_dir in glob.glob(os.path.join(ml_inputs_dir, "*")):
-            if not os.path.isdir(geo_dir):
-                continue
-            geo_name = os.path.basename(geo_dir)
-            gf = os.path.join(geo_dir, "geometric_features.csv")
-            if os.path.exists(gf):
-                geometries.append(geo_name)
-        geometries = sorted(geometries)
+        geometries = list_ml_input_geometries(
+            ml_inputs_root, set_name, geometry_variant, run_config_suffix
+        )
 
     row_ranges = []
     start = 0
@@ -71,45 +90,45 @@ def get_geometry_row_ranges(
 
 def resolve_geometry_row_ranges_from_jax_dict(
     data_dict: Dict[str, Any],
-    ml_inputs_root: str,
-    set_name: str,
-    geometry_variant: str,
-    run_config_suffix: Optional[str] = None,
-    geometries: Optional[List[str]] = None,
 ) -> Tuple[List[Tuple[int, int]], int, List[str]]:
     """
-    Prefer ``geometry_row_ranges`` / ``geometry_names_order`` stored in the junction jax pickle
-    (written by ``build_data_dict_from_csvs``) so row counts match the stacked arrays even when
-    on-disk ``geometric_features.csv`` line counts drift from a stale pickle.
+    Return ``geometry_row_ranges`` and ``geometry_names_order`` stored in the junction jax pickle.
 
-    Falls back to counting lines in ``geometric_features.csv`` per geometry (same as
-    :func:`get_geometry_row_ranges`). When falling back, ``geometries`` (if provided) fixes the
-    iteration order to match how the pickle was built (e.g. explicit ``--geometries``).
+    Raises if metadata is missing or does not match the stacked ``input`` array.
+    Re-run data processing to rebuild pickles written by the current pipeline.
     """
     inp = data_dict.get("input")
-    num_pts = int(np.asarray(inp).shape[0]) if inp is not None else 0
+    if inp is None:
+        raise ValueError("Jax pickle missing 'input' array.")
+    num_pts = int(np.asarray(inp).shape[0])
+
     stored_ranges = data_dict.get("geometry_row_ranges")
     stored_geoms = data_dict.get("geometry_names_order")
-    if (
-        isinstance(stored_ranges, list)
-        and isinstance(stored_geoms, list)
-        and len(stored_ranges) == len(stored_geoms)
-        and stored_ranges
-    ):
-        total = sum(int(e) - int(s) for s, e in stored_ranges)
-        if total == num_pts:
-            return (
-                [(int(s), int(e)) for s, e in stored_ranges],
-                total,
-                [str(g) for g in stored_geoms],
-            )
-    return get_geometry_row_ranges(
-        ml_inputs_root,
-        set_name,
-        geometry_variant,
-        geometries=geometries,
-        run_config_suffix=run_config_suffix,
-    )
+    if not isinstance(stored_ranges, list) or not stored_ranges:
+        raise ValueError(
+            "Jax pickle missing geometry_row_ranges. "
+            "Re-run data processing to rebuild the pickle."
+        )
+    if not isinstance(stored_geoms, list) or not stored_geoms:
+        raise ValueError(
+            "Jax pickle missing geometry_names_order. "
+            "Re-run data processing to rebuild the pickle."
+        )
+    if len(stored_ranges) != len(stored_geoms):
+        raise ValueError(
+            f"Jax pickle geometry_row_ranges length ({len(stored_ranges)}) "
+            f"does not match geometry_names_order ({len(stored_geoms)})."
+        )
+
+    row_ranges = [(int(s), int(e)) for s, e in stored_ranges]
+    geometries = [str(g) for g in stored_geoms]
+    total = sum(e - s for s, e in row_ranges)
+    if total != num_pts:
+        raise ValueError(
+            f"Jax pickle row count mismatch: geometry_row_ranges sum to {total} "
+            f"but input has {num_pts} rows. Delete the pickle and re-run data processing."
+        )
+    return row_ranges, total, geometries
 
 
 def generate_split_indices(
@@ -315,19 +334,11 @@ def main():
         raise ValueError(f"Expected 'input' in data_dict at {jax_arrays_path}")
     num_pts = int(np.asarray(data_dict["input"]).shape[0])
 
-    ml_inputs_root = os.path.join(args.data_root, "ml_inputs")
-    row_ranges, total_rows, geometries = resolve_geometry_row_ranges_from_jax_dict(
-        data_dict, ml_inputs_root, args.set_name, args.geometry_variant
-    )
+    row_ranges, total_rows, geometries = resolve_geometry_row_ranges_from_jax_dict(data_dict)
     if len(row_ranges) != args.num_geos:
         raise ValueError(
-            f"Geometry count mismatch: discovered {len(row_ranges)} geometries "
+            f"Geometry count mismatch: pickle lists {len(row_ranges)} geometries "
             f"but jax arrays were built with num_geos={args.num_geos}"
-        )
-    if total_rows != num_pts:
-        raise ValueError(
-            f"Row count mismatch: geometry row ranges sum to {total_rows} "
-            f"but jax array has {num_pts} rows"
         )
 
     train_geometries, val_geometries = generate_geometry_split(

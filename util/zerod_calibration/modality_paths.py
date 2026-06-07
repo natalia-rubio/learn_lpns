@@ -28,7 +28,14 @@ def nn_forward_sim_specs(base_dir, geo_variant_name, junction_type, nn_vessel):
     return specs
 
 
-def modality_csv_paths(geo_variant_paths, base_dir, geo_variant_name, junction_type, nn_vessel):
+def modality_csv_paths(
+    geo_variant_paths,
+    base_dir,
+    geo_variant_name,
+    junction_type,
+    nn_vessel,
+    extra_junction_types=(),
+):
     """Modality name -> forward results CSV (for MSE and location comparison plots)."""
     results = {}
     geometric_results = geo_variant_paths['geometric_results']
@@ -37,6 +44,12 @@ def modality_csv_paths(geo_variant_paths, base_dir, geo_variant_name, junction_t
     calibrated_results = geo_variant_paths['junction_types'][junction_type]['calibrated_results']
     if os.path.exists(calibrated_results):
         results[junction_type] = str(calibrated_results)
+    for extra_jtype in extra_junction_types:
+        if extra_jtype == junction_type:
+            continue
+        extra_results = geo_variant_paths['junction_types'][extra_jtype]['calibrated_results']
+        if os.path.exists(extra_results):
+            results[extra_jtype] = str(extra_results)
     if geo_variant_name in ('bifurcations', 'bifurcations_EL'):
         for modality_key, _, results_csv in nn_forward_sim_specs(
             base_dir, geo_variant_name, junction_type, nn_vessel,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
-_GEN_LOSS_SUFFIX = "_gen_loss"
+_GEN_LOSS_SUFFIX = "_gen_loss"  # on-disk path fragment; unchanged for existing data trees
 
 # Default ``--run-config`` path suffix for repo CLIs when omitted (under ``set_name``).
 DEFAULT_CLI_RUN_CONFIG = "stenosis_off_symmetric_gen_loss"
@@ -35,6 +35,8 @@ RUN_CONFIG_TOKENS: FrozenSet[str] = frozenset({
 
 RUN_CONFIG_ALIASES: Dict[str, str] = {
     "symmetric_loss": "symmetric",
+    # User token ``generation_weighted_loss`` → path token ``gen_loss`` (suffix ``_gen_loss``).
+    "generation_weighted_loss": "gen_loss",
 }
 
 CANONICAL_PHYSICS_ORDER: Tuple[str, ...] = (
@@ -142,22 +144,27 @@ def canonical_run_config_for_data_paths(run_config_suffix: Optional[str]) -> Opt
     return s
 
 
-def run_config_includes_gen_loss(run_config_suffix: Optional[str]) -> bool:
-    """True if the run-config suffix ends with ``_gen_loss``."""
+def run_config_suffix_has_generation_weighted_loss(run_config_suffix: Optional[str]) -> bool:
+    """True if the run-config path suffix ends with ``_gen_loss`` (generation-weighted training)."""
     if not run_config_suffix:
         return False
     return str(run_config_suffix).strip().endswith(_GEN_LOSS_SUFFIX)
 
 
+def run_config_includes_gen_loss(run_config_suffix: Optional[str]) -> bool:
+    """Deprecated alias for :func:`run_config_suffix_has_generation_weighted_loss`."""
+    return run_config_suffix_has_generation_weighted_loss(run_config_suffix)
+
+
 def run_config_suffix_to_flags(run_config_suffix: Any) -> Dict[str, bool]:
     """Derive boolean flags from a canonical run_config suffix string."""
     s_full = (run_config_suffix or "base").strip()
-    gen_loss = run_config_includes_gen_loss(s_full)
+    generation_weighted_loss = run_config_suffix_has_generation_weighted_loss(s_full)
     s = canonical_run_config_for_data_paths(s_full) or s_full
     return {
         "normalize": "normalized" in s,
         "stenosis_off": "stenosis_off" in s,
         "symmetric_loss": "symmetric" in s,
         "penalty_off": "penalty_off" in s,
-        "gen_loss": gen_loss,
+        "generation_weighted_loss": generation_weighted_loss,
     }

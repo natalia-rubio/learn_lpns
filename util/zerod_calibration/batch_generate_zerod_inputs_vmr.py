@@ -13,7 +13,6 @@ import os
 import sys
 import subprocess
 import json
-import glob
 import argparse
 from datetime import datetime
 
@@ -27,29 +26,9 @@ from util.zerod_calibration.generate_zerod_inputs_cli import (
     namespace_to_generate_zerod_argv,
     prepare_generate_zerod_namespace,
 )
+from util.zerod_calibration.tools.file_io import get_vmr_geometries
 
 DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS = 1000
-
-
-def get_vmr_geometries(richter_dir='data/zeroD/VMR/richter-0d'):
-    """Get list of valid VMR geometry names from richter-0d directory."""
-    richter_path = os.path.join(REPO_ROOT, richter_dir)
-    if not os.path.exists(richter_path):
-        raise FileNotFoundError(f"Richter-0d directory not found: {richter_path}")
-
-    json_files = sorted(glob.glob(os.path.join(richter_path, '*.json')))
-    geo_names = []
-
-    for json_file in json_files:
-        geo_name = os.path.basename(json_file).replace('.json', '')
-        try:
-            with open(json_file, 'r') as f:
-                json.load(f)
-            geo_names.append(geo_name)
-        except Exception as e:
-            print(f"  Warning: Skipping invalid JSON file {geo_name}: {e}")
-
-    return geo_names
 
 
 def load_previous_log(log_file_path):
