@@ -12,6 +12,8 @@ Outputs:
       - input_mean, input_std, output_mean, output_std (dataset stats; arrays stay raw)
       - generation, output_min, output_max
       - geometry_row_ranges, geometry_names_order
+      - row_junction_names, row_primary_outlet_names, outlet_vessel_ids, input_feature_names
+        (junction pickles only; used for deploy-time NN inference)
 
 This is intentionally "strict": missing columns raise ValueError.
 """
@@ -723,12 +725,18 @@ def _finalize_stacked_ml_data(
     run_config_suffix: Optional[str] = None,
     set_type: str = "all",
     data_root: str = "data",
+    row_junction_names: Optional[List[str]] = None,
+    row_primary_outlet_names: Optional[List[str]] = None,
+    outlet_vessel_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """Shared post-stack pipeline: clamp, validate, optional plots, summary CSV, JAX dict.
 
     Calls: :func:`_clamp_tortuosity`, :func:`_validate_no_nans`, :func:`_maybe_plot_histograms`,
     :func:`_compute_dataset_stats`, :func:`_write_data_summary_csv`.
     Called by: :func:`build_data_dict_from_csvs`, :func:`build_data_dict_from_vessel_csvs`.
+
+    When ``row_junction_names`` is provided (junction cohort only), per-row inference metadata
+    is validated and stored in the returned dict.
     """
     _clamp_tortuosity(input_array, feature_order)
     _validate_no_nans(
@@ -775,7 +783,22 @@ def _finalize_stacked_ml_data(
         summary_path=summary_path,
     )
 
-    return {
+    n_rows = int(input_array.shape[0])
+    if row_junction_names is not None:
+        if row_primary_outlet_names is None or outlet_vessel_ids is None:
+            raise ValueError(
+                "row_junction_names requires row_primary_outlet_names and outlet_vessel_ids"
+            )
+        if not (
+            len(row_junction_names) == len(row_primary_outlet_names) == len(outlet_vessel_ids) == n_rows
+        ):
+            raise ValueError(
+                f"Junction row metadata length mismatch: junctions={len(row_junction_names)}, "
+                f"outlets={len(row_primary_outlet_names)}, vessel_ids={len(outlet_vessel_ids)}, "
+                f"input rows={n_rows}"
+            )
+
+    result: Dict[str, Any] = {
         "input": jnp.asarray(input_array),
         OUTPUT_RRI_KEY: jnp.asarray(output_array),
         "generation": jnp.asarray(generation_array, dtype=jnp.float32),
@@ -788,6 +811,12 @@ def _finalize_stacked_ml_data(
         "geometry_row_ranges": geometry_row_ranges,
         "geometry_names_order": list(geometries),
     }
+    if row_junction_names is not None:
+        result["row_junction_names"] = list(row_junction_names)
+        result["row_primary_outlet_names"] = list(row_primary_outlet_names)
+        result["outlet_vessel_ids"] = [int(v) for v in outlet_vessel_ids]
+        result["input_feature_names"] = list(feature_order)
+    return result
 
 
 def build_data_dict_from_csvs(
@@ -825,6 +854,9 @@ def build_data_dict_from_csvs(
     row_offset = 0
     row_geo_names: List[str] = []
     row_instance_names: List[str] = []
+    row_junction_names: List[str] = []
+    row_primary_outlet_names: List[str] = []
+    all_outlet_vessel_ids: List[int] = []
 
     include_features = get_default_include_features()
     include_outputs = get_default_include_outputs()
@@ -846,29 +878,45 @@ def build_data_dict_from_csvs(
         gi = col_to_idx.get("generation")
         if gi is None:
             raise ValueError(f"Missing required column 'generation' in {features_csv_path}")
+        vid_idx = col_to_idx.get("outlet_vessel_id")
+        if vid_idx is None:
+            raise ValueError(f"Missing required column 'outlet_vessel_id' in {features_csv_path}")
         geo_gen = np.asarray(features_array[:, gi], dtype=float).ravel()
+        n_feature_rows = int(features_array.shape[0])
+        geo_outlet_vessel_ids = [int(features_array[i, vid_idx]) for i in range(n_feature_rows)]
 
-        if require_same_rows and features_array.shape[0] != lumped_params_array.shape[0]:
+        if require_same_rows and n_feature_rows != lumped_params_array.shape[0]:
             raise ValueError(
-                f"Row mismatch for geo {geo}: geometric_features has {features_array.shape[0]} rows, "
+                f"Row mismatch for geo {geo}: geometric_features has {n_feature_rows} rows, "
                 f"junction_lumped_parameters has {lumped_params_array.shape[0]} rows"
             )
 
         meta_csv = os.path.join(
             ml_inputs_root, set_name, geometry_variant, geo, "geometric_features_meta.csv"
         )
-        if os.path.exists(meta_csv):
-            with open(meta_csv, "r", newline="") as fm:
-                reader = csv.reader(fm)
-                next(reader, None)
-                for r in reader:
-                    if len(r) >= 2:
-                        row_geo_names.append(geo)
-                        row_instance_names.append(r[1])
-        else:
-            for _ in range(features_array.shape[0]):
-                row_geo_names.append(geo)
-                row_instance_names.append("unknown")
+        if not os.path.exists(meta_csv):
+            raise FileNotFoundError(
+                f"Missing geometric_features_meta.csv: {meta_csv}. Run data processing first."
+            )
+        geo_junction_names: List[str] = []
+        geo_primary_outlets: List[str] = []
+        with open(meta_csv, "r", newline="") as fm:
+            reader = csv.reader(fm)
+            next(reader, None)
+            for r in reader:
+                if len(r) >= 2:
+                    geo_junction_names.append(r[0])
+                    geo_primary_outlets.append(r[1])
+                    row_geo_names.append(geo)
+                    row_instance_names.append(r[1])
+        if len(geo_junction_names) != n_feature_rows:
+            raise ValueError(
+                f"Meta row count mismatch for geo {geo}: geometric_features_meta has "
+                f"{len(geo_junction_names)} rows, geometric_features has {n_feature_rows}"
+            )
+        row_junction_names.extend(geo_junction_names)
+        row_primary_outlet_names.extend(geo_primary_outlets)
+        all_outlet_vessel_ids.extend(geo_outlet_vessel_ids)
 
         filtered_features_array, selected_features = filter_features_from_array(
             features_array, features_header, include_features=include_features
@@ -915,6 +963,9 @@ def build_data_dict_from_csvs(
         geometry_row_ranges=geometry_row_ranges,
         row_geo_names=row_geo_names,
         row_instance_names=row_instance_names,
+        row_junction_names=row_junction_names,
+        row_primary_outlet_names=row_primary_outlet_names,
+        outlet_vessel_ids=all_outlet_vessel_ids,
         set_name=set_name,
         geometry_variant=geometry_variant,
         input_nan_msg=(
@@ -1064,6 +1115,69 @@ def build_data_dict_from_vessel_csvs(
     )
 
 
+def load_junction_rows_from_jax_dict(
+    data_dict: Dict[str, Any],
+    geo_name: Optional[str] = None,
+) -> Tuple[np.ndarray, List[str], List[str], List[int], List[str]]:
+    """
+    Load junction NN inputs and per-row metadata from a junction jax pickle.
+
+    When ``geo_name`` is set, slice rows for that geometry using ``geometry_row_ranges``.
+    Raises if required metadata keys are missing (re-run data processing to rebuild pickle).
+    """
+    inp = data_dict.get("input")
+    if inp is None:
+        raise ValueError("Jax pickle missing 'input' array.")
+
+    for key in (
+        "row_junction_names",
+        "row_primary_outlet_names",
+        "outlet_vessel_ids",
+        "input_feature_names",
+        "geometry_row_ranges",
+        "geometry_names_order",
+    ):
+        if key not in data_dict:
+            raise ValueError(
+                f"Jax pickle missing {key!r}. Re-run data processing to rebuild the pickle."
+            )
+
+    n_rows = int(np.asarray(inp).shape[0])
+    junction_names = [str(g) for g in data_dict["row_junction_names"]]
+    outlet_primary_names = [str(g) for g in data_dict["row_primary_outlet_names"]]
+    outlet_vessel_ids = [int(v) for v in data_dict["outlet_vessel_ids"]]
+    feature_names = [str(f) for f in data_dict["input_feature_names"]]
+
+    if not (
+        len(junction_names) == len(outlet_primary_names) == len(outlet_vessel_ids) == n_rows
+    ):
+        raise ValueError(
+            f"Jax pickle row metadata length mismatch: junctions={len(junction_names)}, "
+            f"outlets={len(outlet_primary_names)}, vessel_ids={len(outlet_vessel_ids)}, "
+            f"input rows={n_rows}. Re-run data processing."
+        )
+
+    start, end = 0, n_rows
+    if geo_name is not None:
+        geoms = [str(g) for g in data_dict["geometry_names_order"]]
+        ranges = data_dict["geometry_row_ranges"]
+        if geo_name not in geoms:
+            raise ValueError(
+                f"Geometry {geo_name!r} not in jax pickle geometry_names_order: {geoms}"
+            )
+        gi = geoms.index(geo_name)
+        start, end = int(ranges[gi][0]), int(ranges[gi][1])
+
+    X = np.asarray(inp, dtype=float)[start:end]
+    return (
+        X,
+        junction_names[start:end],
+        outlet_primary_names[start:end],
+        outlet_vessel_ids[start:end],
+        feature_names,
+    )
+
+
 __all__ = [
     "build_data_dict_from_csvs",
     "build_data_dict_from_vessel_csvs",
@@ -1074,6 +1188,7 @@ __all__ = [
     "get_default_include_outputs_vessel",
     "filter_features_from_array",
     "filter_outputs_from_array",
+    "load_junction_rows_from_jax_dict",
     "plot_feature_histograms",
     "plot_lumped_param_histograms",
     "_read_csv_matrix",

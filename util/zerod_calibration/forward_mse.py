@@ -123,6 +123,45 @@ _MSE_SUMMARY_ROWS = (
     ('Mean Flow Max Rel Error', 'mean_flow_max_rel_error', '.4f'),
 )
 
+MSE_METRIC_KEYS = tuple(key for _, key, _ in _MSE_SUMMARY_ROWS)
+_MSE_ROW_NAME_TO_KEY = {label: key for label, key, _ in _MSE_SUMMARY_ROWS}
+
+
+def parse_mse_comparison_csv(csv_path):
+    """Parse MSE comparison CSV; return dict modality -> dict metric_key -> float."""
+    result = {}
+    if not os.path.exists(csv_path):
+        return result
+    with open(csv_path, "r", newline="") as f:
+        reader = csv.reader(f)
+        in_summary = False
+        header = None
+        for row in reader:
+            if not row:
+                continue
+            if row[0] == "Summary Statistics":
+                in_summary = True
+                continue
+            if in_summary and header is None:
+                header = row
+                continue
+            if in_summary and header is not None:
+                metric_key = _MSE_ROW_NAME_TO_KEY.get(row[0])
+                if metric_key is not None:
+                    for i, mod in enumerate(header[1:], start=1):
+                        if mod not in result:
+                            result[mod] = {}
+                        if i < len(row) and row[i].strip() not in ("", "N/A"):
+                            try:
+                                result[mod][metric_key] = float(row[i])
+                            except ValueError:
+                                result[mod][metric_key] = np.nan
+                        else:
+                            result[mod][metric_key] = np.nan
+                if row[0] == "Detailed Results":
+                    break
+    return result
+
 
 def _load_mse_obs_3d(calib_data):
     full = calib_data.get('_full_observations', {})

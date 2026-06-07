@@ -54,22 +54,33 @@ class NeuralNet():
         n_rows = int(self.input.shape[0])
         # Bifurcation generation per row (for optional loss weighting); not an input feature
         graw = self.data_dict.get("generation")
-        self.gen_loss = bool(network_params.get("gen_loss", False))
+        self.generation_weighted_loss = bool(
+            network_params.get(
+                "generation_weighted_loss",
+                network_params.get("gen_loss", False),
+            )
+        )
         if graw is not None:
             garr = jnp.asarray(graw, dtype=jnp.float32).reshape(n_rows)
-        elif self.gen_loss:
+        elif self.generation_weighted_loss:
             raise ValueError(
-                "gen_loss is enabled but jax pickle has no 'generation' array. "
+                "generation_weighted_loss is enabled but jax pickle has no 'generation' array. "
                 "Re-run run_data_processing so geometric CSVs include generation."
             )
         else:
             garr = jnp.zeros((n_rows,), dtype=jnp.float32)
         self._generation_full = garr
-        # Per-sample weight = gen_loss_scale * 2^(-generation): smaller generation -> larger weight
-        self.gen_loss_scale = float(network_params.get("gen_loss_scale", 1.0))
-        if self.gen_loss:
+        # Per-sample weight = scale / 2^generation: smaller generation -> larger weight
+        self.generation_weighted_loss_scale = float(
+            network_params.get(
+                "generation_weighted_loss_scale",
+                network_params.get("gen_loss_scale", 1.0),
+            )
+        )
+        if self.generation_weighted_loss:
             print(
-                f"  gen_loss: ON  (sample weight = {self.gen_loss_scale} / 2^generation); "
+                f"  generation_weighted_loss: ON  "
+                f"(sample weight = {self.generation_weighted_loss_scale} / 2^generation); "
                 f"generation rows={n_rows}"
             )
         
@@ -90,10 +101,10 @@ class NeuralNet():
         """Compute gradients of loss w.r.t. weights for the given batch (no update)."""
         #print(f" Overestimate weight: {self.asymmetric_loss_overestimate_weight}")
         idx = jnp.asarray(indices)
-        if self.gen_loss:
+        if self.generation_weighted_loss:
             gen_b = self._generation_full[idx]
             # Emphasize proximal (low generation): weight decays by half per bifurcation level
-            sample_w = self.gen_loss_scale / jnp.power(2.0, gen_b)
+            sample_w = self.generation_weighted_loss_scale / jnp.power(2.0, gen_b)
         else:
             sample_w = jnp.ones((idx.shape[0],), dtype=jnp.float32)
         return grad(loss, argnums=-3)(

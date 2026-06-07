@@ -73,8 +73,8 @@ def _build_training_params_for_modality(
     jax_path: str,
     output_type: str,
     symmetric_loss_eff: bool,
-    gen_loss_eff: bool,
-    gen_loss_scale: float,
+    generation_weighted_loss_eff: bool,
+    generation_weighted_loss_scale: float,
     leaky_relu: bool,
     model_dir: str | None,
 ) -> tuple[dict, dict]:
@@ -119,8 +119,8 @@ def _build_training_params_for_modality(
         "model_name_suffix": model_name_suffix,
         "asymmetric_loss_overestimate_weight": 1.0,
         "symmetric_loss": symmetric_loss_eff,
-        "gen_loss": gen_loss_eff,
-        "gen_loss_scale": gen_loss_scale,
+        "generation_weighted_loss": generation_weighted_loss_eff,
+        "generation_weighted_loss_scale": generation_weighted_loss_scale,
     }
     if vessel:
         network_params["jax_arrays_filename"] = os.path.basename(jax_path)
@@ -255,18 +255,21 @@ if __name__ == "__main__":
         "Default: %(default)s. Pass an empty string only for legacy layouts without a run-config subfolder.",
     )
     parser.add_argument(
-        "--gen-loss",
+        "--generation_weighted_loss",
         action="store_true",
-        dest="gen_loss",
-        help="Weight training loss by bifurcation generation: weight = scale / 2^generation (larger weight for smaller generation; requires generation in jax pkl).",
+        dest="generation_weighted_loss",
+        help=(
+            "Weight training loss by bifurcation generation: weight = scale / 2^generation "
+            "(larger weight for smaller generation; requires generation in jax pkl)."
+        ),
     )
     parser.add_argument(
-        "--gen-loss-scale",
+        "--generation_weighted_loss_scale",
         type=float,
         default=1.0,
-        dest="gen_loss_scale",
+        dest="generation_weighted_loss_scale",
         metavar="S",
-        help="Overall multiplier for gen loss weights (default: 1.0 gives weight 1/2^gen).",
+        help="Overall multiplier for generation-weighted loss (default: 1.0 gives weight 1/2^gen).",
     )
     cli_args = parser.parse_args()
 
@@ -281,10 +284,12 @@ if __name__ == "__main__":
     if run_config_raw:
         rc_flags = run_config_suffix_to_flags(run_config_raw)
         symmetric_loss_eff = bool(cli_args.symmetric_loss or rc_flags["symmetric_loss"])
-        gen_loss_eff = bool(cli_args.gen_loss or rc_flags["gen_loss"])
+        generation_weighted_loss_eff = bool(
+            cli_args.generation_weighted_loss or rc_flags["generation_weighted_loss"]
+        )
     else:
         symmetric_loss_eff = bool(cli_args.symmetric_loss)
-        gen_loss_eff = bool(cli_args.gen_loss)
+        generation_weighted_loss_eff = bool(cli_args.generation_weighted_loss)
     output_type = "rri"
     set_type = "all"
     data_root = "data"
@@ -301,10 +306,10 @@ if __name__ == "__main__":
         print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}")
         if symmetric_loss_eff:
             print("Symmetric loss: overestimate weight = 1.0 for all models")
-        if gen_loss_eff:
+        if generation_weighted_loss_eff:
             print(
-                f"Generation-weighted loss: ON (scale={float(cli_args.gen_loss_scale):g}; "
-                f"from --gen-loss and/or --run-config ..._gen_loss)"
+                f"Generation-weighted loss: ON (scale={float(cli_args.generation_weighted_loss_scale):g}; "
+                f"from --generation_weighted_loss and/or --run-config ..._gen_loss)"
             )
         print(f"{'='*80}")
         
@@ -336,8 +341,10 @@ if __name__ == "__main__":
             jax_path=jax_path,
             output_type=output_type,
             symmetric_loss_eff=symmetric_loss_eff,
-            gen_loss_eff=gen_loss_eff,
-            gen_loss_scale=float(getattr(cli_args, "gen_loss_scale", 1.0)),
+            generation_weighted_loss_eff=generation_weighted_loss_eff,
+            generation_weighted_loss_scale=float(
+                getattr(cli_args, "generation_weighted_loss_scale", 1.0)
+            ),
             leaky_relu=getattr(cli_args, "leaky_relu", False),
             model_dir=cli_args.model_dir,
         )

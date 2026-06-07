@@ -13,7 +13,6 @@ def modify_junction_types(config, junction_type):
     Returns:
         Modified config dictionary
     """
-    import copy
     config_modified = copy.deepcopy(config)
     
     # Update junctions based on number of outlets

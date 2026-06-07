@@ -1,6 +1,7 @@
 import os
 import json
 import csv
+import glob
 import numpy as np
 import xml.etree.ElementTree as ET
 import vtk
@@ -268,48 +269,6 @@ def get_time_period(set_name, geo_name):
                 pass
     
     return None
-    
-def read_flow_file(flow_path):
-    """
-    Read flow file (.flow format).
-    
-    Format:
-    First line: number_of_points (optional)
-    Subsequent lines: time    flow_value
-    
-    Returns:
-        tuple (times, flows) as lists
-    """
-    times = []
-    flows = []
-    
-    try:
-        with open(flow_path, 'r') as f:
-            lines = f.readlines()
-            
-            # Skip first line if it's just a number
-            start_idx = 0
-            if len(lines) > 0:
-                first_line = lines[0].strip().split()
-                if len(first_line) == 1 or (len(first_line) == 2 and first_line[0].isdigit()):
-                    start_idx = 1
-            
-            for line in lines[start_idx:]:
-                parts = line.strip().split()
-                if len(parts) >= 2:
-                    try:
-                        time = float(parts[0])
-                        flow = float(parts[1])
-                        times.append(time)
-                        flows.append(flow)
-                    except ValueError:
-                        continue
-        
-        return times, flows
-    except Exception as e:
-        print(f"Warning: Could not read flow file {flow_path}: {e}")
-        return None, None
-
 
 
 def read_centerline_vtp(centerline_path):
@@ -368,63 +327,6 @@ def convert_numpy_to_list(obj):
     else:
         return obj
 
-
-
-def convert_simulation_results_to_csv(sim_results, output_csv_path):
-    """
-    Convert pysvzerod simulation results to CSV format.
-    
-    Args:
-        sim_results: Dictionary returned by pysvzerod.simulate()
-        output_csv_path: Path to save CSV file
-        
-    Returns:
-        Path to saved CSV file
-    """
-    import csv
-    
-    # CSV format: location, time, flow_in, flow_out, pressure_in, pressure_out
-    rows = []
-    rows.append(["location", "time", "flow_in", "flow_out", "pressure_in", "pressure_out"])
-    
-    # Extract data from simulation results
-    # Results are typically arrays where each index corresponds to a (vessel, time) pair
-    if 'name' in sim_results and 'time' in sim_results:
-        names = np.array(sim_results['name']) if isinstance(sim_results['name'], list) else sim_results['name']
-        times = np.array(sim_results['time']) if isinstance(sim_results['time'], list) else sim_results['time']
-        flow_in = np.array(sim_results.get('flow_in', [])) if isinstance(sim_results.get('flow_in', []), list) else sim_results.get('flow_in', np.array([]))
-        flow_out = np.array(sim_results.get('flow_out', [])) if isinstance(sim_results.get('flow_out', []), list) else sim_results.get('flow_out', np.array([]))
-        pressure_in = np.array(sim_results.get('pressure_in', [])) if isinstance(sim_results.get('pressure_in', []), list) else sim_results.get('pressure_in', np.array([]))
-        pressure_out = np.array(sim_results.get('pressure_out', [])) if isinstance(sim_results.get('pressure_out', []), list) else sim_results.get('pressure_out', np.array([]))
-        
-        # Convert to numpy arrays for easier handling
-        if not isinstance(names, np.ndarray):
-            names = np.array(names)
-        if not isinstance(times, np.ndarray):
-            times = np.array(times)
-        
-        # Write all data points
-        num_points = len(names) if len(names) > 0 else len(times)
-        for i in range(num_points):
-            if i < len(names) and i < len(times):
-                row = [
-                    str(names[i]) if i < len(names) else "unknown",
-                    str(float(times[i])) if i < len(times) else "0.0",
-                    str(float(flow_in[i])) if i < len(flow_in) else "0.0",
-                    str(float(flow_out[i])) if i < len(flow_out) else "0.0",
-                    str(float(pressure_in[i])) if i < len(pressure_in) else "0.0",
-                    str(float(pressure_out[i])) if i < len(pressure_out) else "0.0"
-                ]
-                rows.append(row)
-    
-    # Write CSV file
-    os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
-    with open(output_csv_path, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerows(rows)
-    
-    print(f"Simulation results saved to: {output_csv_path}")
-    return output_csv_path
 
 def timestep_from_1D(centerline_soln_path, geo_dir):
     """
@@ -488,7 +390,7 @@ def timestep_from_1D(centerline_soln_path, geo_dir):
     return time_step_size
 
 def get_paths(base_dir, args):
-# Define geometry variants: original, bifurcations-only, and bifurcations_EL
+    """Build geometry variant paths, resolve centerline, and return geo_dir."""
     geometry_variants = {
         'original': {
             'geometric_input': os.path.join(base_dir, 'geometric_input.json'),
@@ -520,47 +422,53 @@ def get_paths(base_dir, args):
                 'calibrated_results': os.path.join(base_dir, f'{prefix}calibrated_results_{jtype}.csv')
             }
     
-    # Legacy paths for backward compatibility
-    geometric_input_path = geometry_variants['original']['geometric_input']
-    geometric_results_csv = geometry_variants['original']['geometric_results']
-    calibration_input_path = geometry_variants['original']['calibration_input']
-    calibrated_output_path = os.path.join(base_dir, 'calibrated_output.json')
-    
-    # Paths for each junction type variant (original geometry - for backward compatibility)
-    junction_type_paths = geometry_variants['original']['junction_types']
-    
-
-    # Auto-detect (following generate_multiple_trees.py convention)
     geo_dir = os.path.join('data', 'threeD', args.set_name, args.geo_name)
     centerline_paths = [
-        os.path.join(geo_dir, 'centerlines_simVascular.vtp'),  # svVascularize format
+        os.path.join(geo_dir, 'centerlines_simVascular.vtp'),
         os.path.join(geo_dir, 'centerlines', 'centerlines.vtp'),
         os.path.join(geo_dir, 'centerlines.vtp'),
     ]
-
+    oneD_soln_paths = [
+        os.path.join('data', 'oneD', args.set_name, args.geo_name, 'unsteady_soln.vtp'),
+    ]
+    if 'VMR' in args.set_name:
+        oneD_soln_paths.append(
+            os.path.join('data', 'oneD', 'VMR', args.geo_name, 'unsteady_soln.vtp'),
+        )
 
     centerline_path = None
     for path in centerline_paths:
         if os.path.exists(path):
             centerline_path = path
             break
-        
-        # If not found in 3D directory, try 1D solution (for VMR files)
-        oneD_soln_paths = []
-        if centerline_path is None:
-            oneD_dir = os.path.join('data', 'oneD', args.set_name, args.geo_name)
-            oneD_soln_paths.append(os.path.join(oneD_dir, 'unsteady_soln.vtp'))
-            # if this is a VMR set type, try to find the centerline in the VMR oneD directory
-            if 'VMR' in args.set_name:
-                oneD_dir = os.path.join('data', 'oneD', "VMR", args.geo_name)
-                oneD_soln_paths.append(os.path.join(oneD_dir, 'unsteady_soln.vtp'))
-            for path in oneD_soln_paths:
-                if os.path.exists(path):
-                    centerline_path = path
-                    print(f"  Using 1D solution as centerline source: {centerline_path}")
-                    break
-        
-        if centerline_path is None:
-            all_paths = centerline_paths + oneD_soln_paths
-            raise FileNotFoundError(f"Centerline file not found. Tried: {all_paths}")
-    return geometry_variants, geometric_input_path, geometric_results_csv, calibration_input_path, calibrated_output_path, junction_type_paths, centerline_path, geo_dir
+
+    if centerline_path is None:
+        for path in oneD_soln_paths:
+            if os.path.exists(path):
+                centerline_path = path
+                print(f"  Using 1D solution as centerline source: {centerline_path}")
+                break
+
+    if centerline_path is None:
+        raise FileNotFoundError(
+            f"Centerline file not found. Tried: {centerline_paths + oneD_soln_paths}"
+        )
+
+    return geometry_variants, centerline_path, geo_dir
+
+
+def get_vmr_geometries(richter_dir='data/zeroD/VMR/richter-0d'):
+    """Get list of valid VMR geometry names from a richter-0d directory."""
+    if not os.path.exists(richter_dir):
+        raise FileNotFoundError(f"Richter-0d directory not found: {richter_dir}")
+
+    geo_names = []
+    for json_file in sorted(glob.glob(os.path.join(richter_dir, '*.json'))):
+        geo_name = os.path.basename(json_file).replace('.json', '')
+        try:
+            with open(json_file, 'r') as f:
+                json.load(f)
+            geo_names.append(geo_name)
+        except Exception as e:
+            print(f"  Warning: Skipping invalid JSON file {geo_name}: {e}")
+    return geo_names

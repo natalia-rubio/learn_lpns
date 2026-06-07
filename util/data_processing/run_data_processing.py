@@ -370,14 +370,7 @@ def main():
             if "input" not in data_dict:
                 raise ValueError("Expected 'input' in data_dict")
             num_pts = int(getattr(data_dict["input"], "shape")[0])
-            row_ranges, _, geometries_ordered = resolve_geometry_row_ranges_from_jax_dict(
-                data_dict,
-                os.path.join(args.data_root, "ml_inputs"),
-                args.set_name,
-                geometry_variant,
-                run_config_suffix=run_config_suffix,
-                geometries=geometries,
-            )
+            row_ranges, _, geometries_ordered = resolve_geometry_row_ranges_from_jax_dict(data_dict)
             train_geometries, val_geometries = generate_geometry_split(
                 args.percent_train, args.seed, geometries_ordered
             )
