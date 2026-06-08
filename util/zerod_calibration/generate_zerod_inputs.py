@@ -157,14 +157,14 @@ def main():
         
         if not skip_base:
             if 'VMR' in args.set_name:
-                richter_0d_path = os.path.join('data', 'zeroD', args.set_name, 'richter-0d', args.geo_name+'.json')
-                zerod_input = load_from_json(richter_0d_path)
+                std_json_path = standard_0d_json_path("data", args.set_name, args.geo_name)
+                zerod_input = load_from_json(std_json_path)
                 zerod_input['simulation_parameters']['output_all_cycles'] = True
                 zerod_input['simulation_parameters']['number_of_cardiac_cycles'] = 1
                 os.makedirs(os.path.dirname(geometric_input_path), exist_ok=True)
                 save_to_json(zerod_input, geometric_input_path)
                 generated_files.append(geometric_input_path)
-                print(f"    ✓ Richter 0D input saved to: {geometric_input_path}")
+                print(f"    ✓ Standard 0D input saved to: {geometric_input_path}")
             else:
                 print("\n" + "="*60)
                 print("Step 1: Creating geometric 0D input file using SimVascular ROM")

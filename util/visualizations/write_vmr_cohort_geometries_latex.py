@@ -25,6 +25,8 @@ import csv
 import os
 from typing import Dict, List, Sequence
 
+from util.zerod_calibration.tools.file_io import STANDARD_0D_SUBDIR
+
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 # Internal folder names used under data/zeroD/ and results/
@@ -46,7 +48,7 @@ SET_NAME_ALIASES: Dict[str, str] = {
     "VMR_pulmonary_healthy": "VMR_pulmo_healthy",
 }
 
-# Prefer run-config subfolders that contain per-geometry directories (not only richter-0d JSON).
+# Prefer run-config subfolders that contain per-geometry directories (not only standard-0d JSON).
 RUN_CONFIG_DIR_PREFERENCE: Sequence[str] = (
     "gen_loss",
     "quadratic_resistor_penalty_on_gen_loss",
@@ -110,11 +112,11 @@ def discover_geometry_legacy_names(set_name: str, zero_d_root: str) -> List[str]
         if names:
             return names
 
-    richter = os.path.join(set_dir, "richter-0d")
-    if os.path.isdir(richter):
+    std_0d = os.path.join(set_dir, STANDARD_0D_SUBDIR)
+    if os.path.isdir(std_0d):
         out = sorted(
             os.path.splitext(x)[0]
-            for x in os.listdir(richter)
+            for x in os.listdir(std_0d)
             if x.endswith(".json") and not x.startswith(".")
         )
         if out:
@@ -122,7 +124,7 @@ def discover_geometry_legacy_names(set_name: str, zero_d_root: str) -> List[str]
 
     raise FileNotFoundError(
         f"No geometry directories found under {set_dir} "
-        f"(tried run configs {list(RUN_CONFIG_DIR_PREFERENCE)} and richter-0d/*.json)"
+        f"(tried run configs {list(RUN_CONFIG_DIR_PREFERENCE)} and {STANDARD_0D_SUBDIR}/*.json)"
     )
 
 
