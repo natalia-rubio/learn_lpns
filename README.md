@@ -20,7 +20,9 @@ Clone the repository and work from the repo root so imports like `util.*` resolv
 **One-shot setup** (clone/build svZeroDPlus, Python venv, verify sample data):
 
 ```bash
-./scripts/setup_cross_validation.sh
+# macOS: install cmake + Python 3.10+ first (Xcode python3 is often 3.9)
+brew install cmake python@3.12
+PYTHON=$(brew --prefix python@3.12)/bin/python3.12 ./scripts/setup_cross_validation.sh
 source scripts/cv_env.sh
 ```
 
