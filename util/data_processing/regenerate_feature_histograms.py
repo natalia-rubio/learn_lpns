@@ -5,13 +5,13 @@ Regenerate feature histogram figures for a given set and run config.
 Reads ML input CSVs from data/ml_inputs/{set_name}/{run_config}/{geometry_variant}/
 and saves histograms to data/feature_histograms/{set_name}/{run_config}/{geometry_variant}/{set_type}/.
 
-Example (symmetric_penalty_off_gen_loss for VMR_rigid_aorta_adults, both geometry variants):
+Example (quadratic_resistor_penalty_on_gen_loss for VMR_rigid_aorta_adults, both geometry variants):
   python -m util.data_processing.regenerate_feature_histograms VMR_rigid_aorta_adults \\
-      --run-config symmetric_penalty_off_gen_loss
+      --run_config quadratic_resistor_penalty_on_gen_loss
 
 Example (single geometry variant):
   python -m util.data_processing.regenerate_feature_histograms VMR_rigid_aorta_adults \\
-      --run-config base --geometry-variant bifurcations
+      --run_config base --geometry_variant bifurcations
 """
 
 import argparse
@@ -38,29 +38,29 @@ def main():
         help="Set name; must match directory under data/ml_inputs/ (e.g., VMR_rigid_aorta_adults)",
     )
     parser.add_argument(
-        "--run-config",
+        "--run_config",
         default=None,
         help="Run config suffix; CSVs read from data/ml_inputs/{set_name}/{run_config}/... "
         "(omit for legacy layouts without a config subfolder)",
     )
     parser.add_argument(
-        "--geometry-variant",
+        "--geometry_variant",
         default="all",
         choices=["bifurcations", "bifurcations_EL", "all"],
         help="Geometry variant(s) to process (default: all)",
     )
     parser.add_argument(
-        "--set-type",
+        "--set_type",
         default="all",
         help="Cohort folder tier (default: all; matches jax_arrays layout)",
     )
     parser.add_argument(
-        "--data-root",
+        "--data_root",
         default="data",
         help="Repo data root (default: data)",
     )
     parser.add_argument(
-        "-o", "--output-dir",
+        "-o", "--output_dir",
         default=None,
         help="Override histogram output directory (default: data/feature_histograms/... "
         "mirroring jax_arrays path)",

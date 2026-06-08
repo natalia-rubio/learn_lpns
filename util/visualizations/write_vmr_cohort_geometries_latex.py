@@ -48,11 +48,9 @@ SET_NAME_ALIASES: Dict[str, str] = {
 
 # Prefer run-config subfolders that contain per-geometry directories (not only richter-0d JSON).
 RUN_CONFIG_DIR_PREFERENCE: Sequence[str] = (
-    "stenosis_off_symmetric",
-    "stenosis_off_symmetric_gen_loss",
-    "symmetric_penalty_off_gen_loss",
-    "stenosis_off",
-    "symmetric_penalty_off",
+    "gen_loss",
+    "quadratic_resistor_penalty_on_gen_loss",
+    "quadratic_resistor_gen_loss",
     "base",
 )
 
@@ -199,7 +197,7 @@ def main() -> None:
         help="Output .tex path (default: results/vmr_cohort_geometries.tex under repo root)",
     )
     parser.add_argument(
-        "--zero-d-root",
+        "--zero_d_root",
         default=os.path.join(REPO_ROOT, "data", "zeroD"),
         help="Root directory containing VMR_* set folders",
     )

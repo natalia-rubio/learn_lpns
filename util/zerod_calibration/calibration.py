@@ -15,23 +15,31 @@ SET_L2_PENALTIES = {
 }
 
 
-def create_calibration_input(geometric_input_path, observations, output_path, centerline_soln_path=None, geo_dir=None, stenosis_off=False, penalty_off=False, set_name=None):
+def create_calibration_input(
+    geometric_input_path,
+    observations,
+    output_path,
+    centerline_soln_path=None,
+    geo_dir=None,
+    quadratic_resistor=False,
+    penalty_on=False,
+    set_name=None,
+):
     """
     Create calibration input file from geometric input and observations.
     Computes BC times from 1D solution timesteps multiplied by timestep size from XML.
-    
+
     Args:
         geometric_input_path: Path to geometric 0D input JSON
         observations: Dictionary with observation data (y, dy)
         output_path: Path to save calibration input JSON
         centerline_soln_path: Path to 1D centerline solution VTP (to extract timestep count)
         geo_dir: Geometry directory (to find XML file for timestep size)
-        stenosis_off: If True, set calibrate_stenosis_coefficient False and set all stenosis to 0
-        penalty_off: If True (and stenosis_off is False), set L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient to 0. Incompatible with stenosis_off.
-        set_name: Optional set name (e.g. VMR_abdo) used to look up set-specific L2 penalties from SET_L2_PENALTIES; unlisted sets use defaults.
+        quadratic_resistor: If True, calibrate stenosis (quadratic resistor) coefficient
+        penalty_on: If True (requires quadratic_resistor), use set-specific L2 penalties
+            on R_poiseuille and stenosis_coefficient during calibration
+        set_name: Optional set name (e.g. VMR_abdo) used to look up set-specific L2 penalties
     """
-    if stenosis_off and penalty_off:
-        raise ValueError("Cannot use both --stenosis-off and --penalty-off.")
     print(f"Reading geometric input from: {geometric_input_path}")
     with open(geometric_input_path, 'r') as f:
         inp = json.load(f)
@@ -77,8 +85,7 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
     # Keep geometric parameters (R_poiseuille, C, L, stenosis_coefficient) from geometric input
     # These will serve as initial values for calibration
 
-    # Stenosis-off mode: do not calibrate stenosis and set all stenosis coefficients to 0
-    if stenosis_off:
+    if not quadratic_resistor:
         for v in inp.get("vessels", []):
             if "zero_d_element_values" in v and "stenosis_coefficient" in v["zero_d_element_values"]:
                 v["zero_d_element_values"]["stenosis_coefficient"] = 0.0
@@ -87,23 +94,28 @@ def create_calibration_input(geometric_input_path, observations, output_path, ce
                 sv = j["junction_values"]["stenosis_coefficient"]
                 n_out = len(sv) if isinstance(sv, list) else 1
                 j["junction_values"]["stenosis_coefficient"] = [0.0] * n_out
-        print("  Stenosis-off: all stenosis coefficients set to 0, calibrate_stenosis_coefficient=False, L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
-    
-    # Add calibration parameters: L2 penalties depend on set_name when not penalty_off/stenosis_off
-    if stenosis_off or penalty_off:
-        l2_R = 0.0
-        l2_stenosis = 0.0
-        if penalty_off and not stenosis_off:
-            print("  Penalty-off: L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
-    else:
+        print(
+            "  Quadratic resistor off: all stenosis coefficients set to 0, "
+            "calibrate_stenosis_coefficient=False, L2 penalties set to 0"
+        )
+
+    if quadratic_resistor and penalty_on:
         l2_R, l2_stenosis = SET_L2_PENALTIES.get(set_name, (DEFAULT_L2_R, DEFAULT_L2_STENOSIS))
         if set_name and set_name in SET_L2_PENALTIES:
             print(f"  Set-specific L2 penalties for {set_name}: R={l2_R}, stenosis={l2_stenosis}")
+    else:
+        l2_R = 0.0
+        l2_stenosis = 0.0
+        if quadratic_resistor and not penalty_on:
+            print(
+                "  Penalty-on not enabled: L2_penalty_R_poiseuille and "
+                "L2_penalty_stenosis_coefficient set to 0"
+            )
     inp["calibration_parameters"] = {
         "tolerance_gradient": 1e-4,
         "tolerance_increment": 1e-4,
         "maximum_iterations": 20,
-        "calibrate_stenosis_coefficient": not stenosis_off,
+        "calibrate_stenosis_coefficient": quadratic_resistor,
         "calibrate_capacitance": False,
         "set_capacitance_to_zero": False,
         "L2_penalty_R_poiseuille": l2_R,

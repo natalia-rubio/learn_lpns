@@ -166,7 +166,7 @@ def run_zerod_comparison_plots(
     nn_vessel=False,
     verbose=False,
 ):
-    """Run location comparison plots and parameter bar chart for --geometry-variant."""
+    """Run location comparison plots and parameter bar chart for --geometry_variant."""
     if geometry_variant not in geometry_variants:
         print(f"  ✗ Unknown geometry variant for plots: {geometry_variant}")
         return

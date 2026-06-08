@@ -172,7 +172,7 @@ def run_junction_nn_inference(
     geo_name: Optional[str],
     model_dir: str,
     junction_type: str,
-    stenosis_off: bool = False,
+    quadratic_resistor: bool = False,
 ) -> None:
     """Load rows from jax dict, predict, and apply predictions to ``nn_config``."""
     from util.data_processing.data_dict_from_csvs import load_junction_rows_from_jax_dict
@@ -190,7 +190,7 @@ def run_junction_nn_inference(
     print(f"  Neural network input dimensions: {X.shape} (rows={X.shape[0]}, features={X.shape[1]})")
 
     pred_R, pred_S, pred_L = run_junction_nn_predict(X, model_dir, set_name)
-    if stenosis_off:
+    if not quadratic_resistor:
         pred_S = np.zeros_like(pred_R)
 
     apply_junction_nn_predictions(

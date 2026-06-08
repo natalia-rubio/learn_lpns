@@ -153,15 +153,15 @@ def main():
         epilog="""
 Examples:
   python util/zerod_calibration/batch_generate_zerod_inputs_vmr.py \\
-      --set-name VMR_rigid_aorta_adults
+      --set_name VMR_rigid_aorta_adults
 
   python util/zerod_calibration/batch_generate_zerod_inputs_vmr.py \\
-      --set-name VMR_rigid_aorta_adults \\
-      --run-config gen_loss_penalty_off_symmetric \\
-      --skip-steps calibration_forward
+      --set_name VMR_rigid_aorta_adults \\
+      --run_config gen_loss_quadratic_resistor \\
+      --skip_steps calibration_forward
 
   python util/zerod_calibration/batch_generate_zerod_inputs_vmr.py \\
-      --geometries 0063_1001 0155_0001 --no-redo
+      --geometries 0063_1001 0155_0001 --no_redo
         """
     )
     add_generate_zerod_inputs_arguments(parser, require_set_geo=False)
@@ -184,7 +184,7 @@ Examples:
     if args.only_failed or args.only_timed_out or args.only_successful:
         if not args.log_file:
             parser.error(
-                "--only-failed, --only-timed-out, and --only-successful require --log-file"
+                "--only_failed, --only_timed_out, and --only_successful require --log_file"
             )
 
         log_path = os.path.join(REPO_ROOT, args.log_file)

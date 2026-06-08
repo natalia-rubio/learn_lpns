@@ -3,6 +3,7 @@ import json
 import numpy as np
 import csv
 from util.zerod_calibration.tools.file_io import read_zerod_csv
+from util.zerod_calibration.modality_paths import modality_table_header, sort_modalities
 
 try:
     from scipy.interpolate import interp1d
@@ -348,8 +349,84 @@ def _mse_metric_cell(mse_results, mod, key, fmt):
     return f'{val:{fmt}}'
 
 
+def _modality_column_widths(modalities, mse_results):
+    """Per-modality column width: fits header text and numeric cells."""
+    num_w = 13
+    active = [m for m in modalities if m in mse_results]
+    return [
+        (mod, modality_table_header(mod), max(num_w, len(modality_table_header(mod))))
+        for mod in active
+    ]
+
+
+def _print_modality_columns(columns, values, *, header: bool):
+    for _mod, label, width in columns:
+        if header:
+            print(f"{label:^{width}} ", end="")
+        else:
+            val = values.get(_mod)
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                print(f"{'N/A':>{width}} ", end="")
+            elif isinstance(val, str):
+                print(f"{val:>{width}} ", end="")
+            else:
+                print(f"{val:>{width}.3E} ", end="")
+    print()
+
+
+def _table_rule_width(columns, left_width=50):
+    return left_width + sum(w + 1 for _mod, _label, w in columns)
+
+
+def _print_mse_summary_table(modalities, mse_results, all_obs_keys, verbose):
+    modalities = sort_modalities(modalities)
+    columns = _modality_column_widths(modalities, mse_results)
+    if not columns:
+        return
+
+    if verbose:
+        print("\n" + "=" * 80)
+        print("Detailed MSE Comparison")
+        print("=" * 80)
+        print(f"\n{'Observation':<40} {'Type':<10} ", end="")
+        _print_modality_columns(columns, {}, header=True)
+        sep = "-" * _table_rule_width(columns)
+        print(sep)
+        for obs_key in sorted(all_obs_keys):
+            display_key = obs_key[:38] + ".." if len(obs_key) > 40 else obs_key
+            obs_type = "unknown"
+            for modality_results in mse_results.values():
+                if obs_key in modality_results['individual']:
+                    obs_type = modality_results['individual'][obs_key]['type']
+                    break
+            print(f"{display_key:<40} {obs_type:<10} ", end="")
+            row_vals = {
+                mod: mse_results[mod]['individual'][obs_key]['mse']
+                if obs_key in mse_results[mod]['individual']
+                else None
+                for mod, _label, _w in columns
+            }
+            _print_modality_columns(columns, row_vals, header=False)
+        print("\n" + sep)
+
+    print(f"{'':<40} {'':<10} ", end="")
+    _print_modality_columns(columns, {}, header=True)
+    sep = "-" * _table_rule_width(columns)
+    print(sep)
+    for label, key in (
+        ('SUMMARY', 'overall_mse'),
+        ('Mean Pressure MSE', 'mean_pressure_mse'),
+        ('Mean Flow MSE', 'mean_flow_mse'),
+    ):
+        print(f"{label:<40} {'':<10} ", end="")
+        row_vals = {mod: mse_results[mod][key] for mod, _label, _w in columns}
+        _print_modality_columns(columns, row_vals, header=False)
+
+
 def _write_mse_comparison_csv(output_csv_path, modalities, mse_results, all_obs_keys,
                               zoom_start_idx, zoom_end_idx):
+    modalities = sort_modalities(modalities)
+    headers = [modality_table_header(m) for m in modalities]
     os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
     with open(output_csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
@@ -357,12 +434,12 @@ def _write_mse_comparison_csv(output_csv_path, modalities, mse_results, all_obs_
         writer.writerow(['Zoom Window', f'{zoom_start_idx} to {zoom_end_idx - 1}'])
         writer.writerow([])
         writer.writerow(['Summary Statistics'])
-        writer.writerow(['Metric'] + modalities)
+        writer.writerow(['Metric'] + headers)
         for row_name, key, fmt in _MSE_SUMMARY_ROWS:
             writer.writerow([row_name] + [_mse_metric_cell(mse_results, mod, key, fmt) for mod in modalities])
         writer.writerow([])
         writer.writerow(['Detailed Results'])
-        writer.writerow(['Observation', 'Type', 'Vessel'] + modalities)
+        writer.writerow(['Observation', 'Type', 'Vessel'] + headers)
         for obs_key in sorted(all_obs_keys):
             obs_type, vessel_name = 'unknown', 'unknown'
             for modality_results in mse_results.values():
@@ -377,55 +454,6 @@ def _write_mse_comparison_csv(output_csv_path, modalities, mse_results, all_obs_
                 else:
                     row.append('N/A')
             writer.writerow(row)
-
-
-def _print_mse_summary_table(modalities, mse_results, all_obs_keys, verbose):
-    if verbose:
-        print("\n" + "=" * 80)
-        print("Detailed MSE Comparison")
-        print("=" * 80)
-        print(f"\n{'Observation':<40} {'Type':<10} ", end="")
-        for mod in modalities:
-            if mod in mse_results:
-                print(f"{mod:<15} ", end="")
-        print()
-        sep = "-" * (50 + 15 * len([m for m in modalities if m in mse_results]))
-        print(sep)
-        for obs_key in sorted(all_obs_keys):
-            display_key = obs_key[:38] + ".." if len(obs_key) > 40 else obs_key
-            obs_type = "unknown"
-            for modality_results in mse_results.values():
-                if obs_key in modality_results['individual']:
-                    obs_type = modality_results['individual'][obs_key]['type']
-                    break
-            print(f"{display_key:<40} {obs_type:<10} ", end="")
-            for mod in modalities:
-                if mod in mse_results and obs_key in mse_results[mod]['individual']:
-                    mse_val = mse_results[mod]['individual'][obs_key]['mse']
-                    print(f"{mse_val:>13.3E}  ", end="")
-                else:
-                    print(f"{'N/A':>13}  ", end="")
-            print()
-        print("\n" + sep)
-
-    print(f"{'':<40} {'':<10} ", end="")
-    for mod in modalities:
-        if mod in mse_results:
-            print(f"{mod:<15} ", end="")
-    print()
-    sep = "-" * (50 + 15 * len([m for m in modalities if m in mse_results]))
-    print(sep)
-    for label, key in (
-        ('SUMMARY', 'overall_mse'),
-        ('Mean Pressure MSE', 'mean_pressure_mse'),
-        ('Mean Flow MSE', 'mean_flow_mse'),
-    ):
-        print(f"{label:<40} {'':<10} ", end="")
-        for mod in modalities:
-            if mod in mse_results:
-                val = mse_results[mod][key]
-                print(f"{val:>13.3E}  " if not np.isnan(val) else f"{'N/A':>13}  ", end="")
-        print()
 
 
 def _compute_modality_mse(csv_path, obs_3d, zoom_start_idx, zoom_end_idx,

@@ -4,7 +4,7 @@ Standalone visualization script to create zero-D parameter bar charts (R, stenos
 for a given dataset and geometry.
 
 Usage:
-  python util/visualizations/plot_zero_d_params.py --set-name VMR --geo-name 0063_1001 --modalities NORMAL_JUNCTION BloodVesselJunction --verbose
+  python util/visualizations/plot_zero_d_params.py --set_name VMR --geo_name 0063_1001 --modalities NORMAL_JUNCTION BloodVesselJunction --verbose
 
 It searches for calibrated JSON outputs and the geometric input JSON under
 <data_root>/<set_name>/<geo_name>/ and writes a PNG to
@@ -77,11 +77,11 @@ def find_modality_jsons(data_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Generate zero-D parameter bar chart for a set/geometry')
-    parser.add_argument('--set-name', required=True, help='Dataset set name (e.g., VMR)')
-    parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., 0063_1001)')
-    parser.add_argument('--data-root', default=None, help='Root data/zeroD directory (default: ../../data/zeroD relative to script)')
-    parser.add_argument('--run-config', default='base', help='Run config name for output subfolder (e.g., base, stenosis_off)')
-    parser.add_argument('--output-root', default=None, help='Output results root (default: results/param_comparison)')
+    parser.add_argument('--set_name', required=True, help='Dataset set name (e.g., VMR)')
+    parser.add_argument('--geo_name', required=True, help='Geometry name (e.g., 0063_1001)')
+    parser.add_argument('--data_root', default=None, help='Root data/zeroD directory (default: ../../data/zeroD relative to script)')
+    parser.add_argument('--run_config', default='base', help='Run config name for output subfolder (e.g. base, gen_loss)')
+    parser.add_argument('--output_root', default=None, help='Output results root (default: results/param_comparison)')
     parser.add_argument('--modalities', nargs='*', help='Optional list of modalities to include (e.g., NORMAL_JUNCTION BloodVesselJunction). If omitted, all detected modalities are used.')
     parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()

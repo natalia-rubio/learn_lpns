@@ -1,6 +1,7 @@
 
 import os
 import sys
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -9,7 +10,12 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from util.neural_network.nn_model import NeuralNet
+from util.neural_network.nn_model import (
+    L_OUTPUT_COLUMN,
+    R_OUTPUT_COLUMN,
+    S_OUTPUT_COLUMN,
+    NeuralNet,
+)
 from util.neural_network.train_nn import train_nn
 from util.tools.basic import load_dict
 from util.data_processing.generate_split_indices import load_split_for_training, resolve_flat_indices
@@ -17,6 +23,55 @@ from util.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
     run_config_suffix_to_flags,
 )
+
+
+@dataclass(frozen=True)
+class RriCoefTrainSpec:
+    """One single-output network trained against a column of output_rri."""
+
+    label: str
+    target_output_column: int
+    lr_init: float
+    junction_num_layers: int
+    junction_layer_width: int
+    junction_asymmetric_overestimate_weight: float
+    vessel_asymmetric_overestimate_weight: float
+
+
+# Each RRI coefficient (R, S, L) gets its own network with one scalar output.
+RRI_COEF_TRAIN_SPECS = (
+    RriCoefTrainSpec(
+        "Linear Resistor (R)",
+        R_OUTPUT_COLUMN,
+        lr_init=0.01,
+        junction_num_layers=2,
+        junction_layer_width=10,
+        junction_asymmetric_overestimate_weight=2000,
+        vessel_asymmetric_overestimate_weight=10,
+    ),
+    RriCoefTrainSpec(
+        "Stenosis Resistor (S)",
+        S_OUTPUT_COLUMN,
+        lr_init=0.001,
+        junction_num_layers=2,
+        junction_layer_width=10,
+        junction_asymmetric_overestimate_weight=100,
+        vessel_asymmetric_overestimate_weight=10,
+    ),
+    RriCoefTrainSpec(
+        "Inductor (L)",
+        L_OUTPUT_COLUMN,
+        lr_init=0.01,
+        junction_num_layers=4,
+        junction_layer_width=20,
+        junction_asymmetric_overestimate_weight=10000,
+        vessel_asymmetric_overestimate_weight=1000,
+    ),
+)
+
+VESSEL_NUM_LAYERS = 2
+VESSEL_LAYER_WIDTH = 10
+TRAIN_EPOCHS = 500
 
 
 def _jax_arrays_path(
@@ -72,7 +127,7 @@ def _build_training_params_for_modality(
     run_config_suffix: str | None,
     jax_path: str,
     output_type: str,
-    symmetric_loss_eff: bool,
+    asymmetric_loss_eff: bool,
     generation_weighted_loss_eff: bool,
     generation_weighted_loss_scale: float,
     leaky_relu: bool,
@@ -105,8 +160,6 @@ def _build_training_params_for_modality(
     model_name_suffix = "_vessel" if vessel else ""
     network_params = {
         "num_input_features": num_input_features,
-        "num_layers": 5,
-        "layer_width": 100,
         "output_type": output_type,
         "set_name": set_name,
         "set_type": set_type,
@@ -114,11 +167,12 @@ def _build_training_params_for_modality(
         "data_root": data_root,
         "geometry_variant": geometry_variant,
         "run_config_suffix": run_config_suffix,
+        "jax_arrays_path": jax_path,
+        "data_dict": jax_data,
         "use_leaky_relu": leaky_relu,
-        "pred_mode": "m1",
         "model_name_suffix": model_name_suffix,
         "asymmetric_loss_overestimate_weight": 1.0,
-        "symmetric_loss": symmetric_loss_eff,
+        "asymmetric_loss": asymmetric_loss_eff,
         "generation_weighted_loss": generation_weighted_loss_eff,
         "generation_weighted_loss_scale": generation_weighted_loss_scale,
     }
@@ -127,7 +181,7 @@ def _build_training_params_for_modality(
 
     n_train = max(len(train_inds), 1)
     training_params = {
-        "num_epochs": 500,
+        "num_epochs": TRAIN_EPOCHS,
         "batch_size": int(np.ceil(n_train / 10)),
         "train_inds": train_inds,
         "val_inds": val_inds,
@@ -145,79 +199,50 @@ def _build_training_params_for_modality(
 
 
 def launch_training(network_params, optimizer_params, training_params):
-    """Train a neural network for linear resistor, quadratic resistor, and inductor for both junctions and vessels.
-    Args:
-        network_params: Dictionary of network parameters.
-        optimizer_params: Dictionary of optimizer parameters.
-        training_params: Dictionary of training parameters.
-    
-    Trained models are saved in the results/models directory.
+    """Train three single-output networks for R, S, and L (junction or vessel).
 
-    Several hyperparameters are overridden with hardcoded values for now.
-    Formal hyperparameter optimization still needed.
+    Each network predicts one scalar; ``target_output_column`` selects which
+    column of ``output_rri`` is the training target (0=R, 1=S, 2=L).
 
-    coef_ind: 0 for linear resistor, 1 for quadratic resistor, 2 for inductor.
+    Trained models are saved under ``results/models`` (or ``training_params['output_dir']``).
     """
-
     network_params["output_type"] = "rri"
-    symmetric_loss = network_params.pop("symmetric_loss", False)
-    
-    print("Training RRI model...")
+    asymmetric_loss = bool(network_params["asymmetric_loss"])
+    is_vessel = network_params.get("model_name_suffix") == "_vessel"
 
-    lr_init1 = 0.01
-    lr_init2 = 0.001
-    lr_init3 = 0.01
+    shared_data_dict = network_params.get("data_dict")
+    print("Training RRI models (one network per coefficient)...")
 
-    print(f"training model 1:  Linear Resistor")
-    print(f"{network_params['num_input_features']} input features")
-    network_params["target_coef_ind"] = 0
-    optimizer_params["decay_rate"] = 0.8
-    optimizer_params["init"] = lr_init1
-    if network_params["model_name_suffix"] == "_vessel":
-        network_params["layer_width"] = 10
-        network_params["num_layers"] = 2
-        training_params["num_epochs"] = 500#1000
-        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10
-    else:
-        network_params["layer_width"] = 10
-        network_params["num_layers"] = 2
-        training_params["num_epochs"] = 500#4000#5000
-        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 2000
-    model = NeuralNet(network_params, optimizer_params)
-    train_nn(model, training_params)
+    for spec in RRI_COEF_TRAIN_SPECS:
+        print(f"training model {spec.target_output_column + 1}:  {spec.label}")
+        print(f"{network_params['num_input_features']} input features")
 
-    print(f"training model 2:  Stenosis Resistor")
-    optimizer_params["init"] = lr_init2
-    network_params["target_coef_ind"] = 1
-    if network_params["model_name_suffix"] == "_vessel":
-        network_params["layer_width"] = 10
-        network_params["num_layers"] = 2
-        training_params["num_epochs"] = 500#2000
-        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10
-    else:
-        network_params["layer_width"] = 10
-        network_params["num_layers"] = 2
-        training_params["num_epochs"] = 500#2000
-        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 100
-    model = NeuralNet(network_params, optimizer_params)
-    train_nn(model, training_params)
+        network_params["target_output_column"] = spec.target_output_column
+        optimizer_params["init"] = spec.lr_init
+        training_params["num_epochs"] = TRAIN_EPOCHS
 
-    print(f"training model 3:  Inductor")
-    optimizer_params["init"] = lr_init3
-    network_params["target_coef_ind"] = 2
-    if network_params["model_name_suffix"] == "_vessel":
-        network_params["layer_width"] = 10
-        network_params["num_layers"] = 2
-        training_params["num_epochs"] = 500#2000
-        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 1000
-    else:
-        network_params["layer_width"] = 20
-        network_params["num_layers"] = 4
-        training_params["num_epochs"] = 500#2000#5000
-        network_params["asymmetric_loss_overestimate_weight"] = 1.0 if symmetric_loss else 10000
-    model = NeuralNet(network_params, optimizer_params)
-    train_nn(model, training_params)
-    return
+        if is_vessel:
+            network_params["num_layers"] = VESSEL_NUM_LAYERS
+            network_params["layer_width"] = VESSEL_LAYER_WIDTH
+            overestimate_weight = (
+                spec.vessel_asymmetric_overestimate_weight if asymmetric_loss else 1.0
+            )
+        else:
+            network_params["num_layers"] = spec.junction_num_layers
+            network_params["layer_width"] = spec.junction_layer_width
+            overestimate_weight = (
+                spec.junction_asymmetric_overestimate_weight if asymmetric_loss else 1.0
+            )
+        network_params["asymmetric_loss_overestimate_weight"] = overestimate_weight
+
+        if shared_data_dict is not None:
+            network_params["data_dict"] = shared_data_dict
+
+        model = NeuralNet(network_params, optimizer_params)
+        if shared_data_dict is None:
+            shared_data_dict = model.data_dict
+        train_nn(model, training_params)
+
 
 if __name__ == "__main__":
     import argparse
@@ -225,34 +250,41 @@ if __name__ == "__main__":
     parser.add_argument("set_name", help="Set name (e.g., VMR)")
     parser.add_argument("num_geos", type=int, help="Number of geometries")
     parser.add_argument("geometry_variant", nargs="?", default=None,
-                        help="Geometry variant: bifurcations, bifurcations_EL, or all (default: all). Can also be set via --geometry-variant.")
-    parser.add_argument("--geometry-variant", dest="geometry_variant_flag", default=None,
+                        help="Geometry variant: bifurcations, bifurcations_EL, or all (default: all). Can also be set via --geometry_variant.")
+    parser.add_argument("--geometry_variant", dest="geometry_variant_flag", default=None,
                         help="Geometry variant (overrides positional if set). Use this when passing --vessel so order does not matter.")
-    parser.add_argument("--split-path", default=None,
+    parser.add_argument("--split_path", default=None,
                         help="Path to train/val split pickle (default: data/split_indices/.../train_val_ind_{set_name}_num_geos_{num_geos})")
-    parser.add_argument("--model-dir", default=None,
+    parser.add_argument("--model_dir", default=None,
                         help="Directory to save models (default: results/models/{set_name}/{geometry_variant})")
     parser.add_argument("--vessel", action="store_true",
                         help="Train vessel NN (R/S/L per vessel); uses vessel jax arrays and same geometry-based split")
-    parser.add_argument("--leaky-relu", action="store_true",
+    parser.add_argument("--leaky_relu", action="store_true",
                         help="Use Leaky ReLU instead of ReLU (helps gradient flow when inputs span large ranges)")
-    parser.add_argument("--print-gradients", action="store_true",
+    parser.add_argument("--print_gradients", action="store_true",
                         help="Print gradient stats for the first batch before training (for debugging)")
     parser.add_argument(
-        "--verbose-epochs",
+        "--quiet_epochs",
         action="store_true",
-        help="Print per-epoch train/validation loss during train_nn (off by default; very chatty).",
+        help="Suppress per-epoch train/validation loss output during train_nn.",
     )
-    parser.add_argument("--symmetric-loss", action="store_true", dest="symmetric_loss",
-                        help="Use symmetric loss (overestimate weight 1.0 for all models). When off, per-model asymmetric weights are used.")
     parser.add_argument(
-        "--run-config",
+        "--asymmetric_loss",
+        action="store_true",
+        dest="asymmetric_loss",
+        help=(
+            "Use asymmetric loss (per-model overestimate weights). "
+            "When off, symmetric loss (overestimate weight 1.0 for all models)."
+        ),
+    )
+    parser.add_argument(
+        "--run_config",
         default=DEFAULT_CLI_RUN_CONFIG,
-        help="Run config suffix for path separation (e.g. stenosis_off_symmetric). "
+        help="Run config suffix for path separation (e.g. gen_loss). "
         "jax_arrays and split_indices use .../set_name/<config>/... "
-        "Use the exact suffix for jax/split paths (e.g. stenosis_off_symmetric_gen_loss). "
+        "Use the exact suffix for jax/split paths (e.g. gen_loss or quadratic_resistor_gen_loss). "
         "Training-only suffix _gen_loss also enables generation-weighted loss unless overridden. "
-        "Default: %(default)s. Pass an empty string only for legacy layouts without a run-config subfolder.",
+        "Default: %(default)s. Pass an empty string for layouts without a run-config subfolder.",
     )
     parser.add_argument(
         "--generation_weighted_loss",
@@ -279,16 +311,16 @@ if __name__ == "__main__":
 
     geometry_variant_arg = getattr(cli_args, "geometry_variant_flag", None) or cli_args.geometry_variant or "all"
     run_config_raw = (cli_args.run_config or "").strip() or None
-    # Paths use the full --run-config string (e.g. ..._gen_loss is its own jax/split tree).
+    # Paths use the full --run_config string (e.g. ..._gen_loss is its own jax/split tree).
     data_paths_suffix = run_config_raw
     if run_config_raw:
         rc_flags = run_config_suffix_to_flags(run_config_raw)
-        symmetric_loss_eff = bool(cli_args.symmetric_loss or rc_flags["symmetric_loss"])
+        asymmetric_loss_eff = bool(cli_args.asymmetric_loss or rc_flags["asymmetric_loss"])
         generation_weighted_loss_eff = bool(
             cli_args.generation_weighted_loss or rc_flags["generation_weighted_loss"]
         )
     else:
-        symmetric_loss_eff = bool(cli_args.symmetric_loss)
+        asymmetric_loss_eff = bool(cli_args.asymmetric_loss)
         generation_weighted_loss_eff = bool(cli_args.generation_weighted_loss)
     output_type = "rri"
     set_type = "all"
@@ -304,12 +336,14 @@ if __name__ == "__main__":
     for geometry_variant in geometry_variants_to_process:
         print(f"\n{'='*80}")
         print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}")
-        if symmetric_loss_eff:
+        if asymmetric_loss_eff:
+            print("Asymmetric loss: per-model overestimate weights")
+        elif data_paths_suffix:
             print("Symmetric loss: overestimate weight = 1.0 for all models")
         if generation_weighted_loss_eff:
             print(
                 f"Generation-weighted loss: ON (scale={float(cli_args.generation_weighted_loss_scale):g}; "
-                f"from --generation_weighted_loss and/or --run-config ..._gen_loss)"
+                f"from --generation_weighted_loss and/or --run_config ..._gen_loss)"
             )
         print(f"{'='*80}")
         
@@ -340,7 +374,7 @@ if __name__ == "__main__":
             run_config_suffix=data_paths_suffix,
             jax_path=jax_path,
             output_type=output_type,
-            symmetric_loss_eff=symmetric_loss_eff,
+            asymmetric_loss_eff=asymmetric_loss_eff,
             generation_weighted_loss_eff=generation_weighted_loss_eff,
             generation_weighted_loss_scale=float(
                 getattr(cli_args, "generation_weighted_loss_scale", 1.0)
@@ -349,7 +383,7 @@ if __name__ == "__main__":
             model_dir=cli_args.model_dir,
         )
         training_params["print_gradients"] = getattr(cli_args, "print_gradients", False)
-        training_params["verbose_epochs"] = getattr(cli_args, "verbose_epochs", False)
+        training_params["verbose_epochs"] = not cli_args.quiet_epochs
 
         optimizer_params = {"init": 0.02,
                            "transition_steps": 1000,

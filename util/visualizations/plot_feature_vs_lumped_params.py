@@ -10,7 +10,7 @@ target parameters to plot. All data from the set is combined.
 Usage:
   python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults
   python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults --mode junction
-  python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults --geometry-variant bifurcations --output-dir results/plots/feature_vs_params
+  python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults --geometry_variant bifurcations --output_dir results/plots/feature_vs_params
 """
 import os
 import re
@@ -191,22 +191,22 @@ def main():
         help="Data to plot: vessel (vessel_geometric_features + vessel_lumped_parameters) or junction (geometric_features + junction_lumped_parameters). Default: vessel.",
     )
     parser.add_argument(
-        "--geometry-variant",
+        "--geometry_variant",
         default="bifurcations_EL",
         help="Geometry variant under ml_inputs (default: bifurcations_EL)",
     )
     parser.add_argument(
-        "--data-root",
+        "--data_root",
         default="data",
         help="Data root containing ml_inputs (default: data)",
     )
     parser.add_argument(
-        "--output-dir",
+        "--output_dir",
         default=None,
         help="Output directory for plots (default: results/plots/feature_vs_lumped_params/<set_name>_<variant>_<mode>)",
     )
     parser.add_argument(
-        "--no-geometry-legend",
+        "--no_geometry_legend",
         action="store_true",
         help="Do not color points by geometry / omit geometry legend",
     )

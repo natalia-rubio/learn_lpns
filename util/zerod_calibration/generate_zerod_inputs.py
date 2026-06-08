@@ -231,7 +231,7 @@ def main():
     
     # Step 2: Extract observations and create calibration inputs for each junction type
     if not args.skip_observation:
-        # Check if all calibration inputs already exist (if --no-redo is set)
+        # Check if all calibration inputs already exist (if --no_redo is set)
         all_calibration_inputs_exist = True
         if args.no_redo:
             for geo_variant_name, geo_variant_paths in geometry_variants.items():
@@ -329,8 +329,8 @@ def main():
                         create_calibration_input(
                             variant_geometric_input, obs_for_calib, variant_calibration_input,
                             centerline_soln_path=soln_path, geo_dir=geo_dir,
-                            stenosis_off=getattr(args, 'stenosis_off', False),
-                            penalty_off=getattr(args, 'penalty_off', False),
+                            quadratic_resistor=getattr(args, "quadratic_resistor", False),
+                            penalty_on=getattr(args, "penalty_on", False),
                             set_name=getattr(args, 'set_name', None),
                         )
                         generated_files.append(variant_calibration_input)
@@ -409,18 +409,42 @@ def main():
         if not os.path.exists(calib_output_path):
             raise FileNotFoundError(f"Calibration output not found: {calib_output_path}")
 
+        geometric_results_path = geo_variant_paths['geometric_results']
+        if not os.path.exists(geometric_results_path):
+            print(
+                f"\n  Geometric results not found ({geometric_results_path}); "
+                "running geometric forward (required for flow_split features in ML CSVs)..."
+            )
+            _run_forward_simulation_step(
+                variant_geometric_input,
+                geometric_results_path,
+                bc_source=geo_variant_paths['calibration_input'],
+                step_label=f"geometric forward simulation for {args.geometry_variant}",
+                check_and_track_file=check_and_track_file,
+                generated_files=generated_files,
+            )
+
         run_data_processing_cmd = [
             sys.executable,
             os.path.join(os.path.dirname(__file__), '..', 'data_processing', 'run_data_processing.py'),
-            '--set-name', args.set_name,
-            '--geometry-variant', args.geometry_variant,
-            '--set-type', 'forward',
+            '--set_name', args.set_name,
+            '--geometry_variant', args.geometry_variant,
+            '--set_type', 'forward',
             '--geometries', args.geo_name,
-            '--percent-train', '1',
-            '--run-config', run_config_suffix,
+            '--percent_train', '1',
+            '--run_config', run_config_suffix,
         ]
         if verbose:
             run_data_processing_cmd.append('--verbose')
+        from util.zerod_calibration.junction_nn_inference import forward_junction_jax_pickle_path
+
+        forward_jax_path = forward_junction_jax_pickle_path(
+            "data",
+            args.set_name,
+            run_config_suffix,
+            args.geometry_variant,
+            num_geos=1,
+        )
         try:
             result = subprocess.run(
                 run_data_processing_cmd,
@@ -430,192 +454,200 @@ def main():
             )
             if result.stdout:
                 print(result.stdout, end='')
+            if result.stderr:
+                print(result.stderr, end='')
             if result.returncode != 0:
                 err = result.stderr or result.stdout or "(no output)"
                 raise RuntimeError(f"Data processing failed: {err}")
+            if not os.path.exists(forward_jax_path):
+                detail = (result.stderr or "") + (result.stdout or "")
+                raise RuntimeError(
+                    f"Data processing exited 0 but jax pickle not written: {forward_jax_path}. "
+                    f"Output:\n{detail or '(no subprocess output)'}"
+                )
             print(f"  ✓ Data processing pipeline completed ({args.geometry_variant})")
         except Exception as e:
             raise Exception(f"Failed to run data processing pipeline: {e}") from e
 
-        # Step 3.7: Junction NN inference (loads forward jax pickle from Step 3.5)
-        if check_and_track_file(nn_output_path, f"NN inference for {args.geometry_variant}/{JUNCTION_TYPE}"):
-            pass
-        else:
-            print(f"\n    Running neural network inference for {args.geometry_variant}/{JUNCTION_TYPE}...")
-            try:
-                from util.tools.basic import load_dict
-                from util.zerod_calibration.junction_nn_inference import (
-                    forward_junction_jax_pickle_path,
-                    run_junction_nn_inference,
-                )
-
-                jax_path = forward_junction_jax_pickle_path(
-                    "data",
-                    args.set_name,
-                    run_config_suffix,
-                    args.geometry_variant,
-                    num_geos=1,
-                )
-                if not os.path.exists(jax_path):
-                    raise FileNotFoundError(
-                        f"Junction jax pickle not found: {jax_path}. "
-                        f"Run Step 3.5 (run_data_processing) or the full pipeline first."
-                    )
-
-                with open(variant_geometric_input, "r") as f:
-                    nn_config = json.load(f)
-                _assert_multi_outlet_junctions_type(nn_config, JUNCTION_TYPE)
-
-                print(f"  Loading junction features from jax pickle: {jax_path}")
-                jax_data_dict = load_dict(jax_path)
-
-                if getattr(args, "model_dir", None):
-                    model_dir = args.model_dir
-                else:
-                    model_dir = os.path.join("results", "models", args.set_name, args.geometry_variant)
-
-                run_junction_nn_inference(
-                    jax_data_dict=jax_data_dict,
-                    nn_config=nn_config,
-                    set_name=args.set_name,
-                    geo_name=args.geo_name,
-                    model_dir=model_dir,
-                    junction_type=JUNCTION_TYPE,
-                    stenosis_off=getattr(args, "stenosis_off", False),
-                )
-
-                with open(nn_output_path, "w") as f:
-                    json.dump(nn_config, f, indent=4)
-                generated_files.append(nn_output_path)
-                print(f"      ✓ Neural network predictions applied and saved to {nn_output_path}")
-
-            except Exception as e:
-                raise Exception(
-                    f"Neural network inference failed for {args.geometry_variant}/{JUNCTION_TYPE}: {e}"
-                ) from e
-
-        # Step 3.8 (optional): Vessel NN inference: predict vessel R/S/L and write NN_JunctionAndVessel config
-        if getattr(args, 'NN_vessel', False):
-            from util.data_processing.inputs_from_0d_config import load_vessel_geometric_features
-            from util.data_processing.data_dict_from_csvs import (
-                _clamp_tortuosity,
-                filter_features_from_array,
-                get_default_include_features_vessel,
+        skip_nn_inference = getattr(args, "skip_nn_inference", False)
+        if skip_nn_inference:
+            print(
+                f"\n  ⊘ Skipping NN inference (Steps 3.7/3.8); "
+                f"--skip_steps includes nn_inference"
             )
-            from util.neural_network.nn_model import predict as nn_predict
-            from util.neural_network.nn_util import dill_load
-            import jax.numpy as jnp
-
-            model_dir_basename = os.path.basename(getattr(args, 'model_dir', '') or '')
-            if '_trial_' in model_dir_basename:
-                trial_model_variant = model_dir_basename.split('_trial_')[0]
-                if args.geometry_variant != trial_model_variant:
-                    raise ValueError(
-                        f"Vessel NN trial model dir is for {trial_model_variant!r}, "
-                        f"but --geometry-variant is {args.geometry_variant!r}"
-                    )
-
-            if not os.path.exists(nn_output_path):
-                raise FileNotFoundError(f"NN junction config not found: {nn_output_path}")
-
-            if check_and_track_file(nn_junction_and_vessel_path, f"Vessel NN inference for {args.geometry_variant}") and os.path.exists(nn_vessel_only_path):
+        else:
+            # Step 3.7: Junction NN inference (loads forward jax pickle from Step 3.5)
+            if check_and_track_file(nn_output_path, f"NN inference for {args.geometry_variant}/{JUNCTION_TYPE}"):
                 pass
             else:
-                print(f"\n    Running vessel NN inference for {args.geometry_variant}...")
+                print(f"\n    Running neural network inference for {args.geometry_variant}/{JUNCTION_TYPE}...")
                 try:
-                    with open(nn_output_path, 'r') as f:
-                        junction_and_vessel_config = json.load(f)
-                    vessel_X, vessel_feature_names, vessel_ids, vessel_names = load_vessel_geometric_features(
-                        variant_geometric_input, verbose=args.verbose
+                    from util.tools.basic import load_dict
+                    from util.zerod_calibration.junction_nn_inference import (
+                        run_junction_nn_inference,
                     )
-                    if len(vessel_X) == 0:
-                        raise ValueError(
-                            f"No non-connector vessels for vessel NN ({args.geometry_variant})"
+
+                    jax_path = forward_jax_path
+                    if not os.path.exists(jax_path):
+                        raise FileNotFoundError(
+                            f"Junction jax pickle not found: {jax_path}. "
+                            f"Run Step 3.5 (run_data_processing) or the full pipeline first."
                         )
-                    vessel_X, vessel_feature_names = filter_features_from_array(
-                        vessel_X, vessel_feature_names,
-                        include_features=get_default_include_features_vessel(),
-                    )
-                    _clamp_tortuosity(vessel_X, vessel_feature_names)
-                    if getattr(args, 'model_dir', None) and '_trial_' in os.path.basename(args.model_dir):
-                        vessel_model_dir = os.path.join(
-                            os.path.dirname(args.model_dir),
-                            os.path.basename(args.model_dir).replace('_trial_', '_vessel_trial_', 1),
-                        )
+
+                    with open(variant_geometric_input, "r") as f:
+                        nn_config = json.load(f)
+                    _assert_multi_outlet_junctions_type(nn_config, JUNCTION_TYPE)
+
+                    print(f"  Loading junction features from jax pickle: {jax_path}")
+                    jax_data_dict = load_dict(jax_path)
+
+                    if getattr(args, "model_dir", None):
+                        model_dir = args.model_dir
                     else:
-                        vessel_model_dir = os.path.join(
-                            'results', 'models', args.set_name, f'{args.geometry_variant}_vessel')
-                    vessel_X_jax = jnp.array(np.array(vessel_X, dtype=np.float64), dtype=jnp.float32)
-                    model_paths = [
-                        os.path.join(vessel_model_dir, f"rri_{args.set_name}_vessel_pred_{i}_model")
-                        for i in range(3)
-                    ]
-                    for mp in model_paths:
-                        if not os.path.exists(mp):
-                            raise FileNotFoundError(f"Vessel model not found: {mp}")
-                    vessel_raw_predictions = []
-                    for i, mp in enumerate(model_paths):
-                        model = dill_load(mp)
-                        vessel_use_leaky = getattr(model, "use_leaky_relu", False)
-                        pred = nn_predict(vessel_X_jax, model.weights, vessel_use_leaky)
-                        vessel_raw_predictions.append(np.array(pred).flatten())
-                    vessel_pred_R = np.array(vessel_raw_predictions[0])
-                    vessel_pred_S = np.array(vessel_raw_predictions[1])
-                    vessel_pred_L = np.array(vessel_raw_predictions[2])
-                    if getattr(args, 'stenosis_off', False):
-                        vessel_pred_S = np.zeros_like(vessel_pred_R)
-                    vessel_id_to_row = {vessel_id: i for i, vessel_id in enumerate(vessel_ids)}
-                    for vessel in junction_and_vessel_config.get('vessels', []):
-                        vessel_name = (vessel.get('vessel_name') or '').lower()
-                        if 'connector' in vessel_name:
-                            continue
-                        vessel_id = vessel.get('vessel_id')
-                        row = vessel_id_to_row.get(vessel_id)
-                        if row is None:
-                            continue
-                        z = dict(vessel.get('zero_d_element_values') or {})
-                        z['R_poiseuille'] = float(vessel_pred_R[row])
-                        z['stenosis_coefficient'] = float(vessel_pred_S[row])
-                        z['L'] = float(vessel_pred_L[row])
-                        vessel['zero_d_element_values'] = z
-                    with open(nn_junction_and_vessel_path, 'w') as f:
-                        json.dump(junction_and_vessel_config, f, indent=4)
-                    generated_files.append(nn_junction_and_vessel_path)
-                    print(f"      ✓ Vessel NN predictions applied and saved to {nn_junction_and_vessel_path}")
-                    with open(variant_geometric_input, 'r') as f:
-                        vessel_only_config = json.load(f)
-                    for vessel in vessel_only_config.get('vessels', []):
-                        vessel_name = (vessel.get('vessel_name') or '').lower()
-                        if 'connector' in vessel_name:
-                            continue
-                        vessel_id = vessel.get('vessel_id')
-                        row = vessel_id_to_row.get(vessel_id)
-                        if row is None:
-                            continue
-                        if 'zero_d_element_values' not in vessel:
-                            vessel['zero_d_element_values'] = {}
-                        vessel['zero_d_element_values']['R_poiseuille'] = float(vessel_pred_R[row])
-                        vessel['zero_d_element_values']['stenosis_coefficient'] = float(vessel_pred_S[row])
-                        vessel['zero_d_element_values']['L'] = float(vessel_pred_L[row])
-                    with open(nn_vessel_only_path, 'w') as f:
-                        json.dump(vessel_only_config, f, indent=4)
-                    generated_files.append(nn_vessel_only_path)
-                    print(f"      ✓ NN_vessel (geometric junctions + NN vessels) saved to {nn_vessel_only_path}")
+                        model_dir = os.path.join("results", "models", args.set_name, args.geometry_variant)
+
+                    run_junction_nn_inference(
+                        jax_data_dict=jax_data_dict,
+                        nn_config=nn_config,
+                        set_name=args.set_name,
+                        geo_name=args.geo_name,
+                        model_dir=model_dir,
+                        junction_type=JUNCTION_TYPE,
+                        quadratic_resistor=getattr(args, "quadratic_resistor", False),
+                    )
+
+                    with open(nn_output_path, "w") as f:
+                        json.dump(nn_config, f, indent=4)
+                    generated_files.append(nn_output_path)
+                    print(f"      ✓ Neural network predictions applied and saved to {nn_output_path}")
+
                 except Exception as e:
                     raise Exception(
-                        f"Vessel NN inference failed for {args.geometry_variant}: {e}"
+                        f"Neural network inference failed for {args.geometry_variant}/{JUNCTION_TYPE}: {e}"
                     ) from e
 
-        # Sync BCs from calibrated output into NN configs so RCR (and other outlet BCs) match
-        if not os.path.exists(nn_output_path):
-            raise FileNotFoundError(f"NN junction config not found: {nn_output_path}")
-        nn_paths = [p for p in [nn_output_path, nn_junction_and_vessel_path, nn_vessel_only_path] if p and os.path.exists(p)]
-        n_updated = sync_nn_config_bcs_from_calibration(nn_paths, calib_output_path, verbose=args.verbose)
-        if n_updated and args.verbose:
-            print(
-                f"  Synced boundary conditions from calibrated output into {n_updated} "
-                f"NN config(s) for {args.geometry_variant}"
-            )
+            # Step 3.8 (optional): Vessel NN inference: predict vessel R/S/L and write NN_JunctionAndVessel config
+            if getattr(args, 'NN_vessel', False):
+                from util.data_processing.inputs_from_0d_config import load_vessel_geometric_features
+                from util.data_processing.data_dict_from_csvs import (
+                    _clamp_tortuosity,
+                    filter_features_from_array,
+                    get_default_include_features_vessel,
+                )
+                from util.neural_network.nn_model import predict as nn_predict
+                from util.neural_network.nn_util import dill_load
+                import jax.numpy as jnp
+
+                model_dir_basename = os.path.basename(getattr(args, 'model_dir', '') or '')
+                if '_trial_' in model_dir_basename:
+                    trial_model_variant = model_dir_basename.split('_trial_')[0]
+                    if args.geometry_variant != trial_model_variant:
+                        raise ValueError(
+                            f"Vessel NN trial model dir is for {trial_model_variant!r}, "
+                            f"but --geometry_variant is {args.geometry_variant!r}"
+                        )
+
+                if not os.path.exists(nn_output_path):
+                    raise FileNotFoundError(f"NN junction config not found: {nn_output_path}")
+
+                if check_and_track_file(nn_junction_and_vessel_path, f"Vessel NN inference for {args.geometry_variant}") and os.path.exists(nn_vessel_only_path):
+                    pass
+                else:
+                    print(f"\n    Running vessel NN inference for {args.geometry_variant}...")
+                    try:
+                        with open(nn_output_path, 'r') as f:
+                            junction_and_vessel_config = json.load(f)
+                        vessel_X, vessel_feature_names, vessel_ids, vessel_names = load_vessel_geometric_features(
+                            variant_geometric_input, verbose=args.verbose
+                        )
+                        if len(vessel_X) == 0:
+                            raise ValueError(
+                                f"No non-connector vessels for vessel NN ({args.geometry_variant})"
+                            )
+                        vessel_X, vessel_feature_names = filter_features_from_array(
+                            vessel_X, vessel_feature_names,
+                            include_features=get_default_include_features_vessel(),
+                        )
+                        _clamp_tortuosity(vessel_X, vessel_feature_names)
+                        if getattr(args, 'model_dir', None) and '_trial_' in os.path.basename(args.model_dir):
+                            vessel_model_dir = os.path.join(
+                                os.path.dirname(args.model_dir),
+                                os.path.basename(args.model_dir).replace('_trial_', '_vessel_trial_', 1),
+                            )
+                        else:
+                            vessel_model_dir = os.path.join(
+                                'results', 'models', args.set_name, f'{args.geometry_variant}_vessel')
+                        vessel_X_jax = jnp.array(np.array(vessel_X, dtype=np.float64), dtype=jnp.float32)
+                        model_paths = [
+                            os.path.join(vessel_model_dir, f"rri_{args.set_name}_vessel_pred_{i}_model")
+                            for i in range(3)
+                        ]
+                        for mp in model_paths:
+                            if not os.path.exists(mp):
+                                raise FileNotFoundError(f"Vessel model not found: {mp}")
+                        vessel_raw_predictions = []
+                        for i, mp in enumerate(model_paths):
+                            model = dill_load(mp)
+                            vessel_use_leaky = getattr(model, "use_leaky_relu", False)
+                            pred = nn_predict(vessel_X_jax, model.weights, vessel_use_leaky)
+                            vessel_raw_predictions.append(np.array(pred).flatten())
+                        vessel_pred_R = np.array(vessel_raw_predictions[0])
+                        vessel_pred_S = np.array(vessel_raw_predictions[1])
+                        vessel_pred_L = np.array(vessel_raw_predictions[2])
+                        if not getattr(args, "quadratic_resistor", False):
+                            vessel_pred_S = np.zeros_like(vessel_pred_R)
+                        vessel_id_to_row = {vessel_id: i for i, vessel_id in enumerate(vessel_ids)}
+                        for vessel in junction_and_vessel_config.get('vessels', []):
+                            vessel_name = (vessel.get('vessel_name') or '').lower()
+                            if 'connector' in vessel_name:
+                                continue
+                            vessel_id = vessel.get('vessel_id')
+                            row = vessel_id_to_row.get(vessel_id)
+                            if row is None:
+                                continue
+                            z = dict(vessel.get('zero_d_element_values') or {})
+                            z['R_poiseuille'] = float(vessel_pred_R[row])
+                            z['stenosis_coefficient'] = float(vessel_pred_S[row])
+                            z['L'] = float(vessel_pred_L[row])
+                            vessel['zero_d_element_values'] = z
+                        with open(nn_junction_and_vessel_path, 'w') as f:
+                            json.dump(junction_and_vessel_config, f, indent=4)
+                        generated_files.append(nn_junction_and_vessel_path)
+                        print(f"      ✓ Vessel NN predictions applied and saved to {nn_junction_and_vessel_path}")
+                        with open(variant_geometric_input, 'r') as f:
+                            vessel_only_config = json.load(f)
+                        for vessel in vessel_only_config.get('vessels', []):
+                            vessel_name = (vessel.get('vessel_name') or '').lower()
+                            if 'connector' in vessel_name:
+                                continue
+                            vessel_id = vessel.get('vessel_id')
+                            row = vessel_id_to_row.get(vessel_id)
+                            if row is None:
+                                continue
+                            if 'zero_d_element_values' not in vessel:
+                                vessel['zero_d_element_values'] = {}
+                            vessel['zero_d_element_values']['R_poiseuille'] = float(vessel_pred_R[row])
+                            vessel['zero_d_element_values']['stenosis_coefficient'] = float(vessel_pred_S[row])
+                            vessel['zero_d_element_values']['L'] = float(vessel_pred_L[row])
+                        with open(nn_vessel_only_path, 'w') as f:
+                            json.dump(vessel_only_config, f, indent=4)
+                        generated_files.append(nn_vessel_only_path)
+                        print(f"      ✓ NN_vessel (geometric junctions + NN vessels) saved to {nn_vessel_only_path}")
+                    except Exception as e:
+                        raise Exception(
+                            f"Vessel NN inference failed for {args.geometry_variant}: {e}"
+                        ) from e
+
+            # Sync BCs from calibrated output into NN configs so RCR (and other outlet BCs) match
+            if not os.path.exists(nn_output_path):
+                raise FileNotFoundError(f"NN junction config not found: {nn_output_path}")
+            nn_paths = [p for p in [nn_output_path, nn_junction_and_vessel_path, nn_vessel_only_path] if p and os.path.exists(p)]
+            n_updated = sync_nn_config_bcs_from_calibration(nn_paths, calib_output_path, verbose=args.verbose)
+            if n_updated and args.verbose:
+                print(
+                    f"  Synced boundary conditions from calibrated output into {n_updated} "
+                    f"NN config(s) for {args.geometry_variant}"
+                )
 
         # Step 4: Run forward simulations for each geometry variant
         if not args.skip_forward:
@@ -757,7 +789,7 @@ def main():
             print(f"    Calibrated output: {jpaths['calibrated_output']}")
             print(f"    Simulation results: {jpaths['calibrated_results']}")
 
-    # Output generated files as JSON if --no-redo was used (for batch script to parse)
+    # Output generated files as JSON if --no_redo was used (for batch script to parse)
     if args.no_redo:
         print(json.dumps({"generated_files": generated_files}))
 
@@ -765,4 +797,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python3 util/zerod_calibration/generate_zerod_inputs.py --set-name set_3 --geo-name tree_007
+# python3 util/zerod_calibration/generate_zerod_inputs.py --set_name set_3 --geo_name tree_007

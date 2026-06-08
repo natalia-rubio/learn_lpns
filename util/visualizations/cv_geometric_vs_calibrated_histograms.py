@@ -16,11 +16,11 @@ output are included. Elements whose calibrated parameter is exactly 0 are exclud
 Test geometry list from CV summary.
 
 Usage:
-  python -m util.visualizations.cv_geometric_vs_calibrated_histograms VMR_rigid_aorta_adults --run-config stenosis_off -o histograms.pdf
+  python -m util.visualizations.cv_geometric_vs_calibrated_histograms VMR_rigid_aorta_adults --run_config gen_loss -o histograms.pdf
 
-  Multiple sets (same --run-config and --geometry-variant; pooled histograms and stats):
+  Multiple sets (same --run_config and --geometry_variant; pooled histograms and stats):
   python -m util.visualizations.cv_geometric_vs_calibrated_histograms \\
-    VMR_rigid_aorta_adults_all VMR_abdo VMR_pulmo --run-config stenosis_off_symmetric_gen_loss
+    VMR_rigid_aorta_adults_all VMR_abdo VMR_pulmo --run_config gen_loss
 """
 
 import argparse
@@ -528,25 +528,25 @@ def main():
         "set_names",
         nargs="*",
         default=["VMR_rigid_aorta_adults"],
-        help="One or more set names (default: VMR_rigid_aorta_adults). Same --run-config for all.",
+        help="One or more set names (default: VMR_rigid_aorta_adults). Same --run_config for all.",
     )
     parser.add_argument(
-        "--run-config",
-        default="stenosis_off",
-        help="Run config subfolder, e.g. stenosis_off (default: stenosis_off)",
+        "--run_config",
+        default="gen_loss",
+        help="Run config subfolder (default: gen_loss)",
     )
     parser.add_argument(
-        "--geometry-variant",
+        "--geometry_variant",
         default="bifurcations_EL",
         help="Geometry variant (default: bifurcations_EL)",
     )
     parser.add_argument(
-        "--data-root",
+        "--data_root",
         default="data",
         help="Root containing zeroD directory (default: data)",
     )
     parser.add_argument(
-        "--results-root",
+        "--results_root",
         default="results",
         help="Root containing cross_validation directory (default: results)",
     )
