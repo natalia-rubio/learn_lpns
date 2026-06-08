@@ -1,4 +1,18 @@
-data/*
 results/*
 __pycache__/
 .DS_Store
+data2/*
+
+# Ignore all of data/ by default. Only seed inputs listed below are tracked.
+# Generated trees (ml_inputs, jax_arrays, split_indices, zeroD/<run_config>/…) stay local.
+data/*
+!data/README.md
+!data/zeroD/
+data/zeroD/*
+!data/zeroD/VMR_aortas/
+!data/zeroD/VMR_aortas/standard-0d/
+!data/zeroD/VMR_aortas/standard-0d/**
+!data/oneD/
+data/oneD/*
+!data/oneD/VMR/
+!data/oneD/VMR/**

@@ -49,7 +49,12 @@ from util.zerod_calibration.run_config_canonical import (
     run_config_suffix_to_flags,
 )
 from util.zerod_calibration.batch_generate_zerod_inputs_vmr import check_geometry_complete
-from util.zerod_calibration.tools.file_io import get_paths, get_vmr_geometries
+from util.zerod_calibration.tools.file_io import (
+    STANDARD_0D_SUBDIR,
+    get_paths,
+    get_vmr_geometries,
+    standard_0d_dir,
+)
 
 JUNCTION_TYPE = DEFAULT_JUNCTION_TYPES[0]
 
@@ -188,13 +193,14 @@ def _ensure_cv_prerequisites(
     if not run_config_suffix:
         return
 
-    richter_dir = os.path.join(data_root, "zeroD", set_name, "richter-0d")
+    std_0d = standard_0d_dir(data_root, set_name)
     try:
-        geometries = get_vmr_geometries(richter_dir)
+        geometries = get_vmr_geometries(std_0d)
     except FileNotFoundError as e:
         raise FileNotFoundError(
             f"Cannot get geometry list: {e} "
-            "Ensure is only supported for sets with data/zeroD/<set_name>/richter-0d/."
+            f"Bootstrap ensure is only supported for sets with "
+            f"data/zeroD/<set_name>/{STANDARD_0D_SUBDIR}/."
         ) from e
 
     ml_inputs_dir = _data_path(data_root, "ml_inputs", set_name, run_config_suffix, geometry_variant)
