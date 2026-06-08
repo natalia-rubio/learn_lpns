@@ -25,11 +25,7 @@ import os
 import sys
 import numpy as np
 
-from util.zerod_calibration.file_io import read_centerline_vtp
-from util.zerod_calibration.junction_block_connectivity import (
-    ensure_block_connectivity_from_ids,
-    resolve_junction_vessel_ids,
-)
+from util.zerod_calibration.tools.file_io import read_centerline_vtp
 
 
 def get_path_length_from_gid_list(gid_list, centerline_data):
@@ -116,11 +112,6 @@ def extract_junction_centerline_paths(centerline_data, geometric_input):
 
     vessels   = geometric_input.get('vessels', [])
     junctions = geometric_input.get('junctions', [])
-    vessel_by_id = {int(v['vessel_id']): v for v in vessels if 'vessel_id' in v}
-    vessel_name_to_id = {
-        str(v['vessel_name']): int(v['vessel_id']) for v in vessels if v.get('vessel_name')
-    }
-    junction_names = {j.get('junction_name') for j in junctions if j.get('junction_name')}
 
     n_pts = len(gid)
 
@@ -152,18 +143,14 @@ def extract_junction_centerline_paths(centerline_data, geometric_input):
             jid_part = jid_part.split('_bif')[0]
         junction_bif_id = int(jid_part)
 
-        inlet_vessel_ids, outlet_vessel_ids = resolve_junction_vessel_ids(
-            junc, vessel_name_to_id, junction_names
-        )
+        inlet_vessel_ids  = junc.get('inlet_vessels', [])
+        outlet_vessel_ids = junc.get('outlet_vessels', [])
         if not inlet_vessel_ids or not outlet_vessel_ids:
             continue
 
         # Inlet vessel info
         inlet_id     = inlet_vessel_ids[0]
-        inlet_vessel = vessel_by_id.get(inlet_id)
-        if inlet_vessel is None:
-            print(f"  Warning: inlet vessel id {inlet_id} not found for {junc_name}, skipping")
-            continue
+        inlet_vessel = vessels[inlet_id]
         inlet_name   = inlet_vessel.get('vessel_name', '')
         inlet_branch = _get_branch_id_from_name(inlet_name)
 
@@ -189,10 +176,7 @@ def extract_junction_centerline_paths(centerline_data, geometric_input):
         junc_result = {}
 
         for vessel_id in outlet_vessel_ids:
-            vessel = vessel_by_id.get(vessel_id)
-            if vessel is None:
-                print(f"    Warning: outlet vessel id {vessel_id} not found, skipping")
-                continue
+            vessel      = vessels[vessel_id]
             vessel_name = vessel.get('vessel_name', '')
             b_id        = _get_branch_id_from_name(vessel_name)
 
@@ -380,7 +364,7 @@ def add_centerline_paths_to_config(geometric_input, junction_paths):
     return geometric_input
 
 
-def process_geometric_input(centerline_path, geometric_input_path, output_path=None, verbose=False):
+def process_geometric_input(centerline_path, geometric_input_path, output_path=None):
     """
     Read a geometric_input.json and its centerline VTP, extract per-junction
     centerline paths using BranchIdTmp, and save the augmented config as
@@ -395,8 +379,6 @@ def process_geometric_input(centerline_path, geometric_input_path, output_path=N
     output_path : str or None
         Output path.  If None, replaces the extension with
         '_centerline_input.json' in the same directory.
-    verbose : bool
-        If True, print per-outlet BranchIdTmp / connector / GID path summary (very chatty).
     """
     print(f"Reading centerline from: {centerline_path}")
     centerline_data, _ = read_centerline_vtp(centerline_path)
@@ -405,21 +387,15 @@ def process_geometric_input(centerline_path, geometric_input_path, output_path=N
     with open(geometric_input_path, 'r') as f:
         geometric_input = json.load(f)
 
-    ensure_block_connectivity_from_ids(geometric_input, validate=True)
-
-    if verbose:
-        print("Extracting junction centerline paths using BranchIdTmp ...")
+    print("Extracting junction centerline paths using BranchIdTmp ...")
     junction_paths = extract_junction_centerline_paths(centerline_data, geometric_input)
 
-    if verbose:
-        for jname, outlets in junction_paths.items():
-            for vname, info in outlets.items():
-                n_gids = len(info['path_gids'])
-                conn = info['connector_branch_id_tmps']
-                print(
-                    f"  {jname} -> {vname}: BranchIdTmp={info['outlet_branch_id_tmp']}, "
-                    f"connectors={conn}, {n_gids} GIDs"
-                )
+    for jname, outlets in junction_paths.items():
+        for vname, info in outlets.items():
+            n_gids = len(info['path_gids'])
+            conn = info['connector_branch_id_tmps']
+            print(f"  {jname} -> {vname}: BranchIdTmp={info['outlet_branch_id_tmp']}, "
+                  f"connectors={conn}, {n_gids} GIDs")
 
     add_centerline_paths_to_config(geometric_input, junction_paths)
 

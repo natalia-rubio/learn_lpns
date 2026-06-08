@@ -1,3 +1,8 @@
+"""
+Centerline and junction utilities for synthetic-junction workflows: load centerline
+geometry, identify junction locations/offsets, and process reduced 1D solution data.
+"""
+
 import os
 import sys
 import vtk

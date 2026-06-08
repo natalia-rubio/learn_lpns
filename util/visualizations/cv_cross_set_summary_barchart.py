@@ -14,7 +14,7 @@ Also shows a 95% confidence interval computed from standard deviation:
 
 Usage:
   python -m util.visualizations.cv_cross_set_summary_barchart
-  python -m util.visualizations.cv_cross_set_summary_barchart --run-config stenosis_off
+  python -m util.visualizations.cv_cross_set_summary_barchart --run_config gen_loss
   python -m util.visualizations.cv_cross_set_summary_barchart --metric pressure_max_error
 """
 
@@ -51,14 +51,12 @@ SET_DISPLAY_NAME = {
 }
 
 RUN_CONFIG_FALLBACK_ORDER = [
-    "stenosis_off_symmetric",
-    "stenosis_off",
-    "symmetric_penalty_off",
-    "symmetric_penalty_off_gen_loss",
-    "symmetric_gen_loss",
-    "penalty_off_gen_loss",
-    "penalty_off",
+    "gen_loss",
     "base",
+    "quadratic_resistor_gen_loss",
+    "quadratic_resistor_penalty_on_gen_loss",
+    "asymmetric_loss_gen_loss",
+    "asymmetric_loss",
 ]
 
 MODALITY_ORDER = [
@@ -70,12 +68,19 @@ MODALITY_ORDER = [
 ]
 
 MODALITY_LABEL = {
-    "geometric": "Baseline\n(Poiseuille)",
-    "BloodVesselJunction_NN": "Learned\nJunctions",
-    "NN_vessel": "Learned\nVessels",
-    "BloodVesselJunction_NN_plus_Vessel_NN": "Learned \n Junctions\nand Vessels",
-    "BloodVesselJunction": "Optimal\n(Fit to 3D)",
+    "geometric": ["Baseline", "(Poiseuille)"],
+    "NN_vessel": ["Learned", "Vessels"],
+    "BloodVesselJunction_NN": ["Learned", "Junctions"],
+    "BloodVesselJunction_NN_plus_Vessel_NN": ["Learned", "Junctions", "and Vessels"],
+    "BloodVesselJunction": ["Optimal", "(Fit to 3D)"],
 }
+
+
+def _multiline_label(display_spec):
+    """Convert a label spec (str or sequence of lines) to a newline-separated string."""
+    if isinstance(display_spec, (list, tuple)):
+        return "\n".join(str(line) for line in display_spec)
+    return str(display_spec)
 
 METRIC_CONFIG = {
     "pressure_max_rel_error": {
@@ -195,25 +200,25 @@ def main():
         description="Grouped bar chart: CV averages across set names, with 95% CI."
     )
     parser.add_argument(
-        "--set-names",
+        "--set_names",
         nargs="+",
         default=SET_NAMES_DEFAULT,
         help="Set names to include (default: VMR_rigid_aorta_adults_all VMR_abdo VMR_pulmo)",
     )
     parser.add_argument(
-        "--geometry-variant",
+        "--geometry_variant",
         default="bifurcations_EL",
         help="Geometry variant in CV summary filename (default: bifurcations_EL)",
     )
     parser.add_argument(
-        "--run-config",
-        default="stenosis_off_symmetric",
-        help="Run config subfolder under results/cross_validation/<set_name>/ (default: stenosis_off_symmetric)",
+        "--run_config",
+        default="gen_loss",
+        help="Run config subfolder under results/cross_validation/<set_name>/ (default: gen_loss)",
     )
     parser.add_argument(
-        "--allow-config-fallback",
+        "--allow_config_fallback",
         action="store_true",
-        help="If a set is missing --run-config, try common config fallbacks for that set.",
+        help="If a set is missing --run_config, try common config fallbacks for that set.",
     )
     parser.add_argument(
         "--metric",
@@ -222,7 +227,7 @@ def main():
         help="Metric to plot (default: pressure_max_rel_error)",
     )
     parser.add_argument(
-        "--data-root",
+        "--data_root",
         default="results",
         help="Root containing cross_validation folder (default: results)",
     )
@@ -239,7 +244,7 @@ def main():
         help="Figure DPI (default: 180)",
     )
     parser.add_argument(
-        "--ytick-fontsize",
+        "--ytick_fontsize",
         type=float,
         default=14,
         metavar="PT",
@@ -317,7 +322,7 @@ def main():
             edgecolor="black",
             linewidth=0.6,
             error_kw={"color": "black", "linewidth": 0.9},
-            label=MODALITY_LABEL[modality],
+            label=_multiline_label(MODALITY_LABEL[modality]),
         )
 
     # Max height (bar + error) for y-axis margin
@@ -369,16 +374,24 @@ def main():
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    n_legend = len(MODALITY_ORDER)
-    ax.legend(
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.18),
-        ncol=n_legend,
-        frameon=False,
-        fontsize=18,
-    )
+    # Column headers aligned with bar positions (same x offsets as bar labels below).
+    header_y = 1.04
+    header_fs = 10
+    x_center = float(np.mean(x))
+    for i, modality in enumerate(MODALITY_ORDER):
+        ax.text(
+            x_center + offsets[i],
+            header_y,
+            _multiline_label(MODALITY_LABEL[modality]),
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="bottom",
+            fontsize=header_fs,
+            color=_modality_color(modality),
+            linespacing=0.85,
+        )
 
-    plt.tight_layout(rect=(0, 0, 1, 0.88))
+    plt.tight_layout(rect=(0, 0, 1, 0.86))
 
     if args.output:
         out_path = args.output

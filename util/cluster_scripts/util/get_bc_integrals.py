@@ -1,3 +1,8 @@
+"""
+Integrate pressure/velocity on mesh surfaces and BC faces; provides get_res_names()
+used by projection scripts to discover result array names on 3D solutions.
+"""
+
 import os
 import vtk
 import argparse

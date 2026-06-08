@@ -1,3 +1,12 @@
+"""
+Legacy one-off 3D→centerline projection for a single CCO tree on Sherlock.
+
+Projects only branch_id==0 (main trunk) points and subsamples timesteps (every 20th frame).
+Hardcoded paths under /scratch/users/nrubio/synthetic_junctions/CCO/.
+
+Usage: python unsteady_tree_centerline_proj.py <tree_name> <num_procs>
+"""
+
 import os
 import sys
 import vtk

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Project a single-timestep 3D VTU onto SimVascular-style centerlines (Python only, no svSlicer).
+learn_lpns entry point: project 3D VTU(s) onto centerlines for TST-cohort (Python only, no svSlicer).
+
+Reuses project_results_python_fallback from batch_centerline_proj_svslicer.py.
 
 Expected TST-cohort layout:
 
@@ -21,7 +23,7 @@ Usage (from repo root; use the **svVasc_clean** conda env for VTK, meshio, numpy
 
   conda activate svVasc_clean
   cd /path/to/learn_lpns
-  PYTHONPATH=. python3 util/cluster_scripts/project_tst_cohort_centerline_python.py --dry-run
+  PYTHONPATH=. python3 util/cluster_scripts/project_tst_cohort_centerline_python.py --dry_run
   PYTHONPATH=. python3 util/cluster_scripts/project_tst_cohort_centerline_python.py --case TST-5
 
 One-liner without activating (sets ``PYTHONPATH`` in the subprocess):
@@ -129,17 +131,17 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--repo-root",
+        "--repo_root",
         default=REPO_ROOT,
         help="Repository root (default: inferred from this script).",
     )
     parser.add_argument(
-        "--three-d-root",
+        "--three_d_root",
         default=None,
         help="Case folders with VTUs (default: <repo>/data/threeD/TST-cohort).",
     )
     parser.add_argument(
-        "--one-d-root",
+        "--one_d_root",
         default=None,
         help="Case folders with centerlines / output (default: <repo>/data/oneD/TST-cohort).",
     )
@@ -160,7 +162,7 @@ def main() -> None:
         help="Parallel workers (default: env PYTHON_NUM_WORKERS or cpu_count-1).",
     )
     parser.add_argument(
-        "--dry-run",
+        "--dry_run",
         action="store_true",
         help="List jobs only; do not run projection.",
     )

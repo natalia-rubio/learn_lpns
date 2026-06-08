@@ -1,3 +1,9 @@
+"""
+Core 3D→centerline projection for a single timestep: slice the VTU at each centerline
+point (using CenterlineSectionNormal), integrate pressure and normal velocity, write
+arrays onto the centerline VTP. Import and call extract_results(fpath_1d, fpath_3d, fpath_out).
+"""
+
 import sys
 sys.path.append("/home/users/nrubio/SV_scripts")
 #from util.tools.basic import *

@@ -29,8 +29,13 @@ from util.data_processing.inputs_from_0d_config import (
 from util.data_processing.outputs_from_config import load_junction_lumped_parameters
 from util.data_processing.data_dict_from_csvs import build_data_dict_from_csvs, build_data_dict_from_vessel_csvs
 from util.data_processing.generate_split_indices import (
-    generate_split_indices,
+    build_geometry_index_map,
+    build_split_dict,
+    generate_geometry_split,
+    load_split_for_training,
+    resolve_flat_indices,
     resolve_geometry_row_ranges_from_jax_dict,
+    write_geometries_txt,
 )
 from util.tools.basic import save_dict
 from util.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
@@ -76,25 +81,23 @@ def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", dat
 
 def main():
     parser = argparse.ArgumentParser(description="Run the full data processing pipeline for NN training")
-    parser.add_argument("--set-name", required=True, help="Set name (e.g., VMR)")
-    parser.add_argument("--geometry-variant", default="all", 
+    parser.add_argument("--set_name", required=True, help="Set name (e.g., VMR)")
+    parser.add_argument("--geometry_variant", default="all", 
                        choices=["bifurcations", "bifurcations_EL", "all"],
                        help="Geometry variant (default: all - processes both bifurcations and bifurcations_EL)")
-    parser.add_argument("--set-type", default="test", help="Dataset split name used by NN (default: test)")
+    parser.add_argument("--set_type", default="all", help="Cohort folder tier for jax_arrays/split_indices (default: all; not the ML train/test split)")
     parser.add_argument("--geometries", nargs="+", default=None, 
                        help="List of geometries (e.g., 0063_1001 ...). If not provided, auto-discovers geometries with both CSV files.")
-    parser.add_argument("--output-type", default="rri", choices=["rri", "ri", "rr"], help="Target type (default: rri)")
-    parser.add_argument("--percent-train", type=float, default=0.8, help="Fraction of points used for training (default: 0.8)")
+    parser.add_argument("--percent_train", type=float, default=0.8, help="Fraction of points used for training (default: 0.8)")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for train/val split (default: 0)")
-    parser.add_argument("--data-root", default="data", help="Repo data root (default: data)")
+    parser.add_argument("--data_root", default="data", help="Repo data root (default: data)")
     parser.add_argument(
-        "--run-config",
+        "--run_config",
         default=DEFAULT_CLI_RUN_CONFIG,
         help="Run config suffix for path separation (default: %(default)s). "
         "ml_inputs/jax_arrays/split_indices use .../set_name/<suffix>/... "
-        "(e.g. stenosis_off_symmetric_gen_loss is a full duplicate path tree).",
+        "(e.g. gen_loss is a full duplicate path tree).",
     )
-    parser.add_argument("--normalize", action="store_true", help="Apply z-normalization to inputs/outputs (saves to separate _normalized pkl)")
     parser.add_argument("--verbose", action="store_true", help="Verbose printing")
     args = parser.parse_args()
     run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
@@ -142,12 +145,7 @@ def main():
                 _zero_d_base = os.path.join(args.data_root, "zeroD", args.set_name)
             csv_path = os.path.join(_ml_base, geometry_variant, geo, "geometric_features.csv")
             targets_csv_path = os.path.join(_ml_base, geometry_variant, geo, "junction_lumped_parameters.csv")
-            
-            # if os.path.exists(csv_path) and os.path.exists(targets_csv_path):
-            #     print(f"  Both CSV files already exist, skipping extraction for {geo}")
-            #     continue
 
-            # Determine geometric input path based on geometry variant
             if geometry_variant == "bifurcations_EL":
                 geometric_input_filename = "bifurcations_EL_geometric_input.json"
             else:
@@ -295,39 +293,33 @@ def main():
             print(f"Saved targets meta to {targets_meta_path}")
 
             # ---- Vessel CSVs (one row per non-connector vessel) ----
-            try:
-                X_v, feat_names_v, vessel_ids, vessel_names = load_vessel_geometric_features(
-                    geometric_input_path, verbose=args.verbose
-                )
-                vessel_ids_t, vessel_names_t, targets_v = load_vessel_targets_from_config(calib_output_path)
-            except Exception as e:
-                if args.verbose:
-                    print(f"  Skipping vessel CSVs for {geo}: {e}")
-                X_v, feat_names_v, vessel_ids, vessel_names = None, None, None, None
-                vessel_ids_t, vessel_names_t, targets_v = None, None, None
-            if X_v is not None and len(X_v) > 0:
-                # Align targets to feature order by vessel_id
-                tidx = {vid: i for i, vid in enumerate(vessel_ids_t)}
-                tgt_header = ["vessel_id", "vessel_name", "R_poiseuille", "stenosis_coefficient", "L"]
-                Y_v_rows = []
-                for i, vid in enumerate(vessel_ids):
-                    j = tidx.get(vid)
-                    if j is None:
-                        raise ValueError(f"Vessel id {vid} from features not found in targets for {geo}")
-                    Y_v_rows.append([vid, vessel_names[i], targets_v[j, 0], targets_v[j, 1], targets_v[j, 2]])
-                vessel_feat_path = os.path.join(os.path.dirname(csv_path), "vessel_geometric_features.csv")
-                vessel_tgt_path = os.path.join(os.path.dirname(csv_path), "vessel_lumped_parameters.csv")
-                with open(vessel_feat_path, "w") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(feat_names_v)
-                    for row in X_v:
-                        writer.writerow(row)
-                with open(vessel_tgt_path, "w") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(tgt_header)
-                    for row in Y_v_rows:
-                        writer.writerow(row)
-                print(f"Saved vessel features and targets to {vessel_feat_path}, {vessel_tgt_path}")
+            X_v, feat_names_v, vessel_ids, vessel_names = load_vessel_geometric_features(
+                geometric_input_path, verbose=args.verbose
+            )
+            vessel_ids_t, vessel_names_t, targets_v = load_vessel_targets_from_config(calib_output_path)
+            if len(X_v) == 0:
+                raise ValueError(f"No non-connector vessels found for {geo}")
+            tidx = {vid: i for i, vid in enumerate(vessel_ids_t)}
+            tgt_header = ["vessel_id", "vessel_name", "R_poiseuille", "stenosis_coefficient", "L"]
+            Y_v_rows = []
+            for i, vid in enumerate(vessel_ids):
+                j = tidx.get(vid)
+                if j is None:
+                    raise ValueError(f"Vessel id {vid} from features not found in targets for {geo}")
+                Y_v_rows.append([vid, vessel_names[i], targets_v[j, 0], targets_v[j, 1], targets_v[j, 2]])
+            vessel_feat_path = os.path.join(os.path.dirname(csv_path), "vessel_geometric_features.csv")
+            vessel_tgt_path = os.path.join(os.path.dirname(csv_path), "vessel_lumped_parameters.csv")
+            with open(vessel_feat_path, "w") as f:
+                writer = csv.writer(f)
+                writer.writerow(feat_names_v)
+                for row in X_v:
+                    writer.writerow(row)
+            with open(vessel_tgt_path, "w") as f:
+                writer = csv.writer(f)
+                writer.writerow(tgt_header)
+                for row in Y_v_rows:
+                    writer.writerow(row)
+            print(f"Saved vessel features and targets to {vessel_feat_path}, {vessel_tgt_path}")
 
         # ---- Build concatenated data_dict for NN training (across all geometries) ----
         try:
@@ -341,19 +333,20 @@ def main():
             data_dict = build_data_dict_from_csvs(
                 set_name=_set_name_build,
                 geometries=geometries,
-                output_type=args.output_type,
                 ml_inputs_root=_ml_root_build,
                 geometry_variant=geometry_variant,
-                normalize=args.normalize,
+                cohort_set_name=args.set_name,
+                run_config_suffix=run_config_suffix or None,
+                set_type=args.set_type,
+                data_root=args.data_root,
             )
 
-            norm_suffix = "_normalized" if args.normalize else ""
             if run_config_suffix:
                 jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, run_config_suffix, geometry_variant, args.set_type)
             else:
                 jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, geometry_variant, args.set_type)
             os.makedirs(jax_out_dir, exist_ok=True)
-            jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}{norm_suffix}.pkl")
+            jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}.pkl")
             save_dict(data_dict, jax_out_path)
             print(f"Wrote data_dict to {jax_out_path}")
 
@@ -363,9 +356,12 @@ def main():
                 geometries=geometries,
                 ml_inputs_root=_ml_root_build,
                 geometry_variant=geometry_variant,
-                normalize=args.normalize,
+                cohort_set_name=args.set_name,
+                run_config_suffix=run_config_suffix or None,
+                set_type=args.set_type,
+                data_root=args.data_root,
             )
-            vessel_jax_path = os.path.join(jax_out_dir, f"jax_arrays_vessel_num_geos_{num_geos}{norm_suffix}.pkl")
+            vessel_jax_path = os.path.join(jax_out_dir, f"jax_arrays_vessel_num_geos_{num_geos}.pkl")
             save_dict(vessel_data_dict, vessel_jax_path)
             n_vessel = vessel_data_dict["input"].shape[0]
             print(f"Wrote vessel data_dict to {vessel_jax_path} (n_vessel_rows={n_vessel})")
@@ -374,29 +370,20 @@ def main():
             if "input" not in data_dict:
                 raise ValueError("Expected 'input' in data_dict")
             num_pts = int(getattr(data_dict["input"], "shape")[0])
-            row_ranges, _, geometries_ordered = resolve_geometry_row_ranges_from_jax_dict(
-                data_dict,
-                os.path.join(args.data_root, "ml_inputs"),
-                args.set_name,
-                geometry_variant,
-                run_config_suffix=run_config_suffix,
-                geometries=geometries,
+            row_ranges, _, geometries_ordered = resolve_geometry_row_ranges_from_jax_dict(data_dict)
+            train_geometries, val_geometries = generate_geometry_split(
+                args.percent_train, args.seed, geometries_ordered
             )
-            train_ind, val_ind, train_geo_idx, val_geo_idx = generate_split_indices(
+            geometry_indices = build_geometry_index_map(data_dict, vessel_data_dict)
+            split_dict = build_split_dict(
+                train_geometries,
+                val_geometries,
+                geometry_indices,
+                num_offsets=1,
+                percent_train=float(args.percent_train),
+                seed=int(args.seed),
                 num_pts=num_pts,
-                percent_train=args.percent_train,
-                seed=args.seed,
-                geometry_row_ranges=row_ranges,
             )
-
-            train_geometries = [geometries_ordered[i] for i in train_geo_idx]
-            val_geometries = [geometries_ordered[i] for i in val_geo_idx]
-
-            split_dict = {
-                "train_ind": train_ind,
-                "val_ind": val_ind,
-                "num_offsets": 1,
-            }
 
             if run_config_suffix:
                 split_out_dir = os.path.join(args.data_root, "split_indices", args.set_name, run_config_suffix, geometry_variant, args.set_type)
@@ -407,23 +394,20 @@ def main():
             save_dict(split_dict, split_out_path)
 
             geometries_txt_path = split_out_path + "_geometries.txt"
-            with open(geometries_txt_path, "w") as f:
-                f.write("Train geometries:\n")
-                for g in train_geometries:
-                    f.write(f"  {g}\n")
-                f.write("Validation geometries:\n")
-                for g in val_geometries:
-                    f.write(f"  {g}\n")
+            write_geometries_txt(geometries_txt_path, train_geometries, val_geometries)
 
-            print(f"Wrote split indices to {split_out_path} (n_train={len(train_ind)}, n_val={len(val_ind)})")
+            n_train = len(resolve_flat_indices(split_dict, "junction", "train"))
+            n_val = len(resolve_flat_indices(split_dict, "junction", "val"))
+            print(f"Wrote split indices to {split_out_path} (n_train={n_train}, n_val={n_val})")
             print(f"Wrote geometry set assignment to {geometries_txt_path}")
             print("Train geometries:", train_geometries)
             print("Validation geometries:", val_geometries)
         except Exception as e:
-            print(f"  Skipping data_dict / jax_arrays / split for {geometry_variant}: {e}")
+            print(f"  Failed to build data_dict / jax_arrays / split for {geometry_variant}: {e}")
             if args.verbose:
                 import traceback
                 traceback.print_exc()
+            raise
 
 if __name__ == "__main__":
     main()

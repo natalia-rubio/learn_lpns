@@ -3,14 +3,15 @@
 Regenerate feature histogram figures for a given set and run config.
 
 Reads ML input CSVs from data/ml_inputs/{set_name}/{run_config}/{geometry_variant}/
-and saves histograms to results/feature_histograms/{set_name}/{geometry_variant}/.
-Empty numeric cells in CSVs are read as NaN and omitted from histogram counts.
+and saves histograms to data/feature_histograms/{set_name}/{run_config}/{geometry_variant}/{set_type}/.
 
-Example (base run config for VMR_rigid_aorta_adults, both geometry variants):
-  python -m util.data_processing.regenerate_feature_histograms VMR_rigid_aorta_adults --run-config base
+Example (quadratic_resistor_penalty_on_gen_loss for VMR_rigid_aorta_adults, both geometry variants):
+  python -m util.data_processing.regenerate_feature_histograms VMR_rigid_aorta_adults \\
+      --run_config quadratic_resistor_penalty_on_gen_loss
 
-Example (single geometry variant, custom output dir):
-  python -m util.data_processing.regenerate_feature_histograms VMR_rigid_aorta_adults --run-config base --geometry-variant bifurcations -o results/feature_histograms/VMR_rigid_aorta_adults
+Example (single geometry variant):
+  python -m util.data_processing.regenerate_feature_histograms VMR_rigid_aorta_adults \\
+      --run_config base --geometry_variant bifurcations
 """
 
 import argparse
@@ -22,7 +23,10 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from util.data_processing.run_data_processing import discover_geometries_with_csvs
-from util.data_processing.data_dict_from_csvs import build_data_dict_from_csvs
+from util.data_processing.data_dict_from_csvs import (
+    build_data_dict_from_csvs,
+    feature_histograms_dir,
+)
 
 
 def main():
@@ -34,38 +38,47 @@ def main():
         help="Set name; must match directory under data/ml_inputs/ (e.g., VMR_rigid_aorta_adults)",
     )
     parser.add_argument(
-        "--run-config",
-        default="base",
-        help="Run config suffix; CSVs read from data/ml_inputs/{set_name}/{run_config}/... (default: base)",
+        "--run_config",
+        default=None,
+        help="Run config suffix; CSVs read from data/ml_inputs/{set_name}/{run_config}/... "
+        "(omit for legacy layouts without a config subfolder)",
     )
     parser.add_argument(
-        "--geometry-variant",
+        "--geometry_variant",
         default="all",
         choices=["bifurcations", "bifurcations_EL", "all"],
         help="Geometry variant(s) to process (default: all)",
     )
     parser.add_argument(
-        "--data-root",
+        "--set_type",
+        default="all",
+        help="Cohort folder tier (default: all; matches jax_arrays layout)",
+    )
+    parser.add_argument(
+        "--data_root",
         default="data",
         help="Repo data root (default: data)",
     )
     parser.add_argument(
-        "-o", "--output-dir",
+        "-o", "--output_dir",
         default=None,
-        help="Base directory for histograms (default: results/feature_histograms/{set_name})",
+        help="Override histogram output directory (default: data/feature_histograms/... "
+        "mirroring jax_arrays path)",
     )
     args = parser.parse_args()
 
-    run_config = (args.run_config or "base").strip()
+    run_config = (args.run_config or "").strip() or None
     if args.geometry_variant == "all":
         variants = ["bifurcations", "bifurcations_EL"]
     else:
         variants = [args.geometry_variant]
 
-    base_out = args.output_dir or os.path.join("results", "feature_histograms", args.set_name)
-    ml_inputs_root = os.path.join(args.data_root, "ml_inputs", args.set_name, run_config)
-    # build_data_dict_from_csvs expects set_name="" when ml_inputs_root already includes set_name + run_config
-    set_name_for_path = ""
+    ml_inputs_root = (
+        os.path.join(args.data_root, "ml_inputs", args.set_name, run_config)
+        if run_config
+        else os.path.join(args.data_root, "ml_inputs", args.set_name)
+    )
+    set_name_for_path = "" if run_config else args.set_name
 
     for geometry_variant in variants:
         geometries = discover_geometries_with_csvs(
@@ -78,19 +91,29 @@ def main():
             print(f"No geometries found for {args.set_name}/{run_config}/{geometry_variant}; skipping.")
             continue
 
-        histogram_dir = os.path.join(base_out, geometry_variant)
-        print(f"Regenerating histograms for {args.set_name} run_config={run_config} {geometry_variant} ({len(geometries)} geos) -> {histogram_dir}")
+        histogram_dir = args.output_dir or feature_histograms_dir(
+            args.set_name,
+            geometry_variant,
+            set_type=args.set_type,
+            run_config_suffix=run_config,
+            data_root=args.data_root,
+        )
+        print(
+            f"Regenerating histograms for {args.set_name} run_config={run_config} "
+            f"{geometry_variant} ({len(geometries)} geos) -> {histogram_dir}"
+        )
 
         build_data_dict_from_csvs(
             set_name=set_name_for_path,
             geometries=geometries,
-            output_type="rri",
             ml_inputs_root=ml_inputs_root,
             plot_histograms=True,
             histogram_output_dir=histogram_dir,
             geometry_variant=geometry_variant,
-            normalize=False,
-            allow_nan_in_ml_csvs=True,
+            cohort_set_name=args.set_name,
+            run_config_suffix=run_config,
+            set_type=args.set_type,
+            data_root=args.data_root,
         )
 
     print("Done.")

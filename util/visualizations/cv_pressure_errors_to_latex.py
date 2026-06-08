@@ -17,28 +17,18 @@ import math
 import os
 import statistics
 
+from util.zerod_calibration.modality_paths import DEFAULT_MODALITY_ORDER, MODALITY_DISPLAY
+
 
 # Modality keys (column order in CSV/code)
-MODALITY_KEYS = [
-    "geometric",
-    "BloodVesselJunction_NN",
-    "NN_vessel",
-    "BloodVesselJunction_NN_plus_Vessel_NN",
-    "BloodVesselJunction",
-]
+MODALITY_KEYS = list(DEFAULT_MODALITY_ORDER)
 
 # Display names for the table header: modality key (code) -> display.
 # Value = string (single-line header) or list of strings (multi-line via \\shortstack).
 MODALITY_DISPLAY = {
+    **MODALITY_DISPLAY,
     # Reference time series (location comparison plots only; not a CV summary column)
     "3d_model": [r"3D", r"Solution"],
-    "geometric": [r"Poiseuille", r"(Baseline)"],
-    "BloodVesselJunction_NN": [r"Learned", r"Junctions"],
-    "NN_vessel": [r"Learned", r"Vessels"],
-    "BloodVesselJunction_NN_plus_Vessel_NN": [
-        r"Learned",  r"Junctions", r"and Vessels"
-    ],
-    "BloodVesselJunction": [r"Optimal", r"Fit to 3D"],
     # Calibrated $\Delta P = 0$ junction (not in default CV bar chart columns)
     "NORMAL_JUNCTION": [r"$\Delta P = 0$", r"Junction"],
 }
@@ -152,14 +142,14 @@ def main():
         help="Output .tex file (default: print to stdout)",
     )
     parser.add_argument(
-        "--data-root",
+        "--data_root",
         default="results",
         help="Root for results/cross_validation (default: results)",
     )
     parser.add_argument(
-        "--run-config",
+        "--run_config",
         default="base",
-        help="Run-config subfolder (default: base). Use e.g. stenosis_off or normalized_clip when CV was run with that config.",
+        help="Run-config subfolder (default: base). Use e.g. gen_loss or quadratic_resistor_penalty_on_gen_loss when CV was run with that config.",
     )
     args = parser.parse_args()
 

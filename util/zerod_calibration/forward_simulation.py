@@ -1,115 +1,28 @@
 import os
 import json
-import numpy as np
-import pandas as pd
-import importlib.util
-import sys
 import copy
 import subprocess
-# try:
-#     import pysvzerod
-# except ImportError:
-#     print("Warning: pysvzerod not found. Calibration will not be available.")
-#     print("Install with: pip install svzerodsolver")
-#     pysvzerod = None
 
-# # Try to import CasADi solver as fallback
-try:
-    import pandas as pd
-    HAS_PANDAS = True
-except ImportError:
-    #print("Warning: pandas not found. CasADi fallback will not be available.")
-    HAS_PANDAS = False
-    pd = None
+import numpy as np
+import pandas as pd
 
-if HAS_PANDAS:
-    try:
-        # Import solve_casadi_unsteady from the casadi module
-        casadi_module_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'casadi', 'svzerod_with_casadi.py')
-        if os.path.exists(casadi_module_path):
-            import importlib.util
-            # Read the module file and make problematic imports optional
-            with open(casadi_module_path, 'r') as f:
-                module_code = f.read()
-            
-            # Replace matplotlib import with try/except to make it optional
-            # This allows the module to load even if matplotlib has compatibility issues
-            module_code = module_code.replace(
-                'import matplotlib',
-                'try:\n    import matplotlib\nexcept (ImportError, AttributeError):\n    matplotlib = None'
-            )
-            
-            # Make the util.tools.basic import optional (it's from a different project)
-            module_code = module_code.replace(
-                'from util.tools.basic import save_dict',
-                'try:\n    from util.tools.basic import save_dict\nexcept (ImportError, ModuleNotFoundError):\n    def save_dict(*args, **kwargs):\n        pass  # Optional function, not needed for solve_casadi_unsteady'
-            )
-            
-            # Remove the sys.path.append that points to a different project
-            module_code = module_code.replace(
-                'sys.path.append("/Users/natalia/Desktop/cco_bifurcations")',
-                '# sys.path.append("/Users/natalia/Desktop/cco_bifurcations")  # Commented out - not needed'
-            )
-            
-            # Create a temporary module from the modified code
-            spec = importlib.util.spec_from_loader("svzerod_with_casadi", loader=None)
-            casadi_module = importlib.util.module_from_spec(spec)
-            
-            # Temporarily modify sys.path to avoid errors in the imported module
-            original_path = sys.path.copy()
-            try:
-                # Execute the modified module code
-                exec(compile(module_code, casadi_module_path, 'exec'), casadi_module.__dict__)
-                solve_casadi_unsteady = casadi_module.solve_casadi_unsteady
-                HAS_CASADI = True
-            except Exception as e:
-                print(f"Warning: Could not load CasADi solver module: {e}")
-                import traceback
-                traceback.print_exc()
-                solve_casadi_unsteady = None
-                HAS_CASADI = False
-            finally:
-                sys.path = original_path
-        else:
-            solve_casadi_unsteady = None
-            HAS_CASADI = False
-    except Exception as e:
-        print(f"Warning: Could not set up CasADi fallback: {e}")
-        solve_casadi_unsteady = None
-        HAS_CASADI = False
-else:
-    solve_casadi_unsteady = None
-    HAS_CASADI = False
-
-from util.zerod_calibration.zerod_handling import normalize_junction_types_for_svzerodsolver
-
-
-def run_forward_simulation(input_json_path, output_csv_path, strict: bool = False):
+def run_forward_simulation(input_json_path, output_csv_path):
     """
     Run forward 0D simulation and save results to CSV.
     Uses svzerodsolver executable at /Users/natalia/cursor_access/svZeroDPlus/Release/svzerodsolver.
-    On solver failure, optionally raises instead of writing an all-zeros placeholder CSV.
+    Verifies that inlet flow matches the boundary condition.
 
     Args:
         input_json_path: Path to 0D input JSON file
         output_csv_path: Path to save CSV results
-        strict: If True, re-raise when svzerodsolver fails (nonzero exit, timeout, missing output).
-            If False (default), write an all-zeros CSV and continue (legacy behavior).
 
     Returns:
-        None (results written to ``output_csv_path``).
+        None (results written to output_csv_path)
     """
-    import subprocess
-    import copy
-    
     svzerodsolver_path = '/Users/natalia/cursor_access/svZeroDPlus/Release/svzerodsolver'
     
     if not os.path.exists(svzerodsolver_path):
-        if HAS_CASADI and HAS_PANDAS and solve_casadi_unsteady is not None:
-            print(f"  Warning: svzerodsolver executable not found at {svzerodsolver_path}")
-            print(f"  Falling back to CasADi solver...")
-        else:
-            raise RuntimeError(f"svzerodsolver executable not found at {svzerodsolver_path} and CasADi fallback not available.")
+        raise RuntimeError(f"svzerodsolver executable not found at {svzerodsolver_path}")
     
     print(f"Running forward simulation from: {input_json_path}")
     
@@ -135,16 +48,9 @@ def run_forward_simulation(input_json_path, output_csv_path, strict: bool = Fals
                 del input_data_sim['y']
             if 'dy' in input_data_sim:
                 del input_data_sim['dy']
-
-            n_internal_fixed = normalize_junction_types_for_svzerodsolver(input_data_sim)
-
+            
             # Write temporary input file for svzerodsolver (use original input path if it's already clean)
-            use_temp = (
-                'calibration_parameters' in input_data
-                or 'y' in input_data
-                or 'dy' in input_data
-                or n_internal_fixed > 0
-            )
+            use_temp = ('calibration_parameters' in input_data or 'y' in input_data or 'dy' in input_data)
             if use_temp:
                 temp_input_path = input_json_path_str + '.temp'
                 with open(temp_input_path, 'w') as f:
@@ -232,10 +138,8 @@ def run_forward_simulation(input_json_path, output_csv_path, strict: bool = Fals
             # Return None since we're using CSV output, not a results dictionary
             return None
         except Exception as e:
-            if strict:
-                raise
             print(f"  ✗ svzerodsolver simulation failed: {e}")
-            print(f"  Creating all-zeros solution instead of falling back to CasADi...")
+            print(f"  Creating all-zeros solution as fallback...")
             
             # Create all-zeros solution
             try:

@@ -23,6 +23,7 @@ from util.visualizations.cv_pressure_errors_to_latex import (
     format_modality_display_for_legend,
     MODALITY_DISPLAY,
 )
+from util.zerod_calibration.tools.file_io import read_zerod_csv
 
 # Suppress matplotlib warnings about redundant linestyle
 warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
@@ -125,14 +126,6 @@ LINE_STYLES = {
         'linewidth': 5,
         'label': '0D Poiseuille',
         'alpha': 0.75,
-    },
-    # Empirical stenosis-off forward (same network, stenosis coefficients set to zero)
-    'stenosis_zero': {
-        'color': '#c62828',
-        'linestyle': '-',
-        'linewidth': 4,
-        'label': '0D (stenosis=0)',
-        'alpha': 0.85,
     },
     # Original geometry calibrated results
     'original_NORMAL_JUNCTION': {
@@ -431,57 +424,6 @@ def parse_location(location):
             return source, target, source, False, 'outlet'
         else:
             return source, target, target, True, 'inlet'
-
-
-def read_zerod_csv(csv_path):
-    """
-    Read 0D simulation results from CSV.
-    Handles both 'location' and 'name' as the vessel identifier column.
-    
-    Returns:
-        results: Dictionary {location: {time: {field: value}}}
-        times: Sorted list of time values
-    """
-    results = {}
-    times = set()
-    
-    if not os.path.exists(csv_path):
-        return results, sorted(times)
-    
-    with open(csv_path, 'r') as f:
-        reader = csv.DictReader(f)
-        # Check which column name is used for vessel identifier
-        fieldnames = reader.fieldnames
-        if fieldnames is None:
-            return results, sorted(times)
-        
-        vessel_col = None
-        if 'location' in fieldnames:
-            vessel_col = 'location'
-        elif 'name' in fieldnames:
-            vessel_col = 'name'
-        else:
-            return results, sorted(times)
-        
-        for row in reader:
-            location = row[vessel_col]
-            time = float(row['time'])
-            times.add(time)
-            
-            if location not in results:
-                results[location] = {}
-            if time not in results[location]:
-                results[location][time] = {}
-            
-            # Extract all numeric fields
-            for key, value in row.items():
-                if key not in [vessel_col, 'time']:
-                    try:
-                        results[location][time][key] = float(value)
-                    except (ValueError, TypeError):
-                        continue
-    
-    return results, sorted(times)
 
 
 def build_vessel_name_mapping(bifurcations_geometric_input_path, el_geometric_input_path):
@@ -1006,22 +948,12 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
             # Find index where time >= zoom_time_end (or use last index)
             zoom_end_idx = min(np.searchsorted(times_geo, zoom_time_end, side='right'), num_time_steps)
     
-    # Validate zoom window (end index exclusive, same convention as MSE post_processing)
+    # Validate zoom window
     zoom_start_idx = max(0, min(zoom_start_idx, num_time_steps - 1))
-    zoom_end_idx = min(int(zoom_end_idx), num_time_steps)
-    zoom_end_idx = max(zoom_start_idx + 1, zoom_end_idx)
-
+    zoom_end_idx = min(zoom_end_idx, num_time_steps)
+    
     if zoom_start_idx >= zoom_end_idx:
-        if num_time_steps >= 2:
-            if num_time_steps == 2:
-                zoom_start_idx, zoom_end_idx = 1, 2
-            else:
-                zoom_start_idx, zoom_end_idx = num_time_steps - 1, num_time_steps
-        else:
-            raise ValueError(
-                f"Zoom window invalid and fewer than 2 time steps ({num_time_steps}). "
-                f"Got zoom_start_idx={zoom_start_idx}, zoom_end_idx={zoom_end_idx}"
-            )
+        raise ValueError(f"Zoom window calculation failed. Using fallback: {zoom_start_idx} to {zoom_end_idx}")
     zoom_times = times_geo[zoom_start_idx:zoom_end_idx]
     time_zoom_start = zoom_times[0] if len(zoom_times) > 0 else times_geo[0]
     time_zoom_end = zoom_times[-1] if len(zoom_times) > 0 else times_geo[-1]
@@ -1319,27 +1251,27 @@ def main():
     parser = argparse.ArgumentParser(
         description="Plot pressure and flow comparison at any location in the network"
     )
-    parser.add_argument('--set-name', required=True, help='Set name (e.g., set_3, VMR)')
-    parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., tree_007, 0063_1001)')
+    parser.add_argument('--set_name', required=True, help='Set name (e.g., set_3, VMR)')
+    parser.add_argument('--geo_name', required=True, help='Geometry name (e.g., tree_007, 0063_1001)')
     parser.add_argument('--location', help='Specific location to plot (e.g., "INFLOW:branch0_seg0" or "branch0_seg0:J0")')
-    parser.add_argument('--calibration-input', help='Path to calibration input JSON (default: auto-detect)')
-    parser.add_argument('--geometric-csv', help='Path to geometric 0D results CSV (default: auto-detect)')
-    parser.add_argument('--junction-types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
+    parser.add_argument('--calibration_input', help='Path to calibration input JSON (default: auto-detect)')
+    parser.add_argument('--geometric_csv', help='Path to geometric 0D results CSV (default: auto-detect)')
+    parser.add_argument('--junction_types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
                        default='original_NORMAL_JUNCTION,bifurcations_NORMAL_JUNCTION,original_BloodVesselJunction,bifurcations_BloodVesselJunction',
                        help='Comma-separated junction types to plot (e.g., original_NORMAL_JUNCTION,bifurcations_BloodVesselJunction)')
-    parser.add_argument('--run-config', default='base',
-                        help='Run config name for output subfolder (e.g., base, stenosis_off)')
-    parser.add_argument('--output-dir', default='results/location_comparison', 
+    parser.add_argument('--run_config', default='base',
+                        help='Run config name for output subfolder (e.g., base, gen_loss)')
+    parser.add_argument('--output_dir', default='results/location_comparison', 
                         help='Output directory for plots (run-config subfolder is appended)')
-    parser.add_argument('--data-dir', default='data/zeroD', 
+    parser.add_argument('--data_dir', default='data/zeroD', 
                         help='Data directory for input files')
-    parser.add_argument('--geometry-variant', default=None,
+    parser.add_argument('--geometry_variant', default=None,
                         help='Geometry variant (e.g. bifurcations_EL). When set, also load NN modalities from {variant}_NN_*_results.csv if present.')
-    parser.add_argument('--time-period', type=float, default=None,
+    parser.add_argument('--time_period', type=float, default=None,
                         help='Time period in seconds (default: auto-detect)')
-    parser.add_argument('--zoom-start', type=int, default=None,
+    parser.add_argument('--zoom_start', type=int, default=None,
                         help='Start index for zoom window')
-    parser.add_argument('--zoom-end', type=int, default=None,
+    parser.add_argument('--zoom_end', type=int, default=None,
                         help='End index for zoom window')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Print detailed information')
@@ -1351,7 +1283,7 @@ def main():
         sys.exit(1)
     
     if not args.junction_types:
-        print("Error: No valid junction types (--junction-types must be a non-empty comma-separated list).")
+        print("Error: No valid junction types (--junction_types must be a non-empty comma-separated list).")
         sys.exit(1)
     
     # Auto-detect file paths

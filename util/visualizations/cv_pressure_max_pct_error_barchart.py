@@ -13,8 +13,8 @@ Supported metrics (--metric):
 Usage:
   python -m util.visualizations.cv_pressure_max_pct_error_barchart VMR_rigid_aorta_adults bifurcations_EL
   python -m util.visualizations.cv_pressure_max_pct_error_barchart VMR_rigid_aorta_adults bifurcations_EL --metric pressure_max_error
-  python -m util.visualizations.cv_pressure_max_pct_error_barchart --all-sets
-  python -m util.visualizations.cv_pressure_max_pct_error_barchart --all-sets bifurcations_EL
+  python -m util.visualizations.cv_pressure_max_pct_error_barchart --all_sets
+  python -m util.visualizations.cv_pressure_max_pct_error_barchart --all_sets bifurcations_EL
 """
 
 import argparse
@@ -30,15 +30,14 @@ from scipy import stats as scipy_stats
 
 from util.visualizations.plot_location_comparison import get_line_style
 from util.visualizations.cv_pressure_errors_to_latex import MODALITY_DISPLAY, VAL_GEOMETRY_DISPLAY
+from util.zerod_calibration.modality_paths import DEFAULT_MODALITY_ORDER
+from util.zerod_calibration.run_config_canonical import (
+    discover_run_config_suffixes,
+    resolve_run_config_suffix,
+)
 
-# Bar / legend order (Learned Vessels before Learned Junctions; LaTeX table may differ)
-MODALITY_KEYS = [
-    "geometric",
-    "NN_vessel",
-    "BloodVesselJunction_NN",
-    "BloodVesselJunction_NN_plus_Vessel_NN",
-    "BloodVesselJunction",
-]
+# Bar / legend order (matches MSE / LaTeX table column order)
+MODALITY_KEYS = list(DEFAULT_MODALITY_ORDER)
 
 # Map bar-chart modality key -> style key in plot_location_comparison (for color only)
 MODALITY_STYLE_KEY = {
@@ -48,18 +47,6 @@ MODALITY_STYLE_KEY = {
     "BloodVesselJunction_NN_plus_Vessel_NN": "BloodVesselJunction_NN_plus_Vessel_NN",
     "BloodVesselJunction": "BloodVesselJunction",
 }
-
-RUN_CONFIGS = [
-    "base",
-    "stenosis_off",
-    "stenosis_off_symmetric",
-    "stenosis_off_symmetric_gen_loss",
-    "penalty_off",
-    "penalty_off_gen_loss",
-    "symmetric_penalty_off_gen_loss",
-    "symmetric_gen_loss",
-    "symmetric_penalty_off",
-]
 
 METRIC_CONFIG = {
     "pressure_max_rel_error": {
@@ -239,7 +226,7 @@ def main():
         description="Bar chart of a pressure error metric per trial and mean, by modality."
     )
     parser.add_argument(
-        "--all-sets",
+        "--all_sets",
         action="store_true",
         help="Generate plots for every set_name under <data-root>/cross_validation/ (ignores set_name positional).",
     )
@@ -247,7 +234,7 @@ def main():
         "set_name",
         nargs="?",
         default=None,
-        help="Set name (e.g., VMR_rigid_aorta_adults). Omit when using --all-sets.",
+        help="Set name (e.g., VMR_rigid_aorta_adults). Omit when using --all_sets.",
     )
     parser.add_argument(
         "geometry_variant",
@@ -264,18 +251,18 @@ def main():
     parser.add_argument(
         "--output", "-o",
         default=None,
-        help="Output file (only when a single set, single run-config, and single metric; not with --all-sets)",
+        help="Output file (only when a single set, single run-config, and single metric; not with --all_sets)",
     )
     parser.add_argument(
-        "--data-root",
+        "--data_root",
         default="results",
         help="Root for results/cross_validation (default: results)",
     )
     parser.add_argument(
-        "--run-config",
+        "--run_config",
         default="all",
-        choices=["all"] + RUN_CONFIGS,
-        help="Run config subfolder (default: all). Use e.g. stenosis_off or symmetric_penalty_off_gen_loss for a single config.",
+        help="Run config subfolder (default: all = discover under each set). "
+        "Pass a token string or canonical suffix (e.g. gen_loss, quadratic_resistor_gen_loss).",
     )
     parser.add_argument(
         "--dpi",
@@ -287,28 +274,40 @@ def main():
 
     if args.all_sets:
         if args.set_name is not None:
-            parser.error("Do not pass set_name when using --all-sets")
+            parser.error("Do not pass set_name when using --all_sets")
         set_names = discover_cross_validation_set_names(args.data_root)
         if not set_names:
             parser.error(
                 f"No subdirectories found under {os.path.join(args.data_root, 'cross_validation')}"
             )
-        print(f"--all-sets: found {len(set_names)} set(s): {', '.join(set_names)}")
+        print(f"--all_sets: found {len(set_names)} set(s): {', '.join(set_names)}")
     elif args.set_name is None:
-        parser.error("set_name is required unless you pass --all-sets")
+        parser.error("set_name is required unless you pass --all_sets")
     else:
         set_names = [args.set_name]
 
-    run_configs = RUN_CONFIGS if args.run_config == "all" else [args.run_config]
+    resolved_run_config = None
+    if args.run_config != "all":
+        try:
+            resolved_run_config = resolve_run_config_suffix(args.run_config)
+        except ValueError as e:
+            parser.error(str(e))
+
     metrics = list(METRIC_CONFIG.keys()) if args.metric == "all" else [args.metric]
     single_output = (
         len(set_names) == 1
-        and len(run_configs) == 1
+        and args.run_config != "all"
         and len(metrics) == 1
         and not args.all_sets
     )
 
     for set_name in set_names:
+        if args.run_config == "all":
+            run_configs = discover_run_config_suffixes(
+                os.path.join(args.data_root, "cross_validation", set_name)
+            )
+        else:
+            run_configs = [resolved_run_config]
         for rc in run_configs:
             out_dir = os.path.join(args.data_root, "cross_validation", set_name, rc)
             if not os.path.isdir(out_dir):

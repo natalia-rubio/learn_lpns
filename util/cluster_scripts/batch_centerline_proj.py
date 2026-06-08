@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Batch script to project 3D simulation results onto centerlines for all completed simulations.
-Loops over all sets and geometries in CCO_trees directory structure.
+Batch 3D→centerline projection (pure Python, no svSlicer) for Sherlock CCO_trees sets.
+
+Loops geometries in a set, projects every timestep onto the centerline sequentially,
+and writes unsteady_soln.vtp under synthetic_junctions_reduced_results/.
+
+Usage: python batch_centerline_proj.py <set_name> [num_procs]
 """
 
 import os

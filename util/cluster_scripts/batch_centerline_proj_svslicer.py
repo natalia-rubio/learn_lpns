@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
-Batch script to project 3D simulation results onto centerlines using svSlicer.
-First combines all timestep VTU files into a single multi-timestep VTU file,
-then calls svSlicer for fast processing.
+Batch 3D→centerline projection for Sherlock CCO_trees sets (primary batch pipeline).
+
+Combines per-timestep VTUs, tries svSlicer, then falls back to batched svSlicer or
+parallel Python projection (project_results_python_fallback). Set SVSLICER_USE_PYTHON_ONLY=1
+to skip svSlicer entirely.
+
+Usage: python batch_centerline_proj_svslicer.py <set_name> [num_procs] [num_threads]
 """
 
 import os

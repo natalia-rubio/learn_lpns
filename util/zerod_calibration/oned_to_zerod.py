@@ -4,16 +4,14 @@ Helper functions for calibration workflow.
 """
 
 import os
-import re
 import vtk
 import numpy as np
 import xml.etree.ElementTree as ET
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 import json
-from util.zerod_calibration.file_io import read_centerline_vtp
-from util.zerod_calibration.file_io import parse_simulation_xml
-from util.zerod_calibration.file_io import VMR_time_step_dict
-from util.zerod_calibration.bifurcation_splitting import junction_uses_block_connectivity
+from util.zerod_calibration.tools.file_io import read_centerline_vtp
+from util.zerod_calibration.tools.file_io import parse_simulation_xml
+from util.zerod_calibration.tools.file_io import VMR_time_step_dict
 
 try:
     from scipy.interpolate import CubicSpline, interp1d
@@ -26,42 +24,7 @@ except (ImportError, ValueError, AttributeError):
     except (ImportError, ValueError, AttributeError):
         CubicSpline = None
 
-
-def _is_tst_cohort_path(path: str) -> bool:
-    """True for TST benchmark centerline solutions (no SimVascular XML next to geo)."""
-    if not path:
-        return False
-    p = path.replace("\\", "/")
-    return "TST-cohort" in p
-
-
-def enforce_zero_dy_for_steady_flow(observations, num_pressure_timesteps):
-    """
-    Set every dy series to zeros when the 1D solution has a single time point (steady flow).
-
-    Call after building observations so calibration never sees non-zero time derivatives
-    for steady-state 1D fields.
-    """
-    if num_pressure_timesteps is None or num_pressure_timesteps > 1:
-        return
-    y = observations.get("y") or {}
-    dy = observations.get("dy")
-    if not dy:
-        return
-    for k in list(dy.keys()):
-        yv = y.get(k)
-        n = len(yv) if yv is not None else len(dy[k])
-        dy[k] = [0.0] * n
-
-
-def extract_observations_from_1d(
-    centerline_soln_path,
-    geometric_input_path,
-    geo_dir=None,
-    start_idx=0,
-    derivative_method="central",
-    verbose=False,
-):
+def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0, derivative_method='central'):
     """
     Extract observation data from 1D centerline solution VTP file.
     Extracts observations at boundaries and junctions following the format expected by svZeroDCalibrator.
@@ -70,14 +33,11 @@ def extract_observations_from_1d(
         centerline_soln_path: Path to centerline solution VTP (with pressure/velocity arrays)
         geometric_input_path: Path to geometric 0D input JSON (to understand vessel/junction structure)
         geo_dir: Geometry directory containing XML file (optional, will try to infer from paths)
-        start_idx: Starting index for observations (default: 0). Observations are taken as
-            ``p_ref[start_idx:end_idx]`` with ``end_idx`` defaulting to None (through end of series).
-            Note: ``end_idx=-1`` would wrongly drop the last sample for single-timestep data.
+        start_idx: Starting index for observations (default: 0). Observations will be sliced from this index.
         derivative_method: Method for computing derivatives ('central', 'forward', or 'backward', default: 'forward').
                           'central' uses central differences (np.gradient), 
                           'forward' uses forward differences (f[i+1] - f[i]) / dt,
                           'backward' uses backward differences (f[i] - f[i-1]) / dt.
-        verbose: If True, print per-junction centerline point indices used for extraction.
         
     Returns:
         Dictionary with observation data (y, dy) for calibration
@@ -100,7 +60,7 @@ def extract_observations_from_1d(
     # Find all timestep arrays
     pressure_timesteps = []
     flow_timesteps = []
-    end_idx = None  # slice to end; do not use -1 (excludes last point, empty for len-1 series)
+    end_idx = -1
     
     for key in centerline_data.keys():
         if key.startswith('pressure_'):
@@ -152,18 +112,10 @@ def extract_observations_from_1d(
             time_step_size = sim_params['time_step_size']
             print(f"  Found XML time_step_size: {time_step_size:.6f} s")
             print(f"  Timestep increment in solution: {timestep_increment}")
-    # If we are using a VMR type geometry, get the dt from dictionary
-    elif "priya" in centerline_soln_path:
-        time_step_size = 0.001
-        print(f"Assume Priya always uses a time step size of 0.001 s")
     elif 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
         time_step_size = VMR_time_step_dict[geometry_name]
         print(f"  Found time_step_size in VMR dictionary: {time_step_size:.6f} s")
-    elif _is_tst_cohort_path(centerline_soln_path):
-        # No fluid_simulation XML for TST; dt only matters when len(times) > 1.
-        time_step_size = 1.0
-        print("  TST-cohort: no XML; using nominal time_step_size=1.0 s")
     else:
         raise ValueError("Could not find time_step_size in XML or VMR dictionary")
     
@@ -410,50 +362,10 @@ def extract_observations_from_1d(
                     # observations["y"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
                     # observations["dy"][f"flow:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
     
-    junction_name_set_obs1d = {j.get("junction_name") for j in junctions if j.get("junction_name")}
-
-    def _point_for_block_neighbor(block_name: str, *, vessel_prefer_end: bool):
-        """Centerline index for a vessel or junction block name (junction requires node-id workflow)."""
-        if block_name in junction_name_set_obs1d:
-            raise ValueError(
-                f"Block-linked junction uses neighbor {block_name!r} without GlobalNodeId mapping. "
-                "Use extract_observations_from_1d_with_node_ids for this geometry."
-            )
-        if block_name not in vessel_name_to_idx:
-            raise ValueError(f"Unknown vessel block {block_name!r} in junction connectivity.")
-        return find_point_for_vessel_segment(block_name, prefer_end=vessel_prefer_end)
-
     # Extract observations at junctions
     # For each junction, extract data for vessels connected to it
     for junc in junctions:
         junc_name = junc.get('junction_name', '')
-        if junction_uses_block_connectivity(junc):
-            inlet_blocks = junc.get("inlet_blocks") or []
-            outlet_blocks = junc.get("outlet_blocks") or []
-            for ib in inlet_blocks:
-                pt_idx = _point_for_block_neighbor(ib, vessel_prefer_end=True)
-                if verbose:
-                    print(f"{ib}:{junc_name} inlet point index (block): {pt_idx}")
-                if pt_idx is not None:
-                    p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
-                    if p_ref is not None:
-                        observations["y"][f"pressure:{ib}:{junc_name}"] = p_ref[start_idx:end_idx]
-                        observations["dy"][f"pressure:{ib}:{junc_name}"] = p_der[start_idx:end_idx]
-                        observations["y"][f"flow:{ib}:{junc_name}"] = f_ref[start_idx:end_idx]
-                        observations["dy"][f"flow:{ib}:{junc_name}"] = f_der[start_idx:end_idx]
-            for ob in outlet_blocks:
-                pt_idx = _point_for_block_neighbor(ob, vessel_prefer_end=False)
-                if verbose:
-                    print(f"{junc_name}:{ob} outlet point index (block): {pt_idx}")
-                if pt_idx is not None:
-                    p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
-                    if p_ref is not None:
-                        observations["y"][f"pressure:{junc_name}:{ob}"] = p_ref[start_idx:end_idx]
-                        observations["dy"][f"pressure:{junc_name}:{ob}"] = p_der[start_idx:end_idx]
-                        observations["y"][f"flow:{junc_name}:{ob}"] = f_ref[start_idx:end_idx]
-                        observations["dy"][f"flow:{junc_name}:{ob}"] = f_der[start_idx:end_idx]
-            continue
-
         inlet_vessel_ids = junc.get('inlet_vessels', [])
         outlet_vessel_ids = junc.get('outlet_vessels', [])
         
@@ -468,8 +380,7 @@ def extract_observations_from_1d(
                 # This is approximate - ideally we'd find the exact junction point
                 # Find a point representing this 0D vessel segment (near the junction)
                 pt_idx = find_point_for_vessel_segment(vessel_name, prefer_end=True)
-                if verbose:
-                    print(f"{vessel_name}:{junc_name} inlet point index: {pt_idx}")
+                print(f"{vessel_name}:{junc_name} inlet point index: {pt_idx}")
                 if pt_idx is not None:
                     p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
                     if p_ref is not None:
@@ -489,8 +400,7 @@ def extract_observations_from_1d(
                 # Find a point on this vessel near the junction (use first point of branch)
                 # Find a point representing this 0D vessel segment (near the junction)
                 pt_idx = find_point_for_vessel_segment(vessel_name, prefer_end=False)
-                if verbose:
-                    print(f"{vessel_name}:{junc_name} outlet point index: {pt_idx}")
+                print(f"{vessel_name}:{junc_name} outlet point index: {pt_idx}")
                 if pt_idx is not None:
                     p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
                     if p_ref is not None:
@@ -500,11 +410,17 @@ def extract_observations_from_1d(
                         observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
                 # if helper failed, we silently continue to next vessel
 
-    enforce_zero_dy_for_steady_flow(observations, len(pressure_timesteps))
     return observations
 
 
-def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_input_path, geo_dir=None, start_idx=0, derivative_method='central'):
+def extract_observations_from_1d_with_node_ids(
+    centerline_soln_path,
+    geometric_input_path,
+    geo_dir=None,
+    start_idx=0,
+    derivative_method='central',
+    cascade_split_connector_flows=True,
+):
     """
     Extract observation data from 1D centerline solution VTP file using centerline_node_ids.
     
@@ -516,10 +432,11 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
         centerline_soln_path: Path to centerline solution VTP (with pressure/velocity arrays)
         geometric_input_path: Path to geometric 0D input JSON (to understand vessel/junction structure)
         geo_dir: Geometry directory containing XML file (optional, will try to infer from paths)
-        start_idx: Starting index for observations (default: 0). Observations are taken as
-            ``p_ref[start_idx:end_idx]`` with ``end_idx`` defaulting to None (through end of series).
-            Note: ``end_idx=-1`` would wrongly drop the last sample for single-timestep data.
+        start_idx: Starting index for observations (default: 0). Observations will be sliced from this index.
         derivative_method: Method for computing derivatives ('central', 'forward', or 'backward', default: 'forward').
+        cascade_split_connector_flows: If True (default), overwrite flow observations on split cascade
+            connectors (*_connector{N}) using mass conservation after node-based extraction.
+            Pressures remain node-based. Set False to use raw 1D flows at junction GIDs everywhere.
         
     Returns:
         Dictionary with observation data (y, dy) for calibration
@@ -538,7 +455,7 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
     # Find all timestep arrays
     pressure_timesteps = []
     flow_timesteps = []
-    end_idx = None  # slice to end; do not use -1 (excludes last point, empty for len-1 series)
+    end_idx = -1
     
     for key in centerline_data.keys():
         if key.startswith('pressure_'):
@@ -583,9 +500,6 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
         if sim_params and 'time_step_size' in sim_params:
             time_step_size = sim_params['time_step_size']
             print(f"  Found XML time_step_size: {time_step_size:.6f} s")
-    elif "priya" in centerline_soln_path:
-        time_step_size = 0.001
-        print(f"Assume Priya always uses a time step size of 0.001 s")
     elif 'VMR' in centerline_soln_path:
         geometry_name = centerline_soln_path.split('/')[-2]
         if geometry_name in VMR_time_step_dict:
@@ -593,9 +507,6 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
             print(f"  Found time_step_size in VMR dictionary: {time_step_size:.6f} s")
         else:
             raise ValueError(f"Could not find time_step_size for {geometry_name} in VMR dictionary")
-    elif _is_tst_cohort_path(centerline_soln_path):
-        time_step_size = 1.0
-        print("  TST-cohort: no XML; using nominal time_step_size=1.0 s")
     else:
         raise ValueError("Could not find time_step_size in XML or VMR dictionary")
     
@@ -603,7 +514,7 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
     num_timesteps = len(pressure_timesteps)
     times = np.linspace(0.0, 1.0, num_timesteps)
     obs_len = len(times)
-    end_idx = None  # through end of series (do not use -1: excludes last sample)
+    end_idx = -1  # Use all observations by default
     
     # Get GlobalNodeId array
     gid = centerline_data.get('GlobalNodeId', None)
@@ -693,121 +604,7 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
                 "which is not present in the centerline solution GlobalNodeId array."
             )
         return gid_to_idx[target_gid]
-
-    junc_by_name_obs = {j["junction_name"]: j for j in junctions if j.get("junction_name")}
-    vessel_by_name_obs = {v["vessel_name"]: v for v in vessels}
-    junction_name_set_obs = set(junc_by_name_obs.keys())
-
-    def _vessel_for_stale_block_name(block_name):
-        """
-        Resolve a vessel dict for names still listed on junction blocks after EL renames.
-
-        ``outlet_blocks`` / ``inlet_blocks`` may keep ``branchN_segM`` while the JSON vessel
-        was renamed to ``branchN_segM_connectorEL`` (or suffixed variants), or merged to
-        ``branchN_segM_1``-style names after chain extension.
-        """
-        if not block_name or block_name in junction_name_set_obs:
-            return None
-        v = vessel_by_name_obs.get(block_name)
-        if v is not None:
-            return v
-        cand = f"{block_name}_connectorEL"
-        v = vessel_by_name_obs.get(cand)
-        if v is not None:
-            return v
-        el_pat = re.compile(r"^" + re.escape(block_name) + r"_connectorEL\d*$", re.IGNORECASE)
-        for vn, vo in vessel_by_name_obs.items():
-            if vn and el_pat.match(vn):
-                return vo
-        # Merged segment names, e.g. branch26_seg0 -> branch26_seg0_1
-        merged = [
-            (vn, vo)
-            for vn, vo in vessel_by_name_obs.items()
-            if vn and vn.startswith(block_name + "_")
-        ]
-        if merged:
-            merged.sort(key=lambda x: x[0])
-            for vn, vo in merged:
-                if "connectorel" in vn.lower():
-                    return vo
-            return merged[0][1]
-        return None
-
-    def _gid_for_outlet_block_on_junction(junc, block_name):
-        """Outlet-face GlobalNodeId for ``block_name`` recorded on this junction (post-EL keys)."""
-        if not block_name or not junc:
-            return None
-        cn = junc.get("centerline_node_ids") or {}
-        outs = cn.get("outlets") or {}
-        if not isinstance(outs, dict):
-            return None
-        for key in (block_name, f"{block_name}_connectorEL"):
-            if key in outs and outs[key] is not None:
-                return int(outs[key])
-        pfx = f"{block_name}_connectorEL"
-        for k, g in outs.items():
-            if isinstance(k, str) and g is not None and k.lower().startswith(pfx.lower()):
-                return int(g)
-        # Keys may use merged vessel names while outlet_blocks still list the base segment.
-        for k, g in outs.items():
-            if (
-                isinstance(k, str)
-                and g is not None
-                and k != block_name
-                and k.startswith(block_name + "_")
-            ):
-                return int(g)
-        return None
-
-    def _gid_from_junction_outlet_maps(block_name):
-        """GlobalNodeId at a parent junction outlet face keyed by pre- or post-EL vessel name."""
-        if not block_name:
-            return None
-        keys_try = (block_name, f"{block_name}_connectorEL")
-        for j in junctions:
-            outs = ((j.get("centerline_node_ids") or {}).get("outlets")) or {}
-            if not isinstance(outs, dict):
-                continue
-            for key in keys_try:
-                if key in outs and outs[key] is not None:
-                    return int(outs[key])
-            pfx = f"{block_name}_connectorEL"
-            for k, g in outs.items():
-                if isinstance(k, str) and g is not None and k.lower().startswith(pfx.lower()):
-                    return int(g)
-        return None
-
-    def find_point_idx_for_neighbor_block(block_name, use_vessel_outlet=False):
-        """
-        Map a vessel or junction *name* from ``inlet_blocks``/``outlet_blocks`` to a centerline point index.
-
-        If ``block_name`` is a junction, use that junction's stored ``centerline_node_ids['inlet']``.
-        If it is a vessel, use its inlet (``use_vessel_outlet`` False) or outlet (True) GlobalNodeId.
-        """
-        if block_name in junction_name_set_obs:
-            target = junc_by_name_obs[block_name]
-            gid0 = (target.get("centerline_node_ids") or {}).get("inlet")
-            if gid0 is None:
-                raise ValueError(
-                    f"Junction {block_name!r} has no centerline_node_ids.inlet; "
-                    "cannot extract observations for block-linked topology."
-                )
-            gid0 = int(gid0)
-            if gid0 not in gid_to_idx:
-                raise ValueError(
-                    f"Junction {block_name!r} inlet GlobalNodeId={gid0} not found in centerline solution."
-                )
-            return gid_to_idx[gid0]
-        v = _vessel_for_stale_block_name(block_name)
-        if v is None:
-            gid_map = _gid_from_junction_outlet_maps(block_name)
-            if gid_map is not None and gid_map in gid_to_idx:
-                return gid_to_idx[gid_map]
-            raise ValueError(
-                f"Unknown neighbor block {block_name!r} in junction connectivity (not a vessel or junction name)."
-            )
-        return find_point_from_node_id(v, is_inlet=not use_vessel_outlet)
-
+    
     # Extract observations
     observations = {"y": {}, "dy": {}}
     
@@ -845,95 +642,40 @@ def extract_observations_from_1d_with_node_ids(centerline_soln_path, geometric_i
     
     # Extract observations at junctions
     for junc in junctions:
-        junc_name = junc.get("junction_name", "")
-        inlet_blocks = junc.get("inlet_blocks")
-        outlet_blocks = junc.get("outlet_blocks")
-        if inlet_blocks and outlet_blocks:
-            for ib in inlet_blocks:
-                # Junction–junction: sample the parent outlet face toward this junction, not the
-                # parent's far inlet (find_point_idx_for_neighbor_block ignores vessel_outlet for
-                # junction names and would use parent inlet).
-                if ib in junction_name_set_obs:
-                    parent_j = junc_by_name_obs[ib]
-                    gid_o = _gid_for_outlet_block_on_junction(parent_j, junc_name)
-                    if gid_o is not None and gid_o in gid_to_idx:
-                        pt_idx = gid_to_idx[gid_o]
-                    else:
-                        pt_idx = find_point_idx_for_neighbor_block(
-                            junc_name, use_vessel_outlet=False
-                        )
-                else:
-                    pt_idx = find_point_idx_for_neighbor_block(ib, use_vessel_outlet=True)
-                p_ref, p_der, f_ref, f_der = extract_at_point(
-                    pt_idx, times, dt, derivative_method, verbose=False
-                )
-                if p_ref is not None:
-                    observations["y"][f"pressure:{ib}:{junc_name}"] = p_ref[start_idx:end_idx]
-                    observations["dy"][f"pressure:{ib}:{junc_name}"] = p_der[start_idx:end_idx]
-                    observations["y"][f"flow:{ib}:{junc_name}"] = f_ref[start_idx:end_idx]
-                    observations["dy"][f"flow:{ib}:{junc_name}"] = f_der[start_idx:end_idx]
-            for ob in outlet_blocks:
-                if ob in junction_name_set_obs:
-                    pt_idx = find_point_idx_for_neighbor_block(ob, use_vessel_outlet=False)
-                else:
-                    v = _vessel_for_stale_block_name(ob)
-                    if v is None:
-                        gid_o = _gid_for_outlet_block_on_junction(junc, ob)
-                        if gid_o is None:
-                            gid_o = _gid_from_junction_outlet_maps(ob)
-                        if gid_o is not None and gid_o in gid_to_idx:
-                            pt_idx = gid_to_idx[gid_o]
-                        else:
-                            raise ValueError(
-                                f"Outlet block {ob!r} on junction {junc_name!r} is not a known vessel name "
-                                f"and no centerline outlet GID was found for it."
-                            )
-                    else:
-                        pt_idx = find_point_from_node_id(v, is_inlet=True)
-                p_ref, p_der, f_ref, f_der = extract_at_point(
-                    pt_idx, times, dt, derivative_method, verbose=False
-                )
-                if p_ref is not None:
-                    observations["y"][f"pressure:{junc_name}:{ob}"] = p_ref[start_idx:end_idx]
-                    observations["dy"][f"pressure:{junc_name}:{ob}"] = p_der[start_idx:end_idx]
-                    observations["y"][f"flow:{junc_name}:{ob}"] = f_ref[start_idx:end_idx]
-                    observations["dy"][f"flow:{junc_name}:{ob}"] = f_der[start_idx:end_idx]
-            continue
-
-        inlet_vessel_ids = junc.get("inlet_vessels", [])
-        outlet_vessel_ids = junc.get("outlet_vessels", [])
-
+        junc_name = junc.get('junction_name', '')
+        inlet_vessel_ids = junc.get('inlet_vessels', [])
+        outlet_vessel_ids = junc.get('outlet_vessels', [])
+        
         # For inlet vessels: format is "flow:vessel_name:junction_name" (use vessel outlet node ID at junction)
         for vessel_id in inlet_vessel_ids:
             if vessel_id < len(vessels):
                 vessel = vessels[vessel_id]
-                vessel_name = vessel["vessel_name"]
+                vessel_name = vessel['vessel_name']
                 pt_idx = find_point_from_node_id(vessel, is_inlet=False)
-                p_ref, p_der, f_ref, f_der = extract_at_point(
-                    pt_idx, times, dt, derivative_method, verbose=False
-                )
+                p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
                 if p_ref is not None:
                     observations["y"][f"pressure:{vessel_name}:{junc_name}"] = p_ref[start_idx:end_idx]
                     observations["dy"][f"pressure:{vessel_name}:{junc_name}"] = p_der[start_idx:end_idx]
                     observations["y"][f"flow:{vessel_name}:{junc_name}"] = f_ref[start_idx:end_idx]
                     observations["dy"][f"flow:{vessel_name}:{junc_name}"] = f_der[start_idx:end_idx]
-
+        
         # For outlet vessels: format is "flow:junction_name:vessel_name" (use vessel inlet node ID at junction)
         for vessel_id in outlet_vessel_ids:
             if vessel_id < len(vessels):
                 vessel = vessels[vessel_id]
-                vessel_name = vessel["vessel_name"]
+                vessel_name = vessel['vessel_name']
                 pt_idx = find_point_from_node_id(vessel, is_inlet=True)
-                p_ref, p_der, f_ref, f_der = extract_at_point(
-                    pt_idx, times, dt, derivative_method, verbose=False
-                )
+                p_ref, p_der, f_ref, f_der = extract_at_point(pt_idx, times, dt, derivative_method, verbose=False)
                 if p_ref is not None:
                     observations["y"][f"pressure:{junc_name}:{vessel_name}"] = p_ref[start_idx:end_idx]
                     observations["dy"][f"pressure:{junc_name}:{vessel_name}"] = p_der[start_idx:end_idx]
                     observations["y"][f"flow:{junc_name}:{vessel_name}"] = f_ref[start_idx:end_idx]
                     observations["dy"][f"flow:{junc_name}:{vessel_name}"] = f_der[start_idx:end_idx]
     
-    enforce_zero_dy_for_steady_flow(observations, len(pressure_timesteps))
+    if cascade_split_connector_flows:
+        from util.zerod_calibration.bifurcation_splitting import apply_split_connector_flow_cascade
+        observations = apply_split_connector_flow_cascade(observations, geometric_input)
+
     return observations
 
 
@@ -1068,13 +810,8 @@ def find_inlet_outlet_caps_from_centerline(centerline_path, geometric_input_path
         
         # Find all vessels that are outlets of junctions
         outlet_vessel_indices = set()
-        vessel_by_name_caps = {v.get("vessel_name"): v for v in vessels if v.get("vessel_name")}
         for junc in junctions:
-            outlet_vessel_indices.update(junc.get("outlet_vessels", []) or [])
-            for blk in junc.get("outlet_blocks") or []:
-                v = vessel_by_name_caps.get(blk)
-                if v is not None and v.get("vessel_id") is not None:
-                    outlet_vessel_indices.add(v["vessel_id"])
+            outlet_vessel_indices.update(junc.get('outlet_vessels', []))
         
         # Terminal vessels are those that are not outlets of any junction
         terminal_vessel_indices = set(range(len(vessels))) - outlet_vessel_indices
