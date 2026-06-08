@@ -10,12 +10,21 @@ This repository contains functionality to train and deploy neural networks that 
 
 - **Python** 3.10 or newer
 - **Python packages** (see Setup): core scientific stack plus **JAX**, **Optax**, and **dill** for training; **VTK** (`vtk` on PyPI) for geometric processing; **SciPy**,**matplotlib**, **pandas**.
-- **`svzerodsolver`** and **`svzerodcalibrator`** binaries on `PATH`.  These applications are both supported by the repo [svZeroDSolver](https://github.com/SimVascular/svZeroDSolver).  Currently, this workflow is only compatible with [my fork](https://github.com/natalia-rubio/svZeroDPlus/tree/base_w_feat).
+- **`svzerodsolver`** and **`svzerodcalibrator`** binaries (`SVZEROD_INSTALL_DIR` or `PATH`).  These applications are both supported by the repo [svZeroDSolver](https://github.com/SimVascular/svZeroDSolver).  Currently, this workflow is only compatible with [my fork](https://github.com/natalia-rubio/svZeroDPlus/tree/J-J_wiring) on branch **`J-J_wiring`** (built by `scripts/setup_cross_validation.sh`).
 
 
 ## Setup
 
 Clone the repository and work from the repo root so imports like `util.*` resolve (scripts assume `REPO_ROOT` on `sys.path`).
+
+**One-shot setup** (clone/build svZeroDPlus, Python venv, verify sample data):
+
+```bash
+./scripts/setup_cross_validation.sh
+source scripts/cv_env.sh
+```
+
+Manual setup:
 
 ```bash
 git clone <YOUR_FORK_OR_REMOTE_URL> learn_lpns
@@ -37,7 +46,7 @@ python util/zerod_calibration/run_cross_validation.py --help
 **Notes**
 
 - **`requirements.txt`** lists packages other than JAX; install **`jax[cpu]`** or a CUDA variant before `-r requirements.txt` so jax/jaxlib stay matched.
-- Point **`PATH`** at your **svZeroDPlus** / solver install when running calibration or forward simulation steps.
+- Set **`SVZEROD_INSTALL_DIR`** to the directory containing `svzerodsolver` and `svzerodcalibrator` (default: sibling `../svZeroDPlus/Release`). `scripts/setup_cross_validation.sh` writes `scripts/cv_env.sh` with this export.
 
 
 ## Functionality
@@ -121,16 +130,6 @@ gen_loss_quadratic_resistor_asymmetric_loss
 base
   →  base   (explicit no optional tokens)
 ```
-
-**Common configs:**
-
-| Canonical suffix | Typical use |
-|------------------|-------------|
-| `base` | RI + symmetric loss |
-| `gen_loss` | RI + symmetric loss + generation-weighted NN loss (default) |
-| `quadratic_resistor_gen_loss` | RRI, no calibrator penalty, gen-weighted loss |
-| `quadratic_resistor_penalty_on_gen_loss` | RRI + L2 penalties + gen-weighted loss |
-| `quadratic_resistor_asymmetric_loss_gen_loss` | RRI + asymmetric loss + gen-weighted loss |
 
 **Migration from older folder names** (re-process or rename data trees; old names are not accepted as passthrough):
 
@@ -239,25 +238,6 @@ Forward-simulation and CV summaries compare several **modalities** (0D model var
 | `BloodVesselJunction_NN` | Learned Junctions |
 | `NN_vessel` | Learned Vessels |
 | `BloodVesselJunction_NN_plus_Vessel_NN` | Learned Junctions and Vessels |
-
-### Multiple configs
-
-`run_cv_all_configs.py` runs CV over several run-configs in sequence, then by-config comparison barcharts (`cv_max_pct_error_by_config_barchart`). CV already generates per-config barcharts; use `--skip_per_config_barchart` on that wrapper to disable them.
-
-Default batch (see `DEFAULT_CONFIGS` in the script): `gen_loss`, `base`, `quadratic_resistor_gen_loss`, `quadratic_resistor_penalty_on_gen_loss`, and `gen_loss:bifurcations` (same run-config, `bifurcations` geometry variant).
-
-```bash
-python -m util.zerod_calibration.run_cv_all_configs \
-  VMR_rigid_aorta_adults_all bifurcations_EL 5
-
-python -m util.zerod_calibration.run_cv_all_configs \
-  VMR_rigid_aorta_adults_all bifurcations_EL 5 \
-  --configs gen_loss quadratic_resistor_penalty_on_gen_loss
-
-python -m util.zerod_calibration.run_cv_all_configs \
-  VMR_rigid_aorta_adults_all bifurcations_EL 5 \
-  --only_barcharts
-```
 
 ### Data processing
 
