@@ -68,12 +68,19 @@ MODALITY_ORDER = [
 ]
 
 MODALITY_LABEL = {
-    "geometric": "Baseline\n(Poiseuille)",
-    "BloodVesselJunction_NN": "Learned\nJunctions",
-    "NN_vessel": "Learned\nVessels",
-    "BloodVesselJunction_NN_plus_Vessel_NN": "Learned Junctions\nand Vessels",
-    "BloodVesselJunction": "Optimal\n(Fit to 3D)",
+    "geometric": ["Baseline", "(Poiseuille)"],
+    "NN_vessel": ["Learned", "Vessels"],
+    "BloodVesselJunction_NN": ["Learned", "Junctions"],
+    "BloodVesselJunction_NN_plus_Vessel_NN": ["Learned", "Junctions", "and Vessels"],
+    "BloodVesselJunction": ["Optimal", "(Fit to 3D)"],
 }
+
+
+def _multiline_label(display_spec):
+    """Convert a label spec (str or sequence of lines) to a newline-separated string."""
+    if isinstance(display_spec, (list, tuple)):
+        return "\n".join(str(line) for line in display_spec)
+    return str(display_spec)
 
 METRIC_CONFIG = {
     "pressure_max_rel_error": {
@@ -315,7 +322,7 @@ def main():
             edgecolor="black",
             linewidth=0.6,
             error_kw={"color": "black", "linewidth": 0.9},
-            label=MODALITY_LABEL[modality],
+            label=_multiline_label(MODALITY_LABEL[modality]),
         )
 
     # Max height (bar + error) for y-axis margin
@@ -368,23 +375,23 @@ def main():
         spine.set_visible(False)
 
     # Column headers aligned with bar positions (same x offsets as bar labels below).
-    header_y = 1.02
-    header_fs = 11
+    header_y = 1.04
+    header_fs = 10
     x_center = float(np.mean(x))
     for i, modality in enumerate(MODALITY_ORDER):
         ax.text(
             x_center + offsets[i],
             header_y,
-            MODALITY_LABEL[modality],
+            _multiline_label(MODALITY_LABEL[modality]),
             transform=ax.get_xaxis_transform(),
             ha="center",
             va="bottom",
             fontsize=header_fs,
             color=_modality_color(modality),
-            linespacing=0.9,
+            linespacing=0.85,
         )
 
-    plt.tight_layout(rect=(0, 0, 1, 0.90))
+    plt.tight_layout(rect=(0, 0, 1, 0.86))
 
     if args.output:
         out_path = args.output
