@@ -8,6 +8,18 @@ import vtk
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 from util.zerod_calibration.generate_zerod_inputs_cli import DEFAULT_JUNCTION_TYPES
 
+# Reference 0D solver JSONs per geometry (VMR cohort layout).
+STANDARD_0D_SUBDIR = "standard-0d"
+
+
+def standard_0d_dir(data_root: str, set_name: str) -> str:
+    """``data/zeroD/<set_name>/standard-0d/`` — one JSON per geometry."""
+    return os.path.join(data_root, "zeroD", set_name, STANDARD_0D_SUBDIR)
+
+
+def standard_0d_json_path(data_root: str, set_name: str, geo_name: str) -> str:
+    return os.path.join(standard_0d_dir(data_root, set_name), f"{geo_name}.json")
+
 # Time step sizes (sim_period / sim_steps_per_cycle) from data/vmr_models.json
 VMR_time_step_dict = {
     '0001_0001': 0.001,
@@ -457,13 +469,22 @@ def get_paths(base_dir, args):
     return geometry_variants, centerline_path, geo_dir
 
 
-def get_vmr_geometries(richter_dir='data/zeroD/VMR/richter-0d'):
-    """Get list of valid VMR geometry names from a richter-0d directory."""
-    if not os.path.exists(richter_dir):
-        raise FileNotFoundError(f"Richter-0d directory not found: {richter_dir}")
+def get_vmr_geometries(
+    standard_0d_dir_path: str | None = None,
+    *,
+    data_root: str = "data",
+    set_name: str = "VMR",
+):
+    """List valid VMR geometry names from JSON files under ``standard-0d/``."""
+    if standard_0d_dir_path is None:
+        standard_0d_dir_path = standard_0d_dir(data_root, set_name)
+    if not os.path.exists(standard_0d_dir_path):
+        raise FileNotFoundError(
+            f"Standard 0D directory not found: {standard_0d_dir_path}"
+        )
 
     geo_names = []
-    for json_file in sorted(glob.glob(os.path.join(richter_dir, '*.json'))):
+    for json_file in sorted(glob.glob(os.path.join(standard_0d_dir_path, "*.json"))):
         geo_name = os.path.basename(json_file).replace('.json', '')
         try:
             with open(json_file, 'r') as f:

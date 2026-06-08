@@ -1,4 +1,23 @@
-data/*
 results/*
 __pycache__/
 .DS_Store
+data2/*
+
+# Ignore all of data/ by default. Only bundled seed inputs below are tracked.
+# Pipeline output (ml_inputs, jax_arrays, split_indices, zeroD/<run_config>/…) stays local.
+data/*
+!data/README.md
+
+# zeroD: VMR_aortas reference solver JSONs only — not per-run_config geometry trees
+!data/zeroD/
+data/zeroD/*
+!data/zeroD/VMR_aortas/
+data/zeroD/VMR_aortas/*
+!data/zeroD/VMR_aortas/standard-0d/
+!data/zeroD/VMR_aortas/standard-0d/**
+
+# oneD: bundled VMR centerline / projected solutions
+!data/oneD/
+data/oneD/*
+!data/oneD/VMR/
+!data/oneD/VMR/**

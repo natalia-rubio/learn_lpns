@@ -3,7 +3,7 @@
 Batch script to run generate_zerod_inputs.py for all VMR geometries.
 
 This script:
-1. Discovers all VMR geometries from data/zeroD/VMR/richter-0d/
+1. Discovers all VMR geometries from data/zeroD/<set_name>/standard-0d/
 2. Runs generate_zerod_inputs.py for each geometry
 3. Tracks successes and failures
 4. Provides a summary at the end
@@ -26,7 +26,7 @@ from util.zerod_calibration.generate_zerod_inputs_cli import (
     namespace_to_generate_zerod_argv,
     prepare_generate_zerod_namespace,
 )
-from util.zerod_calibration.tools.file_io import get_vmr_geometries
+from util.zerod_calibration.tools.file_io import get_vmr_geometries, standard_0d_dir
 
 DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS = 1000
 
@@ -177,7 +177,7 @@ Examples:
     else:
         print("Discovering VMR geometries...")
         geo_names = get_vmr_geometries(
-            richter_dir=os.path.join(REPO_ROOT, 'data', 'zeroD', set_name, 'richter-0d')
+            standard_0d_dir(os.path.join(REPO_ROOT, "data"), set_name)
         )
         print(f"Found {len(geo_names)} VMR geometries")
 

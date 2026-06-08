@@ -152,7 +152,7 @@ def add_batch_arguments(parser: argparse.ArgumentParser) -> None:
         "--geometries",
         nargs="+",
         default=None,
-        help="Specific geometry names (default: all from richter-0d)",
+        help="Specific geometry names (default: all from standard-0d)",
     )
     parser.add_argument(
         "--timeout",

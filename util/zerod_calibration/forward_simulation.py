@@ -9,7 +9,7 @@ import pandas as pd
 def run_forward_simulation(input_json_path, output_csv_path):
     """
     Run forward 0D simulation and save results to CSV.
-    Uses svzerodsolver executable at /Users/natalia/cursor_access/svZeroDPlus/Release/svzerodsolver.
+    Uses svzerodsolver from SVZEROD_INSTALL_DIR or PATH (see svzerod_binaries.py).
     Verifies that inlet flow matches the boundary condition.
 
     Args:
@@ -19,10 +19,9 @@ def run_forward_simulation(input_json_path, output_csv_path):
     Returns:
         None (results written to output_csv_path)
     """
-    svzerodsolver_path = '/Users/natalia/cursor_access/svZeroDPlus/Release/svzerodsolver'
-    
-    if not os.path.exists(svzerodsolver_path):
-        raise RuntimeError(f"svzerodsolver executable not found at {svzerodsolver_path}")
+    from util.zerod_calibration.tools.svzerod_binaries import svzerod_binary
+
+    svzerodsolver_path = svzerod_binary("svzerodsolver")
     
     print(f"Running forward simulation from: {input_json_path}")
     
