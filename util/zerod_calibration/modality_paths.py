@@ -2,6 +2,34 @@
 
 import os
 
+# Human-readable column headers for MSE summary tables and LaTeX exports.
+MODALITY_DISPLAY = {
+    "geometric": "Standard",
+    "BloodVesselJunction": "Calibrated",
+    "BloodVesselJunction_NN": "Learned Junctions",
+    "BloodVesselJunction_NN_plus_Vessel_NN": "Learned Junctions and Vessels",
+    "NN_vessel": "Learned Vessels",
+}
+
+DEFAULT_MODALITY_ORDER = (
+    "geometric",
+    "BloodVesselJunction",
+    "BloodVesselJunction_NN",
+    "BloodVesselJunction_NN_plus_Vessel_NN",
+    "NN_vessel",
+)
+
+
+def modality_table_header(modality_key):
+    """Return display label for a modality key (falls back to the key itself)."""
+    return MODALITY_DISPLAY.get(modality_key, modality_key)
+
+
+def sort_modalities(modality_keys):
+    """Sort modality keys in DEFAULT_MODALITY_ORDER; unknown keys trail alphabetically."""
+    order = {k: i for i, k in enumerate(DEFAULT_MODALITY_ORDER)}
+    return sorted(modality_keys, key=lambda k: (order.get(k, len(order)), k))
+
 
 def nn_forward_sim_specs(base_dir, geo_variant_name, junction_type, nn_vessel):
     """Return (modality_key, sim_input_json, results_csv) for each NN forward sim."""

@@ -8,8 +8,8 @@ Usage:
   python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults
   python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults --geometry bifurcations_EL
   python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults VMR_abdo VMR_pulmo_healthy
-  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults --configs base stenosis_off --output configs_comparison.pdf
-  python -m util.visualizations.cv_max_pct_error_by_config_barchart --bar-thickness-scale 1.3
+  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults --configs base gen_loss --output configs_comparison.pdf
+  python -m util.visualizations.cv_max_pct_error_by_config_barchart --bar_thickness_scale 1.3
 
 Set DEFAULT_SET_NAMES / DEFAULT_RUN_CONFIGS below to avoid repeating long CLI lists.
 """
@@ -32,34 +32,30 @@ from scipy import stats
 # Value can be a string (single line) or a list/tuple of strings (multiple lines, joined by newline).
 # Add or override entries to customize; configs not listed use the folder name.
 CONFIG_DISPLAY_NAME = {
-    "base": [r"$R_{\mathrm{quad}}$ with calibrator penalty,", "asymmetric loss,", "entrance-length adjustment"],
-    "stenosis_off": [r"No $R_{\mathrm{quad}}$,", "asymmetric loss,", "entrance-length adjustment"],
-    "penalty_off": [r"$R_{\mathrm{quad}}$ without calibrator penalty,", "asymmetric loss", "entrance-length adjustment"],
-    "penalty_off_gen_loss": [
-        r"$R_{\mathrm{quad}}$ without calibrator penalty,",
-        "generation-weighted NN loss,",
-        "entrance-length adjustment",
-    ],
-    "symmetric_gen_loss": [
-        r"$R_{\mathrm{quad}}$ with calibrator penalty,",
-        "symmetric loss, Proximity-weighted NN loss,",
-        "entrance-length adjustment",
-    ],
-    "symmetric_penalty_off_gen_loss": [
+    "base": [r"No $R_{\mathrm{quad}}$ (RI),", "symmetric loss,", "entrance-length adjustment"],
+    "gen_loss": [r"No $R_{\mathrm{quad}}$ (RI),", "symmetric loss,", "proximity-weighted NN loss,", "entrance-length adjustment"],
+    "gen_loss:bifurcations": [r"No $R_{\mathrm{quad}}$ (RI),", "proximity-weighted NN loss,", "no entrance-length adjustment"],
+    "quadratic_resistor_gen_loss": [
         r"$R_{\mathrm{quad}}$ (RRI),",
-        "Proximity-weighted NN loss,",
-        "Entrance-length adjustment",
+        "no calibrator penalty,",
+        "symmetric loss,",
+        "proximity-weighted NN loss,",
+        "entrance-length adjustment",
     ],
-    #"symmetric": ["No stenosis coefficient, symmetric loss"],
-    "stenosis_off_symmetric": [r"No $R_{\mathrm{quad}}$ (RI),", "Standard loss,", "Entrance-length adjustment"],
-    "stenosis_off_symmetric:bifurcations": [r"No $R_{\mathrm{quad}}$ (RI),", "Standard loss,", "No entrance-length adjustment"],
-    "stenosis_off_symmetric_gen_loss:bifurcations": [r"No $R_{\mathrm{quad}}$ (RI),", "Proximity-weighted loss,", "No entrance-length adjustment"],
-    "stenosis_off_symmetric_gen_loss": [r"No $R_{\mathrm{quad}}$ (RI),", "Proximity-weighted loss,", "Entrance-length adjustment"],
-    "penalty_off_symmetric_gen_loss": [r"$R_{\mathrm{quad}}$ (RRI),", "Proximity-weighted loss,", "Entrance-length adjustment"],
-    # Config with different geometry variant: "config_suffix:variant" -> data from that config folder, that variant's CSV
-    "stenosis_off:bifurcations": [r"No $R_{\mathrm{quad}}$ (RI),", "Proximity-weighted loss,", "No entrance-length adjustment"],
-    "normalized": "Normalized",
-    "normalized_clip": "Normalized + clip",
+    "quadratic_resistor_penalty_on_gen_loss": [
+        r"$R_{\mathrm{quad}}$ (RRI),",
+        "calibrator penalty on,",
+        "symmetric loss,",
+        "proximity-weighted NN loss,",
+        "entrance-length adjustment",
+    ],
+    "asymmetric_loss": [r"No $R_{\mathrm{quad}}$ (RI),", "asymmetric loss,", "entrance-length adjustment"],
+    "asymmetric_loss_gen_loss": [
+        r"No $R_{\mathrm{quad}}$ (RI),",
+        "asymmetric loss,",
+        "proximity-weighted NN loss,",
+        "entrance-length adjustment",
+    ],
 }
 
 # Optional: CV set names (under results/cross_validation/<set_name>/) when no set names are passed
@@ -74,10 +70,11 @@ DEFAULT_SET_NAMES = ["VMR_rigid_aorta_adults_all", "VMR_abdo", "VMR_pulmo_health
 DEFAULT_RUN_CONFIGS = None
 # Example:
 DEFAULT_RUN_CONFIGS = [
-    "stenosis_off_symmetric_gen_loss",
-    "stenosis_off_symmetric",
-    "symmetric_penalty_off_gen_loss",
-    "stenosis_off_symmetric_gen_loss:bifurcations",
+    "gen_loss",
+    "base",
+    "quadratic_resistor_gen_loss",
+    "quadratic_resistor_penalty_on_gen_loss",
+    "gen_loss:bifurcations",
 ]
 
 # Legend labels for each set_name (internal folder name -> plot text). Use "\n" for a line break.
@@ -211,7 +208,7 @@ def main():
         "--configs",
         nargs="*",
         default=None,
-        help="Run config subfolders to include. Use 'config:variant' for a different geometry variant (e.g. stenosis_off:bifurcations). If omitted, uses DEFAULT_RUN_CONFIGS in this module when set, else auto-discover.",
+        help="Run config subfolders to include. Use 'config:variant' for a different geometry variant (e.g. gen_loss:bifurcations). If omitted, uses DEFAULT_RUN_CONFIGS in this module when set, else auto-discover.",
     )
     parser.add_argument(
         "--output", "-o",
@@ -219,7 +216,7 @@ def main():
         help="Output file (default: under first set's cross_validation folder, name includes geometry and set count)",
     )
     parser.add_argument(
-        "--data-root",
+        "--data_root",
         default="results",
         help="Root for results/cross_validation (default: results)",
     )
@@ -237,14 +234,14 @@ def main():
         help="DPI for saved figure (default: 150)",
     )
     parser.add_argument(
-        "--display-names",
+        "--display_names",
         nargs="*",
         default=None,
         metavar="CONFIG=Label",
-        help="Override display names, e.g. base='Default' stenosis_off='No stenosis'. Use __ for line break (e.g. a='Line1__Line2').",
+        help="Override display names, e.g. base='Default' gen_loss='RI + gen loss'. Use __ for line break (e.g. a='Line1__Line2').",
     )
     parser.add_argument(
-        "--bar-thickness-scale",
+        "--bar_thickness_scale",
         type=float,
         default=3.0,
         metavar="S",
@@ -291,7 +288,7 @@ def main():
             "with the geometry CSV (discovery uses the first set name)."
         )
 
-    # Display name dict: start from module default, then apply --display-names
+    # Display name dict: start from module default, then apply --display_names
     display_name = dict(CONFIG_DISPLAY_NAME)
     if args.display_names:
         for pair in args.display_names:

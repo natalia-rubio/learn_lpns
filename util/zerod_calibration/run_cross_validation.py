@@ -81,12 +81,14 @@ def _ensure_ml_inputs_and_jax_for_config(
         cmd_batch = [
             sys.executable,
             batch_script,
-            "--set-name",
+            "--set_name",
             set_name,
             "--geometries",
             *batch_geometries,
-            "--run-config",
+            "--run_config",
             run_config_suffix,
+            "--skip_steps",
+            "nn_inference",
         ]
         result = subprocess.run(cmd_batch, cwd=REPO_ROOT, text=True)
         if result.returncode != 0:
@@ -103,15 +105,15 @@ def _ensure_ml_inputs_and_jax_for_config(
         )
         cmd_dp = [
             sys.executable, data_processing_script,
-            "--set-name", set_name,
-            "--geometry-variant", geometry_variant,
-            "--run-config", run_config_suffix,
+            "--set_name", set_name,
+            "--geometry_variant", geometry_variant,
+            "--run_config", run_config_suffix,
             "--geometries", *all_geometries,
         ]
         result_dp = subprocess.run(cmd_dp, cwd=REPO_ROOT, text=True)
         if result_dp.returncode != 0:
             raise RuntimeError(
-                f"run_data_processing failed with --run-config {run_config_suffix} "
+                f"run_data_processing failed with --run_config {run_config_suffix} "
                 f"(return code {result_dp.returncode}). Fix the error above and re-run."
             )
 
@@ -163,14 +165,12 @@ def _resolve_cv_run_config(run_config_suffix):
     if run_config_suffix is None:
         run_config_suffix = DEFAULT_CLI_RUN_CONFIG
     flags = run_config_suffix_to_flags(run_config_suffix)
-    if flags["stenosis_off"] and flags["penalty_off"]:
-        raise ValueError("Cannot use both stenosis_off and penalty_off in run config.")
     return {
         "run_config_suffix": run_config_suffix,
         "data_paths_suffix": run_config_suffix,
-        "stenosis_off": flags["stenosis_off"],
-        "symmetric_loss": flags["symmetric_loss"],
-        "penalty_off": flags["penalty_off"],
+        "quadratic_resistor": flags["quadratic_resistor"],
+        "asymmetric_loss": flags["asymmetric_loss"],
+        "penalty_on": flags["penalty_on"],
     }
 
 
@@ -342,9 +342,9 @@ def _generate_cv_barcharts(
         "util.visualizations.cv_pressure_max_pct_error_barchart",
         set_name,
         geometry_variant,
-        "--run-config",
+        "--run_config",
         run_config_suffix,
-        "--data-root",
+        "--data_root",
         results_root,
     ]
     result = subprocess.run(cmd, cwd=REPO_ROOT, text=True)
@@ -426,7 +426,7 @@ def _run_zerod_inputs_for_cv(
     plots_only=False,
     verbose=False,
 ):
-    """Run generate_zerod_inputs for CV deploy (NN-only) or plot refresh (--plots-only)."""
+    """Run generate_zerod_inputs for CV deploy (NN-only) or plot refresh (--plots_only)."""
     ns = argparse.Namespace(
         set_name=set_name,
         geo_name=geo_name,
@@ -460,7 +460,7 @@ def run_cv_plots_only(
     summary_rows = read_cv_summary_rows(summary_path)
     if not summary_rows:
         print(f"Existing CV summary not found or empty: {summary_path}")
-        print("Run cross-validation once, then use --plots-only to regenerate plots.")
+        print("Run cross-validation once, then use --plots_only to regenerate plots.")
         return None
 
     print(f"Regenerating plots for {len(summary_rows)} trial(s)...")
@@ -505,9 +505,9 @@ def run_cross_validation(
     config = _resolve_cv_run_config(run_config_suffix)
     run_config_suffix = config["run_config_suffix"]
     data_paths_suffix = config["data_paths_suffix"]
-    stenosis_off = config["stenosis_off"]
-    symmetric_loss = config["symmetric_loss"]
-    penalty_off = config["penalty_off"]
+    quadratic_resistor = config["quadratic_resistor"]
+    asymmetric_loss = config["asymmetric_loss"]
+    penalty_on = config["penalty_on"]
     print(f"Run config: {data_paths_suffix!r}")
 
     _ensure_cv_prerequisites(
@@ -548,12 +548,12 @@ def run_cross_validation(
         trials_to_run = list(range(num_trials))
     if nn_vessel:
         print("NN-vessel: will train vessel NN per trial and include vessel-predicted modality in MSE")
-    if symmetric_loss:
-        print("Symmetric loss: overestimate weight = 1.0 for all models")
-    if stenosis_off:
-        print("Stenosis-off: calibrate_stenosis_coefficient=False, all stenosis set to 0, NN will not predict stenosis")
-    if penalty_off:
-        print("Penalty-off: L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0 during calibration")
+    if asymmetric_loss:
+        print("Asymmetric loss: per-model overestimate weights")
+    if quadratic_resistor:
+        print("Quadratic resistor: calibrate stenosis coefficient; NN predicts stenosis")
+    if penalty_on:
+        print("Penalty-on: L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient enabled during calibration")
 
     all_trial_results = []  # list of dicts: trial_id, val_geometries, mod -> overall_mse
     seen_val_sets = set()  # frozenset of val geometry names, to ensure each trial has a different val set
@@ -689,15 +689,15 @@ def run_cross_validation(
                 set_name,
                 str(num_geos),
                 geometry_variant,
-                "--split-path",
+                "--split_path",
                 split_path,
-                "--model-dir",
+                "--model_dir",
                 model_dir,
             ]
-            if symmetric_loss:
-                cmd_train.append("--symmetric-loss")
+            if asymmetric_loss:
+                cmd_train.append("--asymmetric_loss")
             if run_config_suffix:
-                cmd_train.extend(["--run-config", run_config_suffix])
+                cmd_train.extend(["--run_config", run_config_suffix])
             print(f"  Running: {' '.join(cmd_train)}")
             result_train = subprocess.run(cmd_train, cwd=REPO_ROOT, text=True)
             if result_train.returncode != 0:
@@ -730,15 +730,15 @@ def run_cross_validation(
                     str(num_geos),
                     geometry_variant,
                     "--vessel",
-                    "--split-path",
+                    "--split_path",
                     split_path,
-                    "--model-dir",
+                    "--model_dir",
                     vessel_model_dir,
                 ]
-                if symmetric_loss:
-                    cmd_vessel.append("--symmetric-loss")
+                if asymmetric_loss:
+                    cmd_vessel.append("--asymmetric_loss")
                 if run_config_suffix:
-                    cmd_vessel.extend(["--run-config", run_config_suffix])
+                    cmd_vessel.extend(["--run_config", run_config_suffix])
                 print(f"  Running vessel training: {' '.join(cmd_vessel)}")
                 result_vessel = subprocess.run(cmd_vessel, cwd=REPO_ROOT, text=True)
                 if result_vessel.returncode != 0:
@@ -834,7 +834,7 @@ def regenerate_cv_metrics_from_existing(
     summary_rows = read_cv_summary_rows(summary_path)
     if not summary_rows:
         print(f"Existing CV summary not found or empty: {summary_path}")
-        print("Run cross-validation once to create it, then use --metrics-only to refresh metric CSVs.")
+        print("Run cross-validation once to create it, then use --metrics_only to refresh metric CSVs.")
         return None
 
     prefix = "" if geometry_variant == "original" else f"{geometry_variant}_"
@@ -923,22 +923,28 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run cross-validation: X random 90/10 splits, train and deploy per trial, report MSE for all modalities."
     )
-    parser.add_argument("set_name", help="Set name (e.g., VMR_rigid_aorta_adults)")
     parser.add_argument(
-        "geometry_variant",
+        "--set_name",
+        required=True,
+        help="Set name (e.g., VMR_rigid_aorta_adults)",
+    )
+    parser.add_argument(
+        "--geometry_variant",
         default="bifurcations_EL",
-        nargs="?",
         help="Geometry variant (default: bifurcations_EL)",
     )
     parser.add_argument(
-        "num_trials",
+        "--num_trials",
         type=int,
-        nargs="?",
         default=5,
         help="Number of random 90/10 splits (default: 5)",
     )
-    parser.add_argument("--data-root", default="data", help="Data root (default: data)")
-    parser.add_argument("--set-type", default="all", help="Cohort folder tier for jax/split paths (default: all)")
+    parser.add_argument("--data_root", default="data", help="Data root (default: data)")
+    parser.add_argument(
+        "--set_type",
+        default="all",
+        help="Cohort folder tier for jax/split paths (default: all)",
+    )
     parser.add_argument(
         "--trial",
         type=int,
@@ -947,7 +953,7 @@ def main():
         help="Re-run only trial N (0-based). Merges result into existing CV summary if present.",
     )
     parser.add_argument(
-        "--run-config",
+        "--run_config",
         default=DEFAULT_CLI_RUN_CONFIG,
         metavar="TOKENS",
         help=(
@@ -957,42 +963,42 @@ def main():
         ),
     )
     parser.add_argument(
-        "--NN-vessel",
+        "--NN_vessel",
         action="store_true",
         dest="nn_vessel",
         default=True,
         help="Train vessel NN per trial and run vessel NN inference (junction+vessel and vessel-only modalities in MSE). Default: True.",
     )
     parser.add_argument(
-        "--no-NN-vessel",
+        "--no_NN_vessel",
         action="store_false",
         dest="nn_vessel",
         help="Disable vessel NN training and inference (junction NN only).",
     )
     parser.add_argument(
-        "--skip-training-if-exists",
+        "--skip_training_if_exists",
         action="store_true",
         help="Skip junction and/or vessel training for a trial if the corresponding model files already exist.",
     )
     parser.add_argument(
-        "--percent-train",
+        "--percent_train",
         type=float,
         default=0.9,
         metavar="P",
         help="Fraction of geometries for training (0–1); remainder used for validation (default: 0.9).",
     )
     parser.add_argument(
-        "--metrics-only",
+        "--metrics_only",
         action="store_true",
         help="Regenerate CV summary CSVs (overall MSE + pressure/flow MSE + max error) from existing cv_summary.csv and per-geometry mse_comparison.csv files. No training or deploy.",
     )
     parser.add_argument(
-        "--plots-only",
+        "--plots_only",
         action="store_true",
-        help="Regenerate comparison plots for CV validation geometries via generate_zerod_inputs --plots-only. No training or deploy.",
+        help="Regenerate comparison plots for CV validation geometries via generate_zerod_inputs --plots_only. No training or deploy.",
     )
     parser.add_argument(
-        "--skip-barchart",
+        "--skip_barchart",
         action="store_true",
         help="Do not run cv_pressure_max_pct_error_barchart after writing CV summary CSVs.",
     )
@@ -1003,10 +1009,8 @@ def main():
     except ValueError as exc:
         parser.error(str(exc))
     flags = run_config_suffix_to_flags(run_config_suffix)
-    if flags["stenosis_off"] and flags["penalty_off"]:
-        parser.error("Cannot use both stenosis_off and penalty_off in --run-config.")
     if args.metrics_only and args.plots_only:
-        parser.error("Cannot use both --metrics-only and --plots-only.")
+        parser.error("Cannot use both --metrics_only and --plots_only.")
     if args.plots_only:
         run_cv_plots_only(
             set_name=args.set_name,

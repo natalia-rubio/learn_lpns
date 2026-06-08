@@ -6,7 +6,7 @@ Reads the concatenated junction and vessel ``data_dict`` files under::
 
     data/jax_arrays/<set_name>/<run_config>/<geometry_variant>/<set_type>/
 
-Default: ``stenosis_off_symmetric_gen_loss / bifurcations_EL / all``.
+Default: ``gen_loss / bifurcations_EL / all``.
 
 - **Non-connector vessels**: ``input.shape[0]`` in ``jax_arrays_vessel_num_geos_*.pkl``
   (one row per non-connector vessel; same construction as
@@ -27,7 +27,7 @@ Or::
 Usage::
   python -m util.data_processing.report_jax_test_split_counts
   python -m util.data_processing.report_jax_test_split_counts VMR_abdo VMR_pulmo_healthy
-  python -m util.data_processing.report_jax_test_split_counts --data-root /path/to/data
+  python -m util.data_processing.report_jax_test_split_counts --data_root /path/to/data
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from util.tools.basic import load_dict
+from util.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
 
 _JAX_ENV_HINT = (
     "JAX is required to load these pickles. Activate the project conda env, e.g.:\n"
@@ -72,12 +73,7 @@ def _select_pkl(directory: str, glob_pattern: str) -> str:
             f"No files matching {glob_pattern!r} under {directory}"
         )
 
-    def sort_key(p: str) -> Tuple[int, int]:
-        n = _num_geos_from_basename(p)
-        raw_first = 1 if "_normalized" not in os.path.basename(p) else 0
-        return (n, raw_first)
-
-    return max(paths, key=sort_key)
+    return max(paths, key=_num_geos_from_basename)
 
 
 def _input_nrows(data_dict: dict) -> int:
@@ -140,22 +136,22 @@ def main() -> None:
         help="Set names (e.g. VMR_abdo). Default: all subdirs of data/jax_arrays with the expected path.",
     )
     parser.add_argument(
-        "--data-root",
+        "--data_root",
         default=os.path.join(REPO_ROOT, "data"),
         help="Repo data root (default: <repo>/data)",
     )
     parser.add_argument(
-        "--run-config",
-        default="stenosis_off_symmetric_gen_loss",
-        help="Run-config directory under jax_arrays/<set>/ (default: stenosis_off_symmetric_gen_loss)",
+        "--run_config",
+        default=DEFAULT_CLI_RUN_CONFIG,
+        help=f"Run-config directory under jax_arrays/<set>/ (default: {DEFAULT_CLI_RUN_CONFIG})",
     )
     parser.add_argument(
-        "--geometry-variant",
+        "--geometry_variant",
         default="bifurcations_EL",
         help="Geometry variant folder (default: bifurcations_EL)",
     )
     parser.add_argument(
-        "--set-type",
+        "--set_type",
         default="all",
         help="Cohort folder tier under jax_arrays (default: all)",
     )

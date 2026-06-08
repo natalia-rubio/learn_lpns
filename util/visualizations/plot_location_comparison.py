@@ -1251,27 +1251,27 @@ def main():
     parser = argparse.ArgumentParser(
         description="Plot pressure and flow comparison at any location in the network"
     )
-    parser.add_argument('--set-name', required=True, help='Set name (e.g., set_3, VMR)')
-    parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., tree_007, 0063_1001)')
+    parser.add_argument('--set_name', required=True, help='Set name (e.g., set_3, VMR)')
+    parser.add_argument('--geo_name', required=True, help='Geometry name (e.g., tree_007, 0063_1001)')
     parser.add_argument('--location', help='Specific location to plot (e.g., "INFLOW:branch0_seg0" or "branch0_seg0:J0")')
-    parser.add_argument('--calibration-input', help='Path to calibration input JSON (default: auto-detect)')
-    parser.add_argument('--geometric-csv', help='Path to geometric 0D results CSV (default: auto-detect)')
-    parser.add_argument('--junction-types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
+    parser.add_argument('--calibration_input', help='Path to calibration input JSON (default: auto-detect)')
+    parser.add_argument('--geometric_csv', help='Path to geometric 0D results CSV (default: auto-detect)')
+    parser.add_argument('--junction_types', type=lambda s: [x.strip() for x in s.split(',') if x.strip()],
                        default='original_NORMAL_JUNCTION,bifurcations_NORMAL_JUNCTION,original_BloodVesselJunction,bifurcations_BloodVesselJunction',
                        help='Comma-separated junction types to plot (e.g., original_NORMAL_JUNCTION,bifurcations_BloodVesselJunction)')
-    parser.add_argument('--run-config', default='base',
-                        help='Run config name for output subfolder (e.g., base, stenosis_off)')
-    parser.add_argument('--output-dir', default='results/location_comparison', 
+    parser.add_argument('--run_config', default='base',
+                        help='Run config name for output subfolder (e.g., base, gen_loss)')
+    parser.add_argument('--output_dir', default='results/location_comparison', 
                         help='Output directory for plots (run-config subfolder is appended)')
-    parser.add_argument('--data-dir', default='data/zeroD', 
+    parser.add_argument('--data_dir', default='data/zeroD', 
                         help='Data directory for input files')
-    parser.add_argument('--geometry-variant', default=None,
+    parser.add_argument('--geometry_variant', default=None,
                         help='Geometry variant (e.g. bifurcations_EL). When set, also load NN modalities from {variant}_NN_*_results.csv if present.')
-    parser.add_argument('--time-period', type=float, default=None,
+    parser.add_argument('--time_period', type=float, default=None,
                         help='Time period in seconds (default: auto-detect)')
-    parser.add_argument('--zoom-start', type=int, default=None,
+    parser.add_argument('--zoom_start', type=int, default=None,
                         help='Start index for zoom window')
-    parser.add_argument('--zoom-end', type=int, default=None,
+    parser.add_argument('--zoom_end', type=int, default=None,
                         help='End index for zoom window')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Print detailed information')
@@ -1283,7 +1283,7 @@ def main():
         sys.exit(1)
     
     if not args.junction_types:
-        print("Error: No valid junction types (--junction-types must be a non-empty comma-separated list).")
+        print("Error: No valid junction types (--junction_types must be a non-empty comma-separated list).")
         sys.exit(1)
     
     # Auto-detect file paths

@@ -68,7 +68,7 @@ $k$-fold cross-validation of this workflow is implemented, where $k$ different t
 
 ## Usage
 
-Run from the **repository root** so imports and `--data-root data` resolve as expected.
+Run from the **repository root** so imports and `--data_root data` resolve as expected.
 
 ### Quick start (cross-validation)
 
@@ -76,17 +76,17 @@ This command exercises most of the pipeline: prerequisite checks, k-fold trainin
 
 ```bash
 python util/zerod_calibration/run_cross_validation.py \
-  VMR_rigid_aorta_adults_all \
-  bifurcations_EL \
-  2 \
-  --run-config stenosis_off_symmetric_gen_loss
+  --set_name VMR_rigid_aorta_adults_all \
+  --geometry_variant bifurcations_EL \
+  --num_trials 2 \
+  --run_config gen_loss
 ```
 
-Positional arguments: `<set_name> [geometry_variant] [num_trials]`. Defaults: `geometry_variant=bifurcations_EL`, `num_trials=5`.
+All arguments are keyword flags (e.g. `--set_name`, `--geometry_variant`, `--num_trials`). Defaults: `geometry_variant=bifurcations_EL`, `num_trials=5`, `run_config=gen_loss`.
 
-### Run config (`--run-config`)
+### Run config (`--run_config`)
 
-Physics and training variants are selected with a single **`--run-config`** flag on the zerod CLIs, CV, batch, and data processing. Tokens are **underscore-separated** and **order-independent**; they are resolved to a canonical path suffix under `data/` and `results/`.
+Physics and training variants are selected with a single **`--run_config`** flag on the zerod CLIs, CV, batch, and data processing. Tokens are **underscore-separated** and **order-independent**; they are resolved to a canonical path suffix under `data/` and `results/`.
 
 Examples (all equivalent for paths):
 
@@ -117,26 +117,26 @@ Runs `generate_zerod_inputs.py` over VMR geometries discovered from `data/zeroD/
 
 ```bash
 python -m util.zerod_calibration.batch_generate_zerod_inputs_vmr \
-  --set-name VMR_rigid_aorta_adults \
-  --run-config gen_loss_penalty_off_symmetric \
-  --skip-steps calibration_forward \
+  --set_name VMR_rigid_aorta_adults \
+  --run_config gen_loss_penalty_off_symmetric \
+  --skip_steps calibration_forward \
   --geometries 0076_1001
 ```
 
-**`--skip-steps`** — skip pipeline stages without separate flags. Tokens (order-independent): `base_generation`, `observation`, `calibration`, `forward`, `mse`, `plots`. Example: `base_generation_observation_calibration` or `calibration_forward`.
+**`--skip_steps`** — skip pipeline stages without separate flags. Tokens (order-independent): `base_generation`, `observation`, `calibration`, `forward`, `mse`, `plots`. Example: `base_generation_observation_calibration` or `calibration_forward`.
 
-Other useful flags: `--no-redo` (skip recreating files that already exist), `--NN-only`, `--NN-vessel`, `--skip-existing` (skip geometries that already have full outputs including NN forward results).
+Other useful flags: `--no_redo` (skip recreating files that already exist), `--NN_only`, `--NN_vessel`, `--skip_existing` (skip geometries that already have full outputs including NN forward results).
 
 ### k-fold cross-validation (`run_cross_validation.py`)
 
-Each trial randomly splits geometries into train vs validation sets, trains the junction NN (and vessel NN unless disabled), deploys with `generate_zerod_inputs.py --NN-only` on validation geometries, and aggregates MSE from each geometry’s `mse_comparison.csv`. When CV finishes, **`cv_pressure_max_pct_error_barchart`** runs automatically (all three pressure metrics) unless you pass **`--skip-barchart`**.
+Each trial randomly splits geometries into train vs validation sets, trains the junction NN (and vessel NN unless disabled), deploys with `generate_zerod_inputs.py --NN_only` on validation geometries, and aggregates MSE from each geometry’s `mse_comparison.csv`. When CV finishes, **`cv_pressure_max_pct_error_barchart`** runs automatically (all three pressure metrics) unless you pass **`--skip_barchart`**.
 
 **What CV regenerates**
 
 | Stage | When | What runs |
 |-------|------|-----------|
 | **Bootstrap** (start) | Only if prerequisites are missing | `batch_generate_zerod_inputs_vmr` + `run_data_processing` |
-| **Per trial** | Always (val geometries) | `generate_zerod_inputs --NN-only` (NN inference, forward sim, MSE, plots) |
+| **Per trial** | Always (val geometries) | `generate_zerod_inputs --NN_only` (NN inference, forward sim, MSE, plots) |
 
 Bootstrap runs only when **any** of the following is true for the run-config:
 
@@ -146,17 +146,17 @@ Bootstrap runs only when **any** of the following is true for the run-config:
 
 When bootstrap runs, batch processes **only the missing geometries**, not the whole cohort. Data processing uses all geometries if jax must be rebuilt, otherwise only the batch subset.
 
-- **`--no-redo`**: passed to bootstrap batch only; skips recreating zeroD files that already exist. Does not affect per-trial NN deploy (deploy does not pass `--no-redo`, so NN forward outputs are refreshed each trial).
-- **`--skip-training-if-exists`**: skip training for a trial if model checkpoints already exist.
+- **`--no_redo`**: passed to bootstrap batch only; skips recreating zeroD files that already exist. Does not affect per-trial NN deploy (deploy does not pass `--no_redo`, so NN forward outputs are refreshed each trial).
+- **`--skip_training_if_exists`**: skip training for a trial if model checkpoints already exist.
 - **`--trial N`**: re-run only trial `N` (0-based); merges into existing summary CSV.
-- **`--metrics-only`**: rebuild summary CSVs from existing per-geometry MSE files (no train/deploy); still runs barcharts unless `--skip-barchart`.
-- **`--plots-only`**: regenerate location comparison plots from existing zeroD data.
+- **`--metrics_only`**: rebuild summary CSVs from existing per-geometry MSE files (no train/deploy); still runs barcharts unless `--skip_barchart`.
+- **`--plots_only`**: regenerate location comparison plots from existing zeroD data.
 
 **Outputs:** per-trial models under `results/models/<set_name>/<run_config>/…_trial_<k>/`, split pickles under `data/split_indices/…`, summary CSVs under `results/cross_validation/<set_name>/<run_config>/` (including pressure/flow MSE and max-error variants), and barchart PDFs in the same directory (e.g. `bifurcations_EL_max_pct_error.pdf`).
 
 ### Multiple configs
 
-`run_cv_all_configs.py` runs CV over several run-configs in sequence, then by-config comparison barcharts. CV already generates per-config barcharts; use `--skip-per-config-barchart` on that wrapper to disable them.
+`run_cv_all_configs.py` runs CV over several run-configs in sequence, then by-config comparison barcharts. CV already generates per-config barcharts; use `--skip_per_config_barchart` on that wrapper to disable them.
 
 ```bash
 python -m util.zerod_calibration.run_cv_all_configs VMR_rigid_aorta_adults bifurcations_EL 5
@@ -168,9 +168,9 @@ After zeroD outputs exist, build ml_inputs and jax stacks:
 
 ```bash
 python util/data_processing/run_data_processing.py \
-  --set-name VMR_rigid_aorta_adults_all \
-  --geometry-variant bifurcations_EL \
-  --run-config stenosis_off_symmetric_gen_loss
+  --set_name VMR_rigid_aorta_adults_all \
+  --geometry_variant bifurcations_EL \
+  --run_config stenosis_off_symmetric_gen_loss
 ```
 
 Feature histograms and related paths follow the same `set_name / run_config / geometry_variant` layout as jax arrays.

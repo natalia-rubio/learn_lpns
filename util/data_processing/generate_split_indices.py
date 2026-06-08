@@ -309,15 +309,15 @@ def write_geometries_txt(
 
 def main():
     parser = argparse.ArgumentParser(description="Generate train/val split indices for NN training.")
-    parser.add_argument("--set-name", required=True, help="e.g. VMR")
-    parser.add_argument("--geometry-variant", default="bifurcations", 
+    parser.add_argument("--set_name", required=True, help="e.g. VMR")
+    parser.add_argument("--geometry_variant", default="bifurcations", 
                        choices=["bifurcations", "bifurcations_EL"],
                        help="Geometry variant (default: bifurcations)")
-    parser.add_argument("--set-type", default="all", help="Cohort folder tier under jax_arrays/split_indices (default: all)")
-    parser.add_argument("--num-geos", type=int, required=True, help="Number of geometries used to build the jax arrays")
-    parser.add_argument("--percent-train", type=float, required=True, help="Fraction of points to use for training (0,1)")
+    parser.add_argument("--set_type", default="all", help="Cohort folder tier under jax_arrays/split_indices (default: all)")
+    parser.add_argument("--num_geos", type=int, required=True, help="Number of geometries used to build the jax arrays")
+    parser.add_argument("--percent_train", type=float, required=True, help="Fraction of points to use for training (0,1)")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for reproducible split")
-    parser.add_argument("--data-root", default="data", help="Repo data root (default: data)")
+    parser.add_argument("--data_root", default="data", help="Repo data root (default: data)")
     args = parser.parse_args()
 
     jax_arrays_path = os.path.join(

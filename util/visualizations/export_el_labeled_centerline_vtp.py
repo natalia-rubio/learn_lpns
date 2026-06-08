@@ -2,8 +2,8 @@
 """
 Write a centerline VTP whose BranchId / BifurcationId reflect the EL geometric model.
 
-CLI: pass ``--set-name``, ``--geo-name``, and optionally ``--run-config`` to infer
-paths under ``data/``, or pass explicit ``--geometric-input``, ``--centerline``,
+CLI: pass ``--set_name``, ``--geo_name``, and optionally ``--run_config`` to infer
+paths under ``data/``, or pass explicit ``--geometric_input``, ``--centerline``,
 and ``--output``.
 
 Reads bifurcations_EL_geometric_input.json (or any geometric_input with EL-style
@@ -392,48 +392,48 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Path modes:
-  (1) Provide --set-name and --geo-name (and optionally --run-config): paths are
-      inferred under --data-dir.
-  (2) Provide --geometric-input, --centerline, and --output explicitly.
+  (1) Provide --set_name and --geo_name (and optionally --run_config): paths are
+      inferred under --data_dir.
+  (2) Provide --geometric_input, --centerline, and --output explicitly.
 
 Examples:
   python -m util.visualizations.export_el_labeled_centerline_vtp \\
-      --set-name VMR_rigid_aorta_adults --geo-name 0094_0001 --run-config stenosis_off
+      --set_name VMR_rigid_aorta_adults --geo_name 0094_0001 --run_config gen_loss
 
   python -m util.visualizations.export_el_labeled_centerline_vtp \\
-      --set-name VMR --geo-name 0063_1001 --output /tmp/out.vtp
+      --set_name VMR --geo_name 0063_1001 --output /tmp/out.vtp
 
   python -m util.visualizations.export_el_labeled_centerline_vtp \\
-      --geometric-input data/zeroD/VMR/g/bifurcations_EL_geometric_input.json \\
+      --geometric_input data/zeroD/VMR/g/bifurcations_EL_geometric_input.json \\
       --centerline data/oneD/VMR/g/unsteady_soln.vtp --output /tmp/labeled.vtp
 """,
     )
     parser.add_argument(
-        "--set-name",
+        "--set_name",
         type=str,
         default=None,
-        help="Dataset name (e.g. VMR_rigid_aorta_adults); use with --geo-name to infer paths",
+        help="Dataset name (e.g. VMR_rigid_aorta_adults); use with --geo_name to infer paths",
     )
     parser.add_argument(
-        "--geo-name",
+        "--geo_name",
         type=str,
         default=None,
-        help="Geometry id (e.g. 0094_0001); use with --set-name",
+        help="Geometry id (e.g. 0094_0001); use with --set_name",
     )
     parser.add_argument(
-        "--run-config",
+        "--run_config",
         type=str,
         default=None,
-        help="ZeroD subfolder under set (e.g. stenosis_off). If omitted, use data/zeroD/<set>/<geo>/",
+        help="ZeroD subfolder under set (e.g. gen_loss). If omitted, use data/zeroD/<set>/<geo>/",
     )
     parser.add_argument(
-        "--data-dir",
+        "--data_dir",
         type=str,
         default="data",
         help="Base data directory for inferred paths (default: data)",
     )
     parser.add_argument(
-        "--geometric-input",
+        "--geometric_input",
         type=str,
         default=None,
         help="Explicit path to bifurcations_EL_geometric_input.json",
@@ -455,7 +455,7 @@ Examples:
     use_inferred = args.set_name is not None or args.geo_name is not None
     if use_inferred:
         if not args.set_name or not args.geo_name:
-            parser.error("--set-name and --geo-name are required together for inferred paths")
+            parser.error("--set_name and --geo_name are required together for inferred paths")
         try:
             geometric_input, centerline, output = infer_paths_from_set_run_geo(
                 args.set_name,
@@ -474,8 +474,8 @@ Examples:
     else:
         if not args.geometric_input or not args.centerline or not args.output:
             parser.error(
-                "Either pass --set-name and --geo-name, or all of "
-                "--geometric-input, --centerline, and --output"
+                "Either pass --set_name and --geo_name, or all of "
+                "--geometric_input, --centerline, and --output"
             )
         geometric_input = args.geometric_input
         centerline = args.centerline

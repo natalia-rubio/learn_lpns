@@ -81,22 +81,22 @@ def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", dat
 
 def main():
     parser = argparse.ArgumentParser(description="Run the full data processing pipeline for NN training")
-    parser.add_argument("--set-name", required=True, help="Set name (e.g., VMR)")
-    parser.add_argument("--geometry-variant", default="all", 
+    parser.add_argument("--set_name", required=True, help="Set name (e.g., VMR)")
+    parser.add_argument("--geometry_variant", default="all", 
                        choices=["bifurcations", "bifurcations_EL", "all"],
                        help="Geometry variant (default: all - processes both bifurcations and bifurcations_EL)")
-    parser.add_argument("--set-type", default="all", help="Cohort folder tier for jax_arrays/split_indices (default: all; not the ML train/test split)")
+    parser.add_argument("--set_type", default="all", help="Cohort folder tier for jax_arrays/split_indices (default: all; not the ML train/test split)")
     parser.add_argument("--geometries", nargs="+", default=None, 
                        help="List of geometries (e.g., 0063_1001 ...). If not provided, auto-discovers geometries with both CSV files.")
-    parser.add_argument("--percent-train", type=float, default=0.8, help="Fraction of points used for training (default: 0.8)")
+    parser.add_argument("--percent_train", type=float, default=0.8, help="Fraction of points used for training (default: 0.8)")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for train/val split (default: 0)")
-    parser.add_argument("--data-root", default="data", help="Repo data root (default: data)")
+    parser.add_argument("--data_root", default="data", help="Repo data root (default: data)")
     parser.add_argument(
-        "--run-config",
+        "--run_config",
         default=DEFAULT_CLI_RUN_CONFIG,
         help="Run config suffix for path separation (default: %(default)s). "
         "ml_inputs/jax_arrays/split_indices use .../set_name/<suffix>/... "
-        "(e.g. stenosis_off_symmetric_gen_loss is a full duplicate path tree).",
+        "(e.g. gen_loss is a full duplicate path tree).",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose printing")
     args = parser.parse_args()
@@ -403,10 +403,11 @@ def main():
             print("Train geometries:", train_geometries)
             print("Validation geometries:", val_geometries)
         except Exception as e:
-            print(f"  Skipping data_dict / jax_arrays / split for {geometry_variant}: {e}")
+            print(f"  Failed to build data_dict / jax_arrays / split for {geometry_variant}: {e}")
             if args.verbose:
                 import traceback
                 traceback.print_exc()
+            raise
 
 if __name__ == "__main__":
     main()

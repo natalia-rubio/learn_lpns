@@ -350,16 +350,16 @@ def main():
     parser = argparse.ArgumentParser(
         description="Compare geometric vs calibrated 0D element values using violin plots"
     )
-    parser.add_argument('--set-name', required=True, help='Set name (e.g., set_1)')
-    parser.add_argument('--geo-name', required=True, help='Geometry name (e.g., tree_000)')
-    parser.add_argument('--geometric-input', help='Path to geometric input JSON (default: auto-detect)')
-    parser.add_argument('--calibrated-output', help='Path to calibrated output JSON (default: auto-detect)')
+    parser.add_argument('--set_name', required=True, help='Set name (e.g., set_1)')
+    parser.add_argument('--geo_name', required=True, help='Geometry name (e.g., tree_000)')
+    parser.add_argument('--geometric_input', help='Path to geometric input JSON (default: auto-detect)')
+    parser.add_argument('--calibrated_output', help='Path to calibrated output JSON (default: auto-detect)')
     parser.add_argument('--output', help='Output plot path (default: auto-generate)')
-    parser.add_argument('--output-dir', default='results/calibration_difference', 
+    parser.add_argument('--output_dir', default='results/calibration_difference', 
                        help='Output directory (default: results/calibration_difference)')
-    parser.add_argument('--data-dir', default='data/zeroD', 
+    parser.add_argument('--data_dir', default='data/zeroD', 
                        help='Data directory for input files (default: data/zeroD)')
-    parser.add_argument('--log-scale', action='store_true', 
+    parser.add_argument('--log_scale', action='store_true', 
                        help='Enable log scale for resistance and stenosis coefficient')
     
     args = parser.parse_args()
