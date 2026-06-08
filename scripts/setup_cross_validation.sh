@@ -16,8 +16,9 @@ LEARN_LPNS_BRANCH="${LEARN_LPNS_BRANCH:-id_based_wiring}"
 SVZEROD_REPO="${SVZEROD_REPO:-https://github.com/natalia-rubio/svZeroDPlus.git}"
 SVZEROD_BRANCH="${SVZEROD_BRANCH:-J-J_wiring}"
 JAX_VARIANT="${JAX_VARIANT:-jax[cpu]}"
-PYTHON="${PYTHON:-python3}"
+PYTHON="${PYTHON:-}"
 CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
+MIN_PYTHON_VERSION="3.10"
 
 SKIP_CLONE=false
 SKIP_SOLVER_BUILD=false
@@ -55,7 +56,13 @@ Environment overrides:
   SVZEROD_REPO           Git remote for svZeroDPlus fork
   SVZEROD_BRANCH         Git branch for svZeroDPlus (default: J-J_wiring)
   JAX_VARIANT            pip JAX extra, e.g. jax[cpu] or jax[cuda12] (default: jax[cpu])
-  PYTHON                 Python interpreter (default: python3)
+  PYTHON                 Python 3.10+ interpreter (auto-detected if unset)
+
+Prerequisites (checked before clone/build):
+  - git, cmake, a C++ compiler (Xcode CLT on macOS: xcode-select --install)
+  - Python 3.10+ (macOS: brew install python@3.12)
+  - On macOS, plain python3 is often 3.9 from Xcode — the script searches for
+    python3.12, python3.11, etc., or set PYTHON explicitly.
 
 After setup:
   source scripts/cv_env.sh
@@ -71,7 +78,78 @@ log() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
+  if command -v "$1" >/dev/null 2>&1; then
+    return 0
+  fi
+  case "$1" in
+    cmake)
+      if [[ "$(uname -s)" == "Darwin" ]]; then
+        die "Missing cmake. Install with: brew install cmake"
+      fi
+      ;;
+    git)
+      if [[ "$(uname -s)" == "Darwin" ]]; then
+        die "Missing git. Install Xcode Command Line Tools: xcode-select --install"
+      fi
+      ;;
+  esac
+  die "Missing required command: $1"
+}
+
+python_ok() {
+  "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
+}
+
+python_version_label() {
+  "$1" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")'
+}
+
+find_python() {
+  if [[ -n "$PYTHON" ]]; then
+    command -v "$PYTHON" >/dev/null 2>&1 || die "PYTHON not found: $PYTHON"
+    python_ok "$PYTHON" || die "PYTHON=$PYTHON is older than $MIN_PYTHON_VERSION (JAX requires 3.10+)"
+    printf '%s' "$PYTHON"
+    return 0
+  fi
+
+  local candidates=()
+  local ver
+  for ver in 13 12 11 10; do
+    candidates+=("python3.$ver")
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      candidates+=("/opt/homebrew/bin/python3.$ver" "/usr/local/bin/python3.$ver")
+    fi
+  done
+  candidates+=("python3")
+
+  local py
+  for py in "${candidates[@]}"; do
+    if command -v "$py" >/dev/null 2>&1 && python_ok "$py"; then
+      printf '%s' "$py"
+      return 0
+    fi
+  done
+
+  if command -v python3 >/dev/null 2>&1; then
+    local found
+    found="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null || echo unknown)"
+    die "Python $MIN_PYTHON_VERSION+ required (found python3 = $found). On macOS install a newer Python, e.g.:
+  brew install python@3.12
+  PYTHON=\$(brew --prefix python@3.12)/bin/python3.12 ./scripts/setup_cross_validation.sh"
+  fi
+  die "Python $MIN_PYTHON_VERSION+ not found. On macOS: brew install python@3.12"
+}
+
+check_prerequisites() {
+  need_cmd git
+  need_cmd cmake
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if ! xcrun --find clang >/dev/null 2>&1; then
+      die "C++ compiler not found. Install Xcode Command Line Tools: xcode-select --install"
+    fi
+  fi
+  PYTHON="$(find_python)"
+  log "Using Python: $PYTHON ($(python_version_label "$PYTHON"))"
 }
 
 clone_or_update() {
@@ -90,10 +168,11 @@ clone_or_update() {
 build_svzerod() {
   local src="$1"
   local build_dir="$src/$CMAKE_BUILD_TYPE"
-  need_cmd cmake
 
   log "Configuring svZeroDPlus in $build_dir"
-  cmake -S "$src" -B "$build_dir" -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE"
+  cmake -S "$src" -B "$build_dir" \
+    -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
+    -DPython_EXECUTABLE="$PYTHON"
 
   log "Building svzerodsolver and svzerodcalibrator"
   cmake --build "$build_dir" --target svzerodsolver svzerodcalibrator -j "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
@@ -163,8 +242,7 @@ log "learn_lpns: $LEARN_LPNS_DIR"
 log "svZeroDPlus: $SVZEROD_DIR"
 log "SVZEROD_INSTALL_DIR: $SVZEROD_INSTALL_DIR"
 
-need_cmd git
-need_cmd "$PYTHON"
+check_prerequisites
 
 if ! $SKIP_CLONE; then
   if [[ ! -d "$LEARN_LPNS_DIR/.git" ]]; then
@@ -196,6 +274,12 @@ log "svZeroD binaries OK: $SVZEROD_INSTALL_DIR"
 
 if ! $SKIP_PYTHON; then
   VENV_DIR="$LEARN_LPNS_DIR/.venv"
+  if [[ -d "$VENV_DIR" ]]; then
+    if [[ ! -x "$VENV_DIR/bin/python" ]] || ! "$VENV_DIR/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+      log "Removing existing .venv (Python < 3.10 or incomplete install)"
+      rm -rf "$VENV_DIR"
+    fi
+  fi
   if [[ ! -d "$VENV_DIR" ]]; then
     log "Creating Python venv at $VENV_DIR"
     "$PYTHON" -m venv "$VENV_DIR"
