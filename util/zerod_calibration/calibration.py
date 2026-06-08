@@ -160,7 +160,7 @@ def create_calibration_input(
 def run_calibration(calibration_input_path, output_path):
     """
     Run svZeroDCalibrator to generate calibrated input file.
-    Uses svzerodcalibrator executable at /Users/natalia/cursor_access/svZeroDPlus/Release/svzerodcalibrator.
+    Uses svzerodcalibrator from SVZEROD_INSTALL_DIR or PATH (see svzerod_binaries.py).
     Ensures the calibrated output preserves the inflow BC from the calibration input (3D observations).
     
     Args:
@@ -176,8 +176,9 @@ def run_calibration(calibration_input_path, output_path):
         config = json.load(f)
     
     
-    # Use svzerodcalibrator executable
-    calibrator_exe = '/Users/natalia/cursor_access/svZeroDPlus/Release/svzerodcalibrator'
+    from util.zerod_calibration.tools.svzerod_binaries import svzerod_binary
+
+    calibrator_exe = svzerod_binary("svzerodcalibrator")
     
     # Get absolute paths
     abs_input_path = os.path.abspath(calibration_input_path)
