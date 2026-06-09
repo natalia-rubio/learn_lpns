@@ -1389,7 +1389,7 @@ def main():
         for nn_jtype, nn_basename in [
             (
                 "BloodVesselJunction_NN",
-                f"{args.geometry_variant}_NN_BloodVesselJunction_results.csv",
+                f"{args.geometry_variant}_NN_JunctionOnly_results.csv",
             ),
             (
                 "BloodVesselJunction_NN_plus_Vessel_NN",

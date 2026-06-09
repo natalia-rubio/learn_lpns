@@ -3,7 +3,7 @@
 This repository contains functionality to train and deploy neural networks that predict lumped parameters (e.g. resistances, inductances) for 0D "electric circuit" models of cardiovascular flows.  The neural networks predict lumped parameters from the vascular geometry and are trained on high-fidelity 3D data.  This work is described in greater detail in this [paper](https://arxiv.org/abs/2604.01549).  A second, more lightweight repo, [learnedZeroD](https://github.com/natalia-rubio/learnedZeroD), provides functionality to convert a standard 0D model of a vasculature into the more accurate learned representation using pre-trained neural networks.
 
 
-!<p align="center">
+<p align="center">
   <img src="assets/github_figures.png" alt="3D-0D schematic" width="85%">
 </p>
 
@@ -81,15 +81,48 @@ pytest -v    # unit tests, no C++ solver required
 
 ## Repository layout
 
-| Path | Purpose |
-| ---- | ------- |
-| `learn_lpns/zerod_calibration/` | 0D pipeline: preprocessing, calibration, forward sim, CV, run-config |
-| `learn_lpns/neural_network/` | JAX/Optax models and training |
-| `learn_lpns/data_processing/` | ML tables, jax arrays, train/val splits |
-| `learn_lpns/visualizations/` | CV metrics, diagnostics, comparison plots |
-| `data/` | Bundled sample inputs + generated datasets (see [data/README.md](data/README.md)) |
-| `results/` | Models, CV summaries, plots (gitignored) |
-| `tests/` | Unit tests (no solver required) |
+```
+learn_lpns/                          # installable Python package
+├── zerod_calibration/               # 0D preprocessing, calibration, forward sim, CV
+│   ├── run_cross_validation.py      # → learn-lpns-cv
+│   ├── batch_generate_zerod_inputs_vmr.py  # → learn-lpns-batch-zerod
+│   ├── generate_zerod_inputs.py       # core per-geometry 0D pipeline
+│   ├── calibration.py               # svzerodcalibrator wrapper
+│   ├── forward_simulation.py        # svzerodsolver wrapper
+│   ├── nn_inference.py              # junction/vessel NN prediction
+│   ├── run_config_canonical.py      # --run_config token parsing
+│   └── tools/
+│       ├── file_io.py               # path helpers, VTK/JSON I/O
+│       └── svzerod_binaries.py      # locate C++ solver binaries
+├── data_processing/                 # → learn-lpns-data-processing
+│   ├── run_data_processing.py       # ml_inputs + jax_arrays from zeroD
+│   └── generate_split_indices.py    # geometry-level train/val splits
+├── neural_network/                  # → learn-lpns-train
+│   ├── launch_training.py           # training CLI
+│   ├── train_nn.py                  # Optax training loop
+│   └── nn_model.py                  # JAX model definitions
+├── visualizations/                  # CV barcharts, LaTeX tables, diagnostics
+└── tools/
+    └── basic.py                     # shared dict I/O helpers
+
+data/                                # bundled seed inputs + generated artifacts
+├── zeroD/                           # 0D JSON configs and simulation outputs
+├── oneD/                            # 1D centerline VTPs (3D projected)
+├── ml_inputs/                       # feature/label CSVs
+├── jax_arrays/                      # pickled JAX training arrays
+└── split_indices/                   # CV train/val geometry splits
+
+results/                             # gitignored outputs
+├── models/                          # trained NN checkpoints
+└── cross_validation/                # CV summary CSVs and barchart PDFs
+
+tests/                               # unit tests (no C++ solver)
+scripts/                             # environment setup (setup_cross_validation.sh)
+docs/                                # usage, architecture, data layout
+assets/                              # README figures
+```
+
+See [data/README.md](data/README.md) for bundled sample cohort paths.
 
 ## Development
 

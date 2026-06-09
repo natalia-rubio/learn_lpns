@@ -78,12 +78,14 @@ def check_geometry_complete(
                 return False
 
     if require_nn_outputs and "BloodVesselJunction" in junction_types:
-        nn_output = os.path.join(base_dir, "bifurcations_NN_BloodVesselJunction.json")
+        from learn_lpns.zerod_calibration.modality_paths import NN_JUNCTION_ONLY_SUFFIX
+
+        nn_output = os.path.join(base_dir, f"bifurcations_NN_{NN_JUNCTION_ONLY_SUFFIX}.json")
         if not os.path.exists(nn_output):
             return False
 
         if not skip_forward:
-            nn_results = os.path.join(base_dir, "bifurcations_NN_BloodVesselJunction_results.csv")
+            nn_results = os.path.join(base_dir, f"bifurcations_NN_{NN_JUNCTION_ONLY_SUFFIX}_results.csv")
             if not os.path.exists(nn_results):
                 return False
 

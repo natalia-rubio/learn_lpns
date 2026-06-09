@@ -151,7 +151,7 @@ def sync_nn_config_bcs_from_calibration(nn_config_paths, source_bc_path, verbose
 
     Args:
         nn_config_paths: List of paths to NN config JSON files to update
-            (e.g. *_NN_BloodVesselJunction.json, *_NN_JunctionAndVessel.json, *_NN_VesselOnly.json)
+            (e.g. *_NN_JunctionOnly.json, *_NN_JunctionAndVessel.json, *_NN_VesselOnly.json)
         source_bc_path: Path to the JSON file to copy boundary_conditions from
             (typically the BloodVesselJunction calibrated output or its calibration input)
         verbose: If True, print which files were updated
@@ -221,7 +221,7 @@ def refine_inlet_bc_for_forward_simulation(output_path, max_reasonable_points=10
         if "calibrated_output" in output_path:
             calibration_input_path = output_path.replace("calibrated_output", "calibration_input")
         # For geometric input or NN files, use the file itself as source (first time only)
-        elif "geometric_input" in output_path or "NN_BloodVesselJunction" in output_path:
+        elif "geometric_input" in output_path or "NN_JunctionOnly" in output_path:
             calibration_input_path = output_path
         else:
             # Default: assume output_path is the source

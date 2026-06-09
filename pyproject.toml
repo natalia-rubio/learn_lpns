@@ -59,5 +59,3 @@ select = ["E", "F", "I"]
 "learn_lpns/**/regenerate_feature_histograms.py" = ["E402"]
 "learn_lpns/**/report_jax_test_split_counts.py" = ["E402"]
 "learn_lpns/**/plot_zero_d_params.py" = ["E402"]
-# Legacy cluster scripts: semicolons and long HPC paths.
-"learn_lpns/cluster_scripts/**" = ["E501", "E701", "E702"]

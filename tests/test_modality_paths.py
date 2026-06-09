@@ -44,7 +44,7 @@ def test_nn_forward_sim_specs_without_vessel():
     specs = nn_forward_sim_specs("/out", "bifurcations_EL", "BloodVesselJunction", nn_vessel=False)
     assert len(specs) == 1
     assert specs[0][0] == "BloodVesselJunction_NN"
-    assert specs[0][1].endswith("bifurcations_EL_NN_BloodVesselJunction.json")
+    assert specs[0][1].endswith("bifurcations_EL_NN_JunctionOnly.json")
 
 
 def test_nn_forward_sim_specs_with_vessel():
@@ -67,7 +67,7 @@ def test_modality_csv_paths_includes_existing_files(tmp_path):
     geometric_csv.write_text("t,p\n")
     calibrated_csv = base_dir / f"{geo_variant_name}_calibrated_results.csv"
     calibrated_csv.write_text("t,p\n")
-    nn_csv = base_dir / f"{geo_variant_name}_NN_{junction_type}_results.csv"
+    nn_csv = base_dir / f"{geo_variant_name}_NN_JunctionOnly_results.csv"
     nn_csv.write_text("t,p\n")
 
     geo_variant_paths = {

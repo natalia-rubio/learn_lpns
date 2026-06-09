@@ -2,6 +2,11 @@
 
 import os
 
+# Filename suffixes for NN forward-sim configs (paired with JunctionAndVessel / VesselOnly).
+NN_JUNCTION_ONLY_SUFFIX = "JunctionOnly"
+NN_JUNCTION_AND_VESSEL_SUFFIX = "JunctionAndVessel"
+NN_VESSEL_ONLY_SUFFIX = "VesselOnly"
+
 # Human-readable column headers for MSE summary tables and LaTeX exports.
 MODALITY_DISPLAY = {
     "geometric": "Standard",
@@ -62,8 +67,8 @@ def nn_forward_sim_specs(base_dir, geo_variant_name, junction_type, nn_vessel):
     specs = [
         (
             "BloodVesselJunction_NN",
-            os.path.join(base_dir, f"{geo_variant_name}_NN_{junction_type}.json"),
-            os.path.join(base_dir, f"{geo_variant_name}_NN_{junction_type}_results.csv"),
+            os.path.join(base_dir, f"{geo_variant_name}_NN_{NN_JUNCTION_ONLY_SUFFIX}.json"),
+            os.path.join(base_dir, f"{geo_variant_name}_NN_{NN_JUNCTION_ONLY_SUFFIX}_results.csv"),
         ),
     ]
     if nn_vessel:
@@ -71,13 +76,19 @@ def nn_forward_sim_specs(base_dir, geo_variant_name, junction_type, nn_vessel):
             [
                 (
                     "BloodVesselJunction_NN_plus_Vessel_NN",
-                    os.path.join(base_dir, f"{geo_variant_name}_NN_JunctionAndVessel.json"),
-                    os.path.join(base_dir, f"{geo_variant_name}_NN_JunctionAndVessel_results.csv"),
+                    os.path.join(
+                        base_dir,
+                        f"{geo_variant_name}_NN_{NN_JUNCTION_AND_VESSEL_SUFFIX}.json",
+                    ),
+                    os.path.join(
+                        base_dir,
+                        f"{geo_variant_name}_NN_{NN_JUNCTION_AND_VESSEL_SUFFIX}_results.csv",
+                    ),
                 ),
                 (
                     "NN_vessel",
-                    os.path.join(base_dir, f"{geo_variant_name}_NN_VesselOnly.json"),
-                    os.path.join(base_dir, f"{geo_variant_name}_NN_VesselOnly_results.csv"),
+                    os.path.join(base_dir, f"{geo_variant_name}_NN_{NN_VESSEL_ONLY_SUFFIX}.json"),
+                    os.path.join(base_dir, f"{geo_variant_name}_NN_{NN_VESSEL_ONLY_SUFFIX}_results.csv"),
                 ),
             ]
         )
