@@ -1,6 +1,8 @@
 results/*
+*.egg-info/
 __pycache__/
 .DS_Store
+**/.DS_Store
 data2/*
 
 # Ignore all of data/ by default. Only bundled seed inputs below are tracked.

@@ -27,7 +27,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check util tests
+        run: ruff check learn_lpns tests
 
       - name: Run unit tests
         run: pytest -v
