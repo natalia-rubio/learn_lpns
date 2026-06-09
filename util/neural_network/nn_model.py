@@ -13,9 +13,12 @@ S_OUTPUT_COLUMN = 1
 L_OUTPUT_COLUMN = 2
 
 
-class NeuralNet():
-
-    def __init__(self, network_params, optimizer_params,):
+class NeuralNet:
+    def __init__(
+        self,
+        network_params,
+        optimizer_params,
+    ):
         self.set_name = network_params["set_name"]
 
         self.set_type = network_params.get("set_type", "test")
@@ -43,14 +46,9 @@ class NeuralNet():
         self.model_name_suffix = network_params.get("model_name_suffix", "")
         self.use_leaky_relu = network_params.get("use_leaky_relu", False)
         self.asymmetric_loss = bool(network_params["asymmetric_loss"])
-        self.asymmetric_loss_overestimate_weight = network_params[
-            "asymmetric_loss_overestimate_weight"
-        ]
+        self.asymmetric_loss_overestimate_weight = network_params["asymmetric_loss_overestimate_weight"]
         if self.asymmetric_loss:
-            print(
-                f"  asymmetric_loss: ON  "
-                f"(overestimate weight={self.asymmetric_loss_overestimate_weight:g})"
-            )
+            print(f"  asymmetric_loss: ON  (overestimate weight={self.asymmetric_loss_overestimate_weight:g})")
         else:
             print("  asymmetric_loss: OFF  (symmetric loss; overestimate weight = 1.0)")
 
@@ -77,9 +75,7 @@ class NeuralNet():
         else:
             garr = jnp.zeros((n_rows,), dtype=jnp.float32)
         self._generation_full = garr
-        self.generation_weighted_loss_scale = float(
-            network_params["generation_weighted_loss_scale"]
-        )
+        self.generation_weighted_loss_scale = float(network_params["generation_weighted_loss_scale"])
         if self.generation_weighted_loss:
             print(
                 f"  generation_weighted_loss: ON  "

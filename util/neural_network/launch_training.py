@@ -1,4 +1,3 @@
-
 import os
 import sys
 from dataclasses import dataclass
@@ -87,11 +86,7 @@ def _jax_arrays_path(
     *,
     vessel: bool,
 ) -> str:
-    jax_filename = (
-        f"jax_arrays_vessel_num_geos_{num_geos}.pkl"
-        if vessel
-        else f"jax_arrays_num_geos_{num_geos}.pkl"
-    )
+    jax_filename = f"jax_arrays_vessel_num_geos_{num_geos}.pkl" if vessel else f"jax_arrays_num_geos_{num_geos}.pkl"
     parts = [data_root, "jax_arrays", set_name]
     if run_config_suffix:
         parts.append(run_config_suffix)
@@ -111,10 +106,7 @@ def _default_split_path(
             f"data/split_indices/{set_name}/{run_config_suffix}/"
             f"{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
         )
-    return (
-        f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/"
-        f"train_val_ind_{set_name}_num_geos_{num_geos}"
-    )
+    return f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
 
 
 def _build_training_params_for_modality(
@@ -191,9 +183,7 @@ def _build_training_params_for_modality(
         "num_offsets": 1 if vessel else num_offsets,
     }
     if vessel:
-        out_dir = model_dir or os.path.join(
-            "results", "models", set_name, geometry_variant + "_vessel"
-        )
+        out_dir = model_dir or os.path.join("results", "models", set_name, geometry_variant + "_vessel")
         training_params["output_dir"] = out_dir
     elif model_dir:
         training_params["output_dir"] = model_dir
@@ -227,15 +217,11 @@ def launch_training(network_params, optimizer_params, training_params):
         if is_vessel:
             network_params["num_layers"] = VESSEL_NUM_LAYERS
             network_params["layer_width"] = VESSEL_LAYER_WIDTH
-            overestimate_weight = (
-                spec.vessel_asymmetric_overestimate_weight if asymmetric_loss else 1.0
-            )
+            overestimate_weight = spec.vessel_asymmetric_overestimate_weight if asymmetric_loss else 1.0
         else:
             network_params["num_layers"] = spec.junction_num_layers
             network_params["layer_width"] = spec.junction_layer_width
-            overestimate_weight = (
-                spec.junction_asymmetric_overestimate_weight if asymmetric_loss else 1.0
-            )
+            overestimate_weight = spec.junction_asymmetric_overestimate_weight if asymmetric_loss else 1.0
         network_params["asymmetric_loss_overestimate_weight"] = overestimate_weight
 
         if shared_data_dict is not None:
@@ -249,23 +235,53 @@ def launch_training(network_params, optimizer_params, training_params):
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="Launch NN training")
     parser.add_argument("set_name", help="Set name (e.g., VMR)")
     parser.add_argument("num_geos", type=int, help="Number of geometries")
-    parser.add_argument("geometry_variant", nargs="?", default=None,
-                        help="Geometry variant: bifurcations, bifurcations_EL, or all (default: all). Can also be set via --geometry_variant.")
-    parser.add_argument("--geometry_variant", dest="geometry_variant_flag", default=None,
-                        help="Geometry variant (overrides positional if set). Use this when passing --vessel so order does not matter.")
-    parser.add_argument("--split_path", default=None,
-                        help="Path to train/val split pickle (default: data/split_indices/.../train_val_ind_{set_name}_num_geos_{num_geos})")
-    parser.add_argument("--model_dir", default=None,
-                        help="Directory to save models (default: results/models/{set_name}/{geometry_variant})")
-    parser.add_argument("--vessel", action="store_true",
-                        help="Train vessel NN (R/S/L per vessel); uses vessel jax arrays and same geometry-based split")
-    parser.add_argument("--leaky_relu", action="store_true",
-                        help="Use Leaky ReLU instead of ReLU (helps gradient flow when inputs span large ranges)")
-    parser.add_argument("--print_gradients", action="store_true",
-                        help="Print gradient stats for the first batch before training (for debugging)")
+    parser.add_argument(
+        "geometry_variant",
+        nargs="?",
+        default=None,
+        help=(
+            "Geometry variant: bifurcations, bifurcations_EL, or all (default: all). "
+            "Can also be set via --geometry_variant."
+        ),
+    )
+    parser.add_argument(
+        "--geometry_variant",
+        dest="geometry_variant_flag",
+        default=None,
+        help="Geometry variant (overrides positional if set). Use this when passing --vessel so order does not matter.",
+    )
+    parser.add_argument(
+        "--split_path",
+        default=None,
+        help=(
+            "Path to train/val split pickle "
+            "(default: data/split_indices/.../train_val_ind_{set_name}_num_geos_{num_geos})"
+        ),
+    )
+    parser.add_argument(
+        "--model_dir",
+        default=None,
+        help="Directory to save models (default: results/models/{set_name}/{geometry_variant})",
+    )
+    parser.add_argument(
+        "--vessel",
+        action="store_true",
+        help="Train vessel NN (R/S/L per vessel); uses vessel jax arrays and same geometry-based split",
+    )
+    parser.add_argument(
+        "--leaky_relu",
+        action="store_true",
+        help="Use Leaky ReLU instead of ReLU (helps gradient flow when inputs span large ranges)",
+    )
+    parser.add_argument(
+        "--print_gradients",
+        action="store_true",
+        help="Print gradient stats for the first batch before training (for debugging)",
+    )
     parser.add_argument(
         "--quiet_epochs",
         action="store_true",
@@ -319,9 +335,7 @@ def main():
     if run_config_raw:
         rc_flags = run_config_suffix_to_flags(run_config_raw)
         asymmetric_loss_eff = bool(cli_args.asymmetric_loss or rc_flags["asymmetric_loss"])
-        generation_weighted_loss_eff = bool(
-            cli_args.generation_weighted_loss or rc_flags["generation_weighted_loss"]
-        )
+        generation_weighted_loss_eff = bool(cli_args.generation_weighted_loss or rc_flags["generation_weighted_loss"])
     else:
         asymmetric_loss_eff = bool(cli_args.asymmetric_loss)
         generation_weighted_loss_eff = bool(cli_args.generation_weighted_loss)
@@ -334,10 +348,10 @@ def main():
         geometry_variants_to_process = ["bifurcations", "bifurcations_EL"]
     else:
         geometry_variants_to_process = [geometry_variant_arg]
-    
+
     # Process each geometry variant
     for geometry_variant in geometry_variants_to_process:
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}")
         if asymmetric_loss_eff:
             print("Asymmetric loss: per-model overestimate weights")
@@ -348,8 +362,8 @@ def main():
                 f"Generation-weighted loss: ON (scale={float(cli_args.generation_weighted_loss_scale):g}; "
                 f"from --generation_weighted_loss and/or --run_config ..._gen_loss)"
             )
-        print(f"{'='*80}")
-        
+        print(f"{'=' * 80}")
+
         split_path = cli_args.split_path or _default_split_path(
             set_name, geometry_variant, set_type, num_geos, data_paths_suffix
         )
@@ -379,18 +393,14 @@ def main():
             output_type=output_type,
             asymmetric_loss_eff=asymmetric_loss_eff,
             generation_weighted_loss_eff=generation_weighted_loss_eff,
-            generation_weighted_loss_scale=float(
-                getattr(cli_args, "generation_weighted_loss_scale", 1.0)
-            ),
+            generation_weighted_loss_scale=float(getattr(cli_args, "generation_weighted_loss_scale", 1.0)),
             leaky_relu=getattr(cli_args, "leaky_relu", False),
             model_dir=cli_args.model_dir,
         )
         training_params["print_gradients"] = getattr(cli_args, "print_gradients", False)
         training_params["verbose_epochs"] = not cli_args.quiet_epochs
 
-        optimizer_params = {"init": 0.02,
-                           "transition_steps": 1000,
-                           "decay_rate": 0.95}
+        optimizer_params = {"init": 0.02, "transition_steps": 1000, "decay_rate": 0.95}
 
         launch_training(network_params, optimizer_params, training_params)
 

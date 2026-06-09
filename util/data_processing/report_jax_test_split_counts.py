@@ -69,9 +69,7 @@ def _num_geos_from_basename(path: str) -> int:
 def _select_pkl(directory: str, glob_pattern: str) -> str:
     paths = sorted(glob.glob(os.path.join(directory, glob_pattern)))
     if not paths:
-        raise FileNotFoundError(
-            f"No files matching {glob_pattern!r} under {directory}"
-        )
+        raise FileNotFoundError(f"No files matching {glob_pattern!r} under {directory}")
 
     return max(paths, key=_num_geos_from_basename)
 
@@ -181,8 +179,7 @@ def main() -> None:
 
     if not sets:
         raise SystemExit(
-            f"No sets found under {jax_root} with "
-            f"{args.run_config}/{args.geometry_variant}/{args.set_type}"
+            f"No sets found under {jax_root} with {args.run_config}/{args.geometry_variant}/{args.set_type}"
         )
 
     rows_out: List[Tuple[str, int, int, int, int]] = []
@@ -195,17 +192,12 @@ def main() -> None:
             args.set_type,
         )
         rows_out.append((s, n_geo, n_bif, n_v, n_j))
-        print(
-            f"{s}:  non_connector_vessels={n_v}  bifurcations={n_bif}  "
-            f"(junction_rows={n_j}, num_geos={n_geo})"
-        )
+        print(f"{s}:  non_connector_vessels={n_v}  bifurcations={n_bif}  (junction_rows={n_j}, num_geos={n_geo})")
         print(f"    junction: {jp}")
         print(f"    vessel:   {vp}")
 
     print()
-    print(
-        f"{'set_name':<32} {'num_geos':>10} {'bifurcations':>14} {'vessels':>10} {'junction_rows':>14}"
-    )
+    print(f"{'set_name':<32} {'num_geos':>10} {'bifurcations':>14} {'vessels':>10} {'junction_rows':>14}")
     print("-" * 86)
     for s, n_geo, n_bif, n_v, n_j in rows_out:
         print(f"{s:<32} {n_geo:>10} {n_bif:>14} {n_v:>10} {n_j:>14}")

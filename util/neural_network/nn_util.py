@@ -32,8 +32,8 @@ def init_weights(network_params):
 def get_batch_indices(indices, batch_size):
     num_batches = len(indices) // batch_size
     np.random.shuffle(indices)
-    indices = indices[:num_batches * batch_size]
-    return [indices[i * batch_size:(i + 1) * batch_size] for i in range(num_batches)]
+    indices = indices[: num_batches * batch_size]
+    return [indices[i * batch_size : (i + 1) * batch_size] for i in range(num_batches)]
 
 
 def relu(x):

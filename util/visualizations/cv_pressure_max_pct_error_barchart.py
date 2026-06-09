@@ -12,7 +12,8 @@ Supported metrics (--metric):
 
 Usage:
   python -m util.visualizations.cv_pressure_max_pct_error_barchart VMR_rigid_aorta_adults bifurcations_EL
-  python -m util.visualizations.cv_pressure_max_pct_error_barchart VMR_rigid_aorta_adults bifurcations_EL --metric pressure_max_error
+  python -m util.visualizations.cv_pressure_max_pct_error_barchart \\
+    VMR_rigid_aorta_adults bifurcations_EL --metric pressure_max_error
   python -m util.visualizations.cv_pressure_max_pct_error_barchart --all_sets
   python -m util.visualizations.cv_pressure_max_pct_error_barchart --all_sets bifurcations_EL
 """
@@ -102,11 +103,7 @@ def discover_cross_validation_set_names(data_root):
     cv_root = os.path.join(data_root, "cross_validation")
     if not os.path.isdir(cv_root):
         return []
-    return sorted(
-        d
-        for d in os.listdir(cv_root)
-        if os.path.isdir(os.path.join(cv_root, d)) and not d.startswith(".")
-    )
+    return sorted(d for d in os.listdir(cv_root) if os.path.isdir(os.path.join(cv_root, d)) and not d.startswith("."))
 
 
 def load_csv_column(path, prefix, modality):
@@ -175,7 +172,7 @@ def generate_bar_chart(metric_key, out_dir, geometry_variant, output_path=None, 
         n_trials = len(clean)
         if n_trials >= 2 and not _isnan(std_val):
             t_crit = scipy_stats.t.ppf(0.975, df=n_trials - 1)
-            sem = (std_val * scale) / (n_trials ** 0.5)
+            sem = (std_val * scale) / (n_trials**0.5)
             ci_half = t_crit * sem
         else:
             ci_half = 0.0
@@ -246,13 +243,15 @@ def main():
         help="Geometry variant (default: bifurcations_EL)",
     )
     parser.add_argument(
-        "--metric", "-m",
+        "--metric",
+        "-m",
         default="all",
         choices=["all"] + list(METRIC_CONFIG.keys()),
         help="Which pressure metric to plot (default: all)",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default=None,
         help="Output file (only when a single set, single run-config, and single metric; not with --all_sets)",
     )
@@ -280,9 +279,7 @@ def main():
             parser.error("Do not pass set_name when using --all_sets")
         set_names = discover_cross_validation_set_names(args.data_root)
         if not set_names:
-            parser.error(
-                f"No subdirectories found under {os.path.join(args.data_root, 'cross_validation')}"
-            )
+            parser.error(f"No subdirectories found under {os.path.join(args.data_root, 'cross_validation')}")
         print(f"--all_sets: found {len(set_names)} set(s): {', '.join(set_names)}")
     elif args.set_name is None:
         parser.error("set_name is required unless you pass --all_sets")
@@ -297,18 +294,11 @@ def main():
             parser.error(str(e))
 
     metrics = list(METRIC_CONFIG.keys()) if args.metric == "all" else [args.metric]
-    single_output = (
-        len(set_names) == 1
-        and args.run_config != "all"
-        and len(metrics) == 1
-        and not args.all_sets
-    )
+    single_output = len(set_names) == 1 and args.run_config != "all" and len(metrics) == 1 and not args.all_sets
 
     for set_name in set_names:
         if args.run_config == "all":
-            run_configs = discover_run_config_suffixes(
-                os.path.join(args.data_root, "cross_validation", set_name)
-            )
+            run_configs = discover_run_config_suffixes(os.path.join(args.data_root, "cross_validation", set_name))
         else:
             run_configs = [resolved_run_config]
         for rc in run_configs:
@@ -318,9 +308,7 @@ def main():
             for metric_key in metrics:
                 output_path = args.output if single_output else None
                 try:
-                    generate_bar_chart(
-                        metric_key, out_dir, args.geometry_variant, output_path, args.dpi
-                    )
+                    generate_bar_chart(metric_key, out_dir, args.geometry_variant, output_path, args.dpi)
                 except FileNotFoundError as e:
                     print(f"Skipping {set_name}/{rc}/{metric_key}: {e}")
 

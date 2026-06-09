@@ -10,8 +10,10 @@ target parameters to plot. All data from the set is combined.
 Usage:
   python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults
   python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults --mode junction
-  python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults --geometry_variant bifurcations --output_dir results/plots/feature_vs_params
+  python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults \\
+    --geometry_variant bifurcations --output_dir results/plots/feature_vs_params
 """
+
 import argparse
 import os
 import re
@@ -51,7 +53,7 @@ FEATURES_TO_PLOT_JUNCTION = [
     "outlet0_inductance_calc",
     "outlet0_stenosis_calc",
     "outlet0_stenosis_coefficient_calc",
-    "flow_split"
+    "flow_split",
 ]
 LUMPED_PARAMS_JUNCTION = [
     "R_poiseuille_outlet0",
@@ -114,12 +116,8 @@ def load_vessel_data(ml_inputs_root, set_name, geometry_variant, geometries):
     feature_cols = None
     rows = []
     for geo in geometries:
-        feat_path = os.path.join(
-            ml_inputs_root, set_name, geometry_variant, geo, "vessel_geometric_features.csv"
-        )
-        tgt_path = os.path.join(
-            ml_inputs_root, set_name, geometry_variant, geo, "vessel_lumped_parameters.csv"
-        )
+        feat_path = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "vessel_geometric_features.csv")
+        tgt_path = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "vessel_lumped_parameters.csv")
         df_f = pd.read_csv(feat_path)
         df_t = pd.read_csv(tgt_path)
         # Target CSV may have vessel_name (string); keep only numeric target columns we need
@@ -129,9 +127,7 @@ def load_vessel_data(ml_inputs_root, set_name, geometry_variant, geometries):
         if feature_cols is None:
             feature_cols = list(df_f.columns)
         if len(df_f) != len(df_t):
-            raise ValueError(
-                f"Row count mismatch for {geo}: features {len(df_f)}, targets {len(df_t)}"
-            )
+            raise ValueError(f"Row count mismatch for {geo}: features {len(df_f)}, targets {len(df_t)}")
         combined = df_f.copy()
         for c in tgt_numeric:
             combined[c] = df_t[c].values
@@ -150,21 +146,15 @@ def load_junction_data(ml_inputs_root, set_name, geometry_variant, geometries):
     """
     rows = []
     for geo in geometries:
-        feat_path = os.path.join(
-            ml_inputs_root, set_name, geometry_variant, geo, "geometric_features.csv"
-        )
-        tgt_path = os.path.join(
-            ml_inputs_root, set_name, geometry_variant, geo, "junction_lumped_parameters.csv"
-        )
+        feat_path = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "geometric_features.csv")
+        tgt_path = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "junction_lumped_parameters.csv")
         df_f = pd.read_csv(feat_path)
         df_t = pd.read_csv(tgt_path)
         tgt_numeric = [c for c in LUMPED_PARAMS_JUNCTION if c in df_t.columns]
         if len(tgt_numeric) == 0:
             raise ValueError(f"No target columns {LUMPED_PARAMS_JUNCTION} in {tgt_path}")
         if len(df_f) != len(df_t):
-            raise ValueError(
-                f"Row count mismatch for {geo}: features {len(df_f)}, targets {len(df_t)}"
-            )
+            raise ValueError(f"Row count mismatch for {geo}: features {len(df_f)}, targets {len(df_t)}")
         combined = df_f.copy()
         for c in tgt_numeric:
             combined[c] = df_t[c].values
@@ -187,7 +177,10 @@ def main():
         "--mode",
         choices=("vessel", "junction"),
         default="vessel",
-        help="Data to plot: vessel (vessel_geometric_features + vessel_lumped_parameters) or junction (geometric_features + junction_lumped_parameters). Default: vessel.",
+        help=(
+            "Data to plot: vessel (vessel_geometric_features + vessel_lumped_parameters) "
+            "or junction (geometric_features + junction_lumped_parameters). Default: vessel."
+        ),
     )
     parser.add_argument(
         "--geometry_variant",
@@ -223,9 +216,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     if args.mode == "vessel":
-        geometries = discover_geometries_with_vessel_csvs(
-            ml_inputs_root, args.set_name, args.geometry_variant
-        )
+        geometries = discover_geometries_with_vessel_csvs(ml_inputs_root, args.set_name, args.geometry_variant)
         if not geometries:
             print(
                 f"No geometries with vessel CSVs found under {ml_inputs_root}/{args.set_name}/{args.geometry_variant}"
@@ -236,9 +227,7 @@ def main():
         features_to_plot = FEATURES_TO_PLOT
         lumped_params = LUMPED_PARAMS
     else:
-        geometries = discover_geometries_with_junction_csvs(
-            ml_inputs_root, args.set_name, args.geometry_variant
-        )
+        geometries = discover_geometries_with_junction_csvs(ml_inputs_root, args.set_name, args.geometry_variant)
         if not geometries:
             print(
                 f"No geometries with junction CSVs found under {ml_inputs_root}/{args.set_name}/{args.geometry_variant}"
@@ -273,7 +262,18 @@ def main():
         except Exception:
             colors = None
         if colors is None:
-            colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+            colors = [
+                "#1f77b4",
+                "#ff7f0e",
+                "#2ca02c",
+                "#d62728",
+                "#9467bd",
+                "#8c564b",
+                "#e377c2",
+                "#7f7f7f",
+                "#bcbd22",
+                "#17becf",
+            ]
         geo_to_color = {g: colors[i % len(colors)] for i, g in enumerate(geos)}
 
     for feat in feats:

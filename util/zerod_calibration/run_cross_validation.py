@@ -75,9 +75,7 @@ def _ensure_ml_inputs_and_jax_for_config(
     """Run batch_generate_zerod_inputs_vmr and/or run_data_processing for missing prerequisites."""
     script_dir = os.path.dirname(__file__)
     batch_script = os.path.join(script_dir, "batch_generate_zerod_inputs_vmr.py")
-    data_processing_script = os.path.join(
-        os.path.dirname(script_dir), "data_processing", "run_data_processing.py"
-    )
+    data_processing_script = os.path.join(os.path.dirname(script_dir), "data_processing", "run_data_processing.py")
     reason_text = "; ".join(reasons)
     print(f"Run config {run_config_suffix}: {reason_text}")
 
@@ -112,11 +110,16 @@ def _ensure_ml_inputs_and_jax_for_config(
             f"{all_geometries[:5]}{'...' if len(all_geometries) > 5 else ''}"
         )
         cmd_dp = [
-            sys.executable, data_processing_script,
-            "--set_name", set_name,
-            "--geometry_variant", geometry_variant,
-            "--run_config", run_config_suffix,
-            "--geometries", *all_geometries,
+            sys.executable,
+            data_processing_script,
+            "--set_name",
+            set_name,
+            "--geometry_variant",
+            geometry_variant,
+            "--run_config",
+            run_config_suffix,
+            "--geometries",
+            *all_geometries,
         ]
         result_dp = subprocess.run(cmd_dp, cwd=REPO_ROOT, text=True)
         if result_dp.returncode != 0:
@@ -227,9 +230,7 @@ def _ensure_cv_prerequisites(
             missing_calib.append(geo)
 
     num_geos = len(geometries)
-    jax_path = _jax_pickle_path(
-        data_root, set_name, run_config_suffix, geometry_variant, set_type, num_geos
-    )
+    jax_path = _jax_pickle_path(data_root, set_name, run_config_suffix, geometry_variant, set_type, num_geos)
     jax_missing = not os.path.exists(jax_path)
 
     if not (missing_ml or jax_missing or missing_calib):
@@ -277,12 +278,11 @@ def _load_cv_jax_cohort(
     if num_geos == 0:
         raise ValueError(
             f"No geometries found under {ml_inputs_root}/{set_name}"
-            + (f"/{run_config_suffix}" if run_config_suffix else "") + f"/{geometry_variant}"
+            + (f"/{run_config_suffix}" if run_config_suffix else "")
+            + f"/{geometry_variant}"
         )
 
-    jax_path = _jax_pickle_path(
-        data_root, set_name, run_config_suffix, geometry_variant, set_type, num_geos
-    )
+    jax_path = _jax_pickle_path(data_root, set_name, run_config_suffix, geometry_variant, set_type, num_geos)
     if not os.path.exists(jax_path):
         raise FileNotFoundError(
             f"Jax arrays not found: {jax_path} (expected {num_geos} geometries). "
@@ -329,9 +329,7 @@ def _cv_run_directory_paths(data_root, set_name, geometry_variant, run_config_su
         ),
         "model_dir_base": _results_path("models", set_name, run_config_suffix),
         "zero_d_base": _data_path(data_root, "zeroD", set_name, run_config_suffix),
-        "launch_training_script": os.path.join(
-            os.path.dirname(script_dir), "neural_network", "launch_training.py"
-        ),
+        "launch_training_script": os.path.join(os.path.dirname(script_dir), "neural_network", "launch_training.py"),
         "mse_csv_name": f"{prefix}mse_comparison.csv" if prefix else "mse_comparison.csv",
     }
 
@@ -395,25 +393,29 @@ def _check_val_out_of_train_range(X, train_ind, val_ind, row_ranges, geometries,
             tmin = float(train_min[j])
             tmax = float(train_max[j])
             if v < tmin:
-                out.append({
-                    "geometry": geo_name,
-                    "row_in_geometry": row_in_geo,
-                    "feature_name": fname,
-                    "value": v,
-                    "train_min": tmin,
-                    "train_max": tmax,
-                    "side": "below",
-                })
+                out.append(
+                    {
+                        "geometry": geo_name,
+                        "row_in_geometry": row_in_geo,
+                        "feature_name": fname,
+                        "value": v,
+                        "train_min": tmin,
+                        "train_max": tmax,
+                        "side": "below",
+                    }
+                )
             elif v > tmax:
-                out.append({
-                    "geometry": geo_name,
-                    "row_in_geometry": row_in_geo,
-                    "feature_name": fname,
-                    "value": v,
-                    "train_min": tmin,
-                    "train_max": tmax,
-                    "side": "above",
-                })
+                out.append(
+                    {
+                        "geometry": geo_name,
+                        "row_in_geometry": row_in_geo,
+                        "feature_name": fname,
+                        "value": v,
+                        "train_min": tmin,
+                        "train_max": tmax,
+                        "side": "above",
+                    }
+                )
     return out
 
 
@@ -519,9 +521,7 @@ def run_cross_validation(
     penalty_on = config["penalty_on"]
     print(f"Run config: {data_paths_suffix!r}")
 
-    _ensure_cv_prerequisites(
-        set_name, geometry_variant, data_root, set_type, data_paths_suffix
-    )
+    _ensure_cv_prerequisites(set_name, geometry_variant, data_root, set_type, data_paths_suffix)
     cohort = _load_cv_jax_cohort(
         ml_inputs_root,
         data_root,
@@ -536,9 +536,7 @@ def run_cross_validation(
     num_geos = cohort["num_geos"]
     num_pts = cohort["num_pts"]
     vessel_jax_path = cohort["vessel_jax_path"]
-    paths = _cv_run_directory_paths(
-        data_root, set_name, geometry_variant, data_paths_suffix, set_type
-    )
+    paths = _cv_run_directory_paths(data_root, set_name, geometry_variant, data_paths_suffix, set_type)
     split_indices_dir = paths["split_indices_dir"]
     model_dir_base = paths["model_dir_base"]
     zero_d_base = paths["zero_d_base"]
@@ -548,9 +546,7 @@ def run_cross_validation(
     # Optionally run only one trial (0-based index)
     if trial_index is not None:
         if trial_index < 0 or trial_index >= num_trials:
-            raise ValueError(
-                f"trial_index must be in [0, {num_trials}), got {trial_index}"
-            )
+            raise ValueError(f"trial_index must be in [0, {num_trials}), got {trial_index}")
         trials_to_run = [trial_index]
         print(f"Re-running single trial {trial_index} (of {num_trials})")
     else:
@@ -568,9 +564,9 @@ def run_cross_validation(
     seen_val_sets = set()  # frozenset of val geometry names, to ensure each trial has a different val set
 
     for trial in trials_to_run:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"CV Trial {trial + 1}/{num_trials}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         split_path = os.path.join(
             split_indices_dir,
@@ -585,7 +581,10 @@ def run_cross_validation(
             val_geometries = split_dict["val_geometries"]
             train_ind = resolve_flat_indices(split_dict, "junction", "train", split_path=split_path)
             val_ind = resolve_flat_indices(split_dict, "junction", "val", split_path=split_path)
-            print(f"  Split (reused from {os.path.basename(split_path)}): {len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}")
+            print(
+                f"  Split (reused from {os.path.basename(split_path)}): "
+                f"{len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}"
+            )
         else:
             # Ensure this trial's validation set is different from all previous trials
             max_attempts = 200
@@ -593,13 +592,13 @@ def run_cross_validation(
             val_geometries = []
             for attempt in range(max_attempts):
                 seed = trial * 1000 + attempt
-                train_geometries, val_geometries = generate_geometry_split(
-                    percent_train, seed, geometries
-                )
+                train_geometries, val_geometries = generate_geometry_split(percent_train, seed, geometries)
                 if not val_geometries:
                     if attempt == 0:
                         pct = int(round(percent_train * 100))
-                        print(f"  Skipping trial {trial}: no validation geometries ({pct}% of {num_geos} rounded to all)")
+                        print(
+                            f"  Skipping trial {trial}: no validation geometries ({pct}% of {num_geos} rounded to all)"
+                        )
                     break
                 val_set = frozenset(val_geometries)
                 if val_set not in seen_val_sets:
@@ -634,9 +633,7 @@ def run_cross_validation(
         # Check for validation features outside training set range; write CSV per split
         feature_names = get_default_include_features()
         X_input = np.asarray(data_dict["input"])
-        out_of_range = _check_val_out_of_train_range(
-            X_input, train_ind, val_ind, row_ranges, geometries, feature_names
-        )
+        out_of_range = _check_val_out_of_train_range(X_input, train_ind, val_ind, row_ranges, geometries, feature_names)
         out_dir_cv = _results_path("cross_validation", set_name, data_paths_suffix)
         os.makedirs(out_dir_cv, exist_ok=True)
         oor_csv = os.path.join(
@@ -673,20 +670,12 @@ def run_cross_validation(
         else:
             print(f"  Out-of-range: none -> {oor_csv}")
 
-        model_dir = os.path.join(
-            model_dir_base, f"{geometry_variant}_trial_{trial}"
-        )
+        model_dir = os.path.join(model_dir_base, f"{geometry_variant}_trial_{trial}")
         os.makedirs(model_dir, exist_ok=True)
 
         # Junction model file names (must match launch_training / train_nn output)
-        junction_model_files = [
-            os.path.join(model_dir, f"rri_{set_name}_pred_{i}_model")
-            for i in range(3)
-        ]
-        skip_junction = (
-            skip_training_if_exists
-            and all(os.path.exists(p) for p in junction_model_files)
-        )
+        junction_model_files = [os.path.join(model_dir, f"rri_{set_name}_pred_{i}_model") for i in range(3)]
+        skip_junction = skip_training_if_exists and all(os.path.exists(p) for p in junction_model_files)
 
         # Train
         if skip_junction:
@@ -712,23 +701,21 @@ def run_cross_validation(
             if result_train.returncode != 0:
                 print(f"  Training failed with return code {result_train.returncode}")
                 all_trial_results.append(
-                    {"trial_id": trial, "val_geometries": ",".join(val_geometries), "error": "training_failed"}
+                    {
+                        "trial_id": trial,
+                        "val_geometries": ",".join(val_geometries),
+                        "error": "training_failed",
+                    }
                 )
                 continue
 
         # Train vessel NN for this trial (same split) if requested
         if nn_vessel:
-            vessel_model_dir = os.path.join(
-                model_dir_base, f"{geometry_variant}_vessel_trial_{trial}"
-            )
+            vessel_model_dir = os.path.join(model_dir_base, f"{geometry_variant}_vessel_trial_{trial}")
             vessel_model_files = [
-                os.path.join(vessel_model_dir, f"rri_{set_name}_vessel_pred_{i}_model")
-                for i in range(3)
+                os.path.join(vessel_model_dir, f"rri_{set_name}_vessel_pred_{i}_model") for i in range(3)
             ]
-            skip_vessel = (
-                skip_training_if_exists
-                and all(os.path.exists(p) for p in vessel_model_files)
-            )
+            skip_vessel = skip_training_if_exists and all(os.path.exists(p) for p in vessel_model_files)
             if skip_vessel:
                 print(f"  Skipping vessel training (models already exist in {vessel_model_dir})")
             else:
@@ -753,7 +740,11 @@ def run_cross_validation(
                 if result_vessel.returncode != 0:
                     print(f"  Vessel training failed with return code {result_vessel.returncode}")
                     all_trial_results.append(
-                        {"trial_id": trial, "val_geometries": ",".join(val_geometries), "error": "vessel_training_failed"}
+                        {
+                            "trial_id": trial,
+                            "val_geometries": ",".join(val_geometries),
+                            "error": "vessel_training_failed",
+                        }
                     )
                     continue
 
@@ -775,9 +766,7 @@ def run_cross_validation(
             mse_csv_path = os.path.join(zero_d_base, val_geo, mse_csv_name)
             accumulate_trial_metrics(trial_metrics, parse_mse_comparison_csv(mse_csv_path))
 
-        all_trial_results.append(
-            trial_metrics_to_row(trial, ",".join(val_geometries), trial_metrics)
-        )
+        all_trial_results.append(trial_metrics_to_row(trial, ",".join(val_geometries), trial_metrics))
 
     if not all_trial_results:
         print("No trial results to summarize.")
@@ -800,7 +789,10 @@ def run_cross_validation(
                         tid = int(row[0])
                     except ValueError:
                         break
-                    existing_by_trial[tid] = {"trial_id": tid, "val_geometries": row[1] if len(row) > 1 else ""}
+                    existing_by_trial[tid] = {
+                        "trial_id": tid,
+                        "val_geometries": row[1] if len(row) > 1 else "",
+                    }
                     for i, mod in enumerate(modalities_existing):
                         if i + 2 < len(row) and row[i + 2].strip() != "":
                             try:
@@ -814,7 +806,10 @@ def run_cross_validation(
     write_all_cv_summary_csvs(summary_path, out_dir, geometry_variant, all_trial_results)
 
     print(f"\nWrote CV summary to {summary_path}")
-    print("  Also wrote: pressure_mse, flow_mse, max_error, pressure_max_error, flow_max_error, max_rel_error, pressure_max_rel_error, flow_max_rel_error")
+    print(
+        "  Also wrote: pressure_mse, flow_mse, max_error, pressure_max_error, "
+        "flow_max_error, max_rel_error, pressure_max_rel_error, flow_max_rel_error"
+    )
     if not skip_barchart and data_paths_suffix:
         _generate_cv_barcharts(
             set_name,
@@ -892,17 +887,13 @@ def regenerate_cv_metrics_from_existing(
         for val_geo in val_geometries:
             mse_csv_path = os.path.join(zero_d_base, val_geo, mse_csv_name)
             accumulate_trial_metrics(trial_metrics, parse_mse_comparison_csv(mse_csv_path))
-        all_trial_results.append(
-            trial_metrics_to_row(trial_id, val_geometries_str, trial_metrics)
-        )
+        all_trial_results.append(trial_metrics_to_row(trial_id, val_geometries_str, trial_metrics))
 
     if not all_trial_results:
         print("No trial rows found in existing summary.")
         return None
 
-    _, modalities = write_all_cv_summary_csvs(
-        summary_path, out_dir, geometry_variant, all_trial_results
-    )
+    _, modalities = write_all_cv_summary_csvs(summary_path, out_dir, geometry_variant, all_trial_results)
 
     print("Regenerated CV metrics from existing per-geometry MSE CSVs.")
     print(f"  Updated: {summary_path}")
@@ -930,7 +921,10 @@ def regenerate_cv_metrics_from_existing(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run cross-validation: X random 90/10 splits, train and deploy per trial, report MSE for all modalities."
+        description=(
+            "Run cross-validation: X random 90/10 splits, train and deploy per trial, "
+            "report MSE for all modalities."
+        )
     )
     parser.add_argument(
         "--set_name",
@@ -976,7 +970,10 @@ def main():
         action="store_true",
         dest="nn_vessel",
         default=True,
-        help="Train vessel NN per trial and run vessel NN inference (junction+vessel and vessel-only modalities in MSE). Default: True.",
+        help=(
+            "Train vessel NN per trial and run vessel NN inference "
+            "(junction+vessel and vessel-only modalities in MSE). Default: True."
+        ),
     )
     parser.add_argument(
         "--no_NN_vessel",
@@ -999,12 +996,19 @@ def main():
     parser.add_argument(
         "--metrics_only",
         action="store_true",
-        help="Regenerate CV summary CSVs (overall MSE + pressure/flow MSE + max error) from existing cv_summary.csv and per-geometry mse_comparison.csv files. No training or deploy.",
+        help=(
+            "Regenerate CV summary CSVs (overall MSE + pressure/flow MSE + max error) "
+            "from existing cv_summary.csv and per-geometry mse_comparison.csv files. "
+            "No training or deploy."
+        ),
     )
     parser.add_argument(
         "--plots_only",
         action="store_true",
-        help="Regenerate comparison plots for CV validation geometries via generate_zerod_inputs --plots_only. No training or deploy.",
+        help=(
+            "Regenerate comparison plots for CV validation geometries via "
+            "generate_zerod_inputs --plots_only. No training or deploy."
+        ),
     )
     parser.add_argument(
         "--skip_barchart",
@@ -1017,7 +1021,7 @@ def main():
         run_config_suffix = resolve_run_config_suffix(args.run_config)
     except ValueError as exc:
         parser.error(str(exc))
-    flags = run_config_suffix_to_flags(run_config_suffix)
+    run_config_suffix_to_flags(run_config_suffix)
     if args.metrics_only and args.plots_only:
         parser.error("Cannot use both --metrics_only and --plots_only.")
     if args.plots_only:

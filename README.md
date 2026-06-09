@@ -74,7 +74,7 @@ pytest -v    # unit tests, no C++ solver required
 - Editable install with dev tools: `pip install -e ".[dev]"`
 - Run unit tests (no C++ solver): `pytest -v`
 - Lint source and tests: `ruff check util tests`
-- CI: GitHub Actions runs `pytest` on Python 3.10 and 3.12 for every push/PR (`ruff` is local-only for now)
+- CI: GitHub Actions runs `ruff check` and `pytest` on Python 3.10 and 3.12 for every push/PR
 
 ## Console entry points
 

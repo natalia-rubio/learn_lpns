@@ -35,10 +35,7 @@ def forward_jax_pickle_path(
 def _resolve_model_paths(model_dir: str, set_name: str, *, vessel: bool = False) -> List[str]:
     suffix = "vessel_pred" if vessel else "pred"
     model_base_name = f"rri_{set_name}_{suffix}"
-    return [
-        os.path.join(model_dir, f"{model_base_name}_{i}_model")
-        for i in range(3)
-    ]
+    return [os.path.join(model_dir, f"{model_base_name}_{i}_model") for i in range(3)]
 
 
 def run_nn_predict(
@@ -65,10 +62,7 @@ def run_nn_predict(
 
     output_names = ["R_poiseuille", "stenosis_coefficient", "L"]
     for coef_idx, pred in enumerate(raw_predictions):
-        print(
-            f"      {output_names[coef_idx]}: "
-            f"pred range=[{pred.min():.4f}, {pred.max():.4f}]"
-        )
+        print(f"      {output_names[coef_idx]}: pred range=[{pred.min():.4f}, {pred.max():.4f}]")
     return np.array(raw_predictions[0]), np.array(raw_predictions[1]), np.array(raw_predictions[2])
 
 
@@ -87,8 +81,7 @@ def apply_junction_predictions(
     """Write predicted R/S/L into ``nn_config`` junctions (mutates in place)."""
     if len(pred_R) != len(X):
         raise ValueError(
-            f"Prediction array size mismatch: input has {len(X)} rows, "
-            f"but predictions have {len(pred_R)} values."
+            f"Prediction array size mismatch: input has {len(X)} rows, but predictions have {len(pred_R)} values."
         )
 
     primary_outlet_to_row: Dict[Tuple[str, str], int] = {}
@@ -181,8 +174,8 @@ def run_junction_inference(
     """Load junction rows from jax dict, predict, and apply predictions to ``nn_config``."""
     from util.data_processing.data_dict_from_csvs import load_junction_rows_from_jax_dict
 
-    X, junction_names, outlet_primary_names, outlet_vessel_ids, feature_names = (
-        load_junction_rows_from_jax_dict(jax_data_dict, geo_name=geo_name)
+    X, junction_names, outlet_primary_names, outlet_vessel_ids, feature_names = load_junction_rows_from_jax_dict(
+        jax_data_dict, geo_name=geo_name
     )
     if len(X) == 0:
         raise ValueError("No junction rows in jax pickle for inference")
@@ -221,8 +214,7 @@ def validate_vessel_trial_geometry_variant(
     trial_model_variant = model_dir_basename.split("_trial_")[0]
     if geometry_variant != trial_model_variant:
         raise ValueError(
-            f"Vessel NN trial model dir is for {trial_model_variant!r}, "
-            f"but geometry_variant is {geometry_variant!r}"
+            f"Vessel NN trial model dir is for {trial_model_variant!r}, but geometry_variant is {geometry_variant!r}"
         )
 
 
@@ -312,17 +304,13 @@ def run_vessel_inference(
     """
     validate_vessel_trial_geometry_variant(model_dir, geometry_variant)
 
-    vessel_X, vessel_ids = load_vessel_feature_matrix(
-        variant_geometric_input, verbose=verbose
-    )
+    vessel_X, vessel_ids = load_vessel_feature_matrix(variant_geometric_input, verbose=verbose)
     vessel_model_dir = resolve_vessel_model_dir(
         set_name=set_name,
         geometry_variant=geometry_variant,
         model_dir=model_dir,
     )
-    pred_R, pred_S, pred_L = run_nn_predict(
-        vessel_X, vessel_model_dir, set_name, vessel=True
-    )
+    pred_R, pred_S, pred_L = run_nn_predict(vessel_X, vessel_model_dir, set_name, vessel=True)
     if not quadratic_resistor:
         pred_S = np.zeros_like(pred_R)
 

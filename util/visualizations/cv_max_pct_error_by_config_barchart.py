@@ -8,7 +8,8 @@ Usage:
   python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults
   python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults --geometry bifurcations_EL
   python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults VMR_abdo VMR_pulmo_healthy
-  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults --configs base gen_loss --output configs_comparison.pdf
+  python -m util.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults \\
+    --configs base gen_loss --output configs_comparison.pdf
   python -m util.visualizations.cv_max_pct_error_by_config_barchart --bar_thickness_scale 1.3
 
 Set DEFAULT_SET_NAMES / DEFAULT_RUN_CONFIGS below to avoid repeating long CLI lists.
@@ -36,8 +37,17 @@ from util.zerod_calibration.modality_paths import read_cv_metric_from_row
 # Add or override entries to customize; configs not listed use the folder name.
 CONFIG_DISPLAY_NAME = {
     "base": [r"No $R_{\mathrm{quad}}$ (RI),", "symmetric loss,", "entrance-length adjustment"],
-    "gen_loss": [r"No $R_{\mathrm{quad}}$ (RI),", "symmetric loss,", "proximity-weighted NN loss,", "entrance-length adjustment"],
-    "gen_loss:bifurcations": [r"No $R_{\mathrm{quad}}$ (RI),", "proximity-weighted NN loss,", "no entrance-length adjustment"],
+    "gen_loss": [
+        r"No $R_{\mathrm{quad}}$ (RI),",
+        "symmetric loss,",
+        "proximity-weighted NN loss,",
+        "entrance-length adjustment",
+    ],
+    "gen_loss:bifurcations": [
+        r"No $R_{\mathrm{quad}}$ (RI),",
+        "proximity-weighted NN loss,",
+        "no entrance-length adjustment",
+    ],
     "quadratic_resistor_gen_loss": [
         r"$R_{\mathrm{quad}}$ (RRI),",
         "no calibrator penalty,",
@@ -52,7 +62,11 @@ CONFIG_DISPLAY_NAME = {
         "proximity-weighted NN loss,",
         "entrance-length adjustment",
     ],
-    "asymmetric_loss": [r"No $R_{\mathrm{quad}}$ (RI),", "asymmetric loss,", "entrance-length adjustment"],
+    "asymmetric_loss": [
+        r"No $R_{\mathrm{quad}}$ (RI),",
+        "asymmetric loss,",
+        "entrance-length adjustment",
+    ],
     "asymmetric_loss_gen_loss": [
         r"No $R_{\mathrm{quad}}$ (RI),",
         "asymmetric loss,",
@@ -63,7 +77,7 @@ CONFIG_DISPLAY_NAME = {
 
 # Optional: CV set names (under results/cross_validation/<set_name>/) when no set names are passed
 # on the command line. None = require at least one set name as a positional argument.
-#DEFAULT_SET_NAMES = None
+# DEFAULT_SET_NAMES = None
 # Example:
 DEFAULT_SET_NAMES = ["VMR_rigid_aorta_adults_all", "VMR_abdo", "VMR_pulmo_healthy", "VMR_all"]
 
@@ -125,7 +139,7 @@ def _isnan(x):
 
 
 def _discover_configs(data_root, set_name, geometry_variant):
-    """Find subfolders under results/cross_validation/<set_name>/ that contain the geometry's pressure_max_rel_error CSV."""
+    """Find subfolders under results/cross_validation/<set_name>/ with pressure_max_rel_error CSV."""
     base_dir = os.path.join(data_root, "cross_validation", set_name)
     if not os.path.isdir(base_dir):
         return []
@@ -191,14 +205,20 @@ def _ci95_half_width_frac(std_frac, n):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Horizontal bar chart of max percent error (pressure) by run config (one bar per CV set when multiple sets are given)."
+        description=(
+            "Horizontal bar chart of max percent error (pressure) by run config "
+            "(one bar per CV set when multiple sets are given)."
+        )
     )
     parser.add_argument(
         "set_names",
         nargs="*",
         default=None,
         metavar="SET_NAME",
-        help="CV set name(s) under results/cross_validation/ (e.g. VMR_rigid_aorta_adults VMR_abdo). If omitted, uses DEFAULT_SET_NAMES in this module.",
+        help=(
+            "CV set name(s) under results/cross_validation/ (e.g. VMR_rigid_aorta_adults VMR_abdo). "
+            "If omitted, uses DEFAULT_SET_NAMES in this module."
+        ),
     )
     parser.add_argument(
         "--geometry",
@@ -210,10 +230,15 @@ def main():
         "--configs",
         nargs="*",
         default=None,
-        help="Run config subfolders to include. Use 'config:variant' for a different geometry variant (e.g. gen_loss:bifurcations). If omitted, uses DEFAULT_RUN_CONFIGS in this module when set, else auto-discover.",
+        help=(
+            "Run config subfolders to include. Use 'config:variant' for a different geometry variant "
+            "(e.g. gen_loss:bifurcations). If omitted, uses DEFAULT_RUN_CONFIGS in this module "
+            "when set, else auto-discover."
+        ),
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default=None,
         help="Output file (default: under first set's cross_validation folder, name includes geometry and set count)",
     )
@@ -227,7 +252,10 @@ def main():
         type=float,
         default=None,
         metavar="PCT",
-        help="Upper limit for x-axis (max percent error). Labels for bars exceeding this are placed at the limit (default: auto).",
+        help=(
+            "Upper limit for x-axis (max percent error). "
+            "Labels for bars exceeding this are placed at the limit (default: auto)."
+        ),
     )
     parser.add_argument(
         "--dpi",
@@ -240,14 +268,20 @@ def main():
         nargs="*",
         default=None,
         metavar="CONFIG=Label",
-        help="Override display names, e.g. base='Default' gen_loss='RI + gen loss'. Use __ for line break (e.g. a='Line1__Line2').",
+        help=(
+            "Override display names, e.g. base='Default' gen_loss='RI + gen loss'. "
+            "Use __ for line break (e.g. a='Line1__Line2')."
+        ),
     )
     parser.add_argument(
         "--bar_thickness_scale",
         type=float,
         default=3.0,
         metavar="S",
-        help="Multiply bar thickness (default: 1). E.g. 1.3 for thicker bars. Very large values can make grouped bars overlap between rows.",
+        help=(
+            "Multiply bar thickness (default: 1). E.g. 1.3 for thicker bars. "
+            "Very large values can make grouped bars overlap between rows."
+        ),
     )
     args = parser.parse_args()
 
@@ -259,9 +293,7 @@ def main():
     else:
         set_names = []
     if not set_names:
-        raise SystemExit(
-            "Provide at least one set name (positional), or set DEFAULT_SET_NAMES in this module."
-        )
+        raise SystemExit("Provide at least one set name (positional), or set DEFAULT_SET_NAMES in this module.")
     geometry_variant = args.geometry
 
     # Resolve list of configs: each entry is "config_suffix" or "config_suffix:variant" (variant override for that bar)
@@ -314,7 +346,10 @@ def main():
         cis = []
         for sn in set_names:
             path = os.path.join(
-                data_root, "cross_validation", sn, config_suffix,
+                data_root,
+                "cross_validation",
+                sn,
+                config_suffix,
                 f"{variant_to_use}_cv_summary_pressure_max_rel_error.csv",
             )
             if not os.path.isfile(path):
@@ -344,7 +379,9 @@ def main():
         )
 
     if not rows:
-        raise SystemExit("No config CSVs found. Check paths or run cross-validation for the requested geometry variants.")
+        raise SystemExit(
+            "No config CSVs found. Check paths or run cross-validation for the requested geometry variants."
+        )
 
     def _row_sort_key(r):
         xs = [v for v in r["values"] if not _isnan(v)]
@@ -400,7 +437,7 @@ def main():
 
     # Figure height scales with total y span in data coordinates
     y_span = (n_configs - 1) * row_pitch + group_extent if n_configs else group_extent
-    fig_w =12 if n_sets > 1 else 7.0
+    fig_w = 12 if n_sets > 1 else 7.0
     fig_h = max(4.0, 0.5 * y_span + 2.5)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     # (patch, value, ci half-width) for fade overlay when xmax is set
@@ -475,7 +512,9 @@ def main():
                 if alpha <= 0:
                     continue
                 rect = mpatches.Rectangle(
-                    (x_left, y_lo), strip_width, bar_h,
+                    (x_left, y_lo),
+                    strip_width,
+                    bar_h,
                     facecolor="white",
                     edgecolor="none",
                     alpha=alpha,
@@ -515,13 +554,17 @@ def main():
     if not out_path:
         if len(set_names) == 1:
             out_path = os.path.join(
-                data_root, "cross_validation", set_names[0],
+                data_root,
+                "cross_validation",
+                set_names[0],
                 f"{geometry_variant}_max_pct_error_by_config.pdf",
             )
         else:
             set_slug = "__".join(set_names)
             out_path = os.path.join(
-                data_root, "cross_validation", set_names[0],
+                data_root,
+                "cross_validation",
+                set_names[0],
                 f"{geometry_variant}_max_pct_error_by_config_{len(set_names)}sets__{set_slug}.pdf",
             )
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)

@@ -12,10 +12,7 @@ EARLY_STOP_LOSS_THRESHOLD = 1e-7
 
 def train_nn(model, training_params):
     output_column = model.target_output_column
-    model_name = (
-        f"{model.output_type}_{model.set_name}"
-        f"{model.model_name_suffix}_pred_{output_column}"
-    )
+    model_name = f"{model.output_type}_{model.set_name}{model.model_name_suffix}_pred_{output_column}"
     verbose_epochs = training_params.get("verbose_epochs", True)
     train_hist = []
     val_hist = []
@@ -31,12 +28,8 @@ def train_nn(model, training_params):
 
     num_offsets = training_params["num_offsets"]
     print("Number of offsets: ", num_offsets)
-    train_inds = np.concatenate(
-        [training_params["train_inds"] * num_offsets + i for i in range(num_offsets)]
-    )
-    val_inds = np.concatenate(
-        [training_params["val_inds"] * num_offsets + i for i in range(num_offsets)]
-    )
+    train_inds = np.concatenate([training_params["train_inds"] * num_offsets + i for i in range(num_offsets)])
+    val_inds = np.concatenate([training_params["val_inds"] * num_offsets + i for i in range(num_offsets)])
     print("Number of training points: ", len(train_inds))
     print("Number of validation points: ", len(val_inds))
 
@@ -113,10 +106,7 @@ def train_nn(model, training_params):
 
         loss_to_check = val_loss if len(val_inds) > 0 and not np.isnan(val_loss) else train_loss
         if loss_to_check < EARLY_STOP_LOSS_THRESHOLD:
-            print(
-                f"\n  Early stopping: Loss ({loss_to_check:.2e}) is below threshold "
-                f"({EARLY_STOP_LOSS_THRESHOLD:g})"
-            )
+            print(f"\n  Early stopping: Loss ({loss_to_check:.2e}) is below threshold ({EARLY_STOP_LOSS_THRESHOLD:g})")
             print(f"  Stopping training at epoch {epoch + 1}/{training_params['num_epochs']}")
             break
 

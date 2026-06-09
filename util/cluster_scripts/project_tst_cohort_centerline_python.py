@@ -51,9 +51,7 @@ if _CLUSTER_SCRIPTS_DIR not in sys.path:
 import importlib.util  # noqa: E402
 
 _bcc_path = os.path.join(_CLUSTER_SCRIPTS_DIR, "batch_centerline_proj_svslicer.py")
-_bcc_spec = importlib.util.spec_from_file_location(
-    "_batch_centerline_proj_svslicer", _bcc_path
-)
+_bcc_spec = importlib.util.spec_from_file_location("_batch_centerline_proj_svslicer", _bcc_path)
 assert _bcc_spec and _bcc_spec.loader
 _bcc = importlib.util.module_from_spec(_bcc_spec)
 _bcc_spec.loader.exec_module(_bcc)
@@ -90,17 +88,11 @@ def discover_jobs(
         if not os.path.isdir(case_dir):
             continue
 
-        vtus = sorted(
-            p
-            for p in glob.glob(os.path.join(case_dir, f"*{suffix}"))
-            if os.path.isfile(p)
-        )
+        vtus = sorted(p for p in glob.glob(os.path.join(case_dir, f"*{suffix}")) if os.path.isfile(p))
         if not vtus:
             continue
         if len(vtus) > 1:
-            print(
-                f"  Warning: multiple VTUs matching *{suffix} in {case_dir}; using {vtus[0]}"
-            )
+            print(f"  Warning: multiple VTUs matching *{suffix} in {case_dir}; using {vtus[0]}")
         vtu = vtus[0]
         base = os.path.basename(vtu)
         stem = base[: -len(suffix)]

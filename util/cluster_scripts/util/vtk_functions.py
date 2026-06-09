@@ -22,10 +22,10 @@ class Integration:
         try:
             self.integrator = vtk.vtkIntegrateAttributes()
         except AttributeError:
-            raise Exception('vtkIntegrateAttributes is currently only supported by pvpython')
+            raise Exception("vtkIntegrateAttributes is currently only supported by pvpython")
 
         if not inp.GetOutput().GetNumberOfPoints():
-            raise Exception('Empty slice')
+            raise Exception("Empty slice")
 
         self.integrator.SetInputData(inp.GetOutput())
         self.integrator.Update()
@@ -42,10 +42,10 @@ class Integration:
             Scalar integral
         """
         # type of result
-        field = res_name.split('_')[0]
+        field = res_name.split("_")[0]
 
-        if field == 'Velocity' or field == 'velocity':
-            int_name = 'normal_' + res_name
+        if field == "Velocity" or field == "velocity":
+            int_name = "normal_" + res_name
         else:
             int_name = res_name
 
@@ -53,7 +53,7 @@ class Integration:
         integral = v2n(self.integrator.GetOutput().GetPointData().GetArray(int_name))[0]
 
         # choose if integral should be divided by area
-        if field == 'Velocity' or field == 'velocity':
+        if field == "Velocity" or field == "velocity":
             return integral
         else:
             return integral / self.area()
@@ -64,13 +64,14 @@ class Integration:
         Returns:
         Area
         """
-        return v2n(self.integrator.GetOutput().GetCellData().GetArray('Area'))[0]
+        return v2n(self.integrator.GetOutput().GetCellData().GetArray("Area"))[0]
 
 
 class ClosestPoints:
     """
     Find closest points within a geometry
     """
+
     def __init__(self, inp):
         if isinstance(inp, str):
             geo = read_geo(inp)
@@ -131,12 +132,12 @@ def read_geo(fname):
         vtk reader, point data, cell data
     """
     _, ext = os.path.splitext(fname)
-    if ext == '.vtp':
+    if ext == ".vtp":
         reader = vtk.vtkXMLPolyDataReader()
-    elif ext == '.vtu':
+    elif ext == ".vtu":
         reader = vtk.vtkXMLUnstructuredGridReader()
     else:
-        raise ValueError('File extension ' + ext + ' unknown.')
+        raise ValueError("File extension " + ext + " unknown.")
     reader.SetFileName(fname)
     reader.Update()
 
@@ -150,12 +151,12 @@ def write_geo(fname, input):
         fname: file name
     """
     _, ext = os.path.splitext(fname)
-    if ext == '.vtp':
+    if ext == ".vtp":
         writer = vtk.vtkXMLPolyDataWriter()
-    elif ext == '.vtu':
+    elif ext == ".vtu":
         writer = vtk.vtkXMLUnstructuredGridWriter()
     else:
-        raise ValueError('File extension ' + ext + ' unknown.')
+        raise ValueError("File extension " + ext + " unknown.")
     writer.SetFileName(fname)
     writer.SetInputData(input)
     writer.Update()
@@ -195,7 +196,7 @@ def calculator(inp, function, inp_arrays, out_array):
     for a in inp_arrays:
         calc.AddVectorArrayName(a)
     calc.SetInputData(inp.GetOutput())
-    if hasattr(calc, 'SetAttributeModeToUsePointData'):
+    if hasattr(calc, "SetAttributeModeToUsePointData"):
         calc.SetAttributeModeToUsePointData()
     else:
         calc.SetAttributeTypeToPointData()
@@ -251,14 +252,14 @@ def connectivity(inp, origin):
     con = vtk.vtkConnectivityFilter()
     con.SetInputData(inp)
     con.SetExtractionModeToClosestPointRegion()
-    
-    #con.SetInputData(inp.GetOutput())
-    #con.ScalarConnectivityOff()
-    #con.SetExtractionModeToAllRegions()
-    
-    #con.SetExtractionModeToPointSeededRegions()
-    #con.InitializeSeedList()
-    #con.AddSeed(origin[0], origin[1], origin[2])
+
+    # con.SetInputData(inp.GetOutput())
+    # con.ScalarConnectivityOff()
+    # con.SetExtractionModeToAllRegions()
+
+    # con.SetExtractionModeToPointSeededRegions()
+    # con.InitializeSeedList()
+    # con.AddSeed(origin[0], origin[1], origin[2])
     con.SetClosestPoint(origin[0], origin[1], origin[2])
     con.Update()
     return con
@@ -277,7 +278,7 @@ def connectivity_all(inp):
     con.SetExtractionModeToAllRegions()
     con.ColorRegionsOn()
     con.Update()
-    assert con.GetNumberOfExtractedRegions() > 0, 'empty geometry'
+    assert con.GetNumberOfExtractedRegions() > 0, "empty geometry"
     return con
 
 
@@ -361,7 +362,7 @@ def region_grow(geo, seed_points, seed_ids, n_max=99):
     pids_new = set(seed_points.tolist())
 
     surf = extract_surface(geo)
-    pids_surf = set(v2n(surf.GetPointData().GetArray('GlobalNodeID')).tolist())
+    set(v2n(surf.GetPointData().GetArray("GlobalNodeID")).tolist())
 
     # loop until region stops growing or reaches maximum number of iterations
     i = 0
@@ -373,9 +374,9 @@ def region_grow(geo, seed_points, seed_ids, n_max=99):
         pids_old = pids_new
 
         # print progress
-        print_str = 'Iteration ' + str(i)
-        print_str += '\tNew points ' + str(len(pids_old)) + '     '
-        print_str += '\tTotal points ' + str(len(pids_all))
+        print_str = "Iteration " + str(i)
+        print_str += "\tNew points " + str(len(pids_old)) + "     "
+        print_str += "\tTotal points " + str(len(pids_all))
         print(print_str)
 
         # grow region one step
@@ -446,7 +447,7 @@ def cell_connectivity(geo):
     """
     Extract the point connectivity from vtk and return a dictionary that can be used in meshio
     """
-    vtk_to_meshio = {3: 'line', 5: 'triangle', 10: 'tetra'}
+    vtk_to_meshio = {3: "line", 5: "triangle", 10: "tetra"}
 
     cells = defaultdict(list)
     for i in range(geo.GetNumberOfCells()):
@@ -454,7 +455,7 @@ def cell_connectivity(geo):
         if cell_type_vtk in vtk_to_meshio:
             cell_type = vtk_to_meshio[cell_type_vtk]
         else:
-            raise ValueError('vtkCellType ' + str(cell_type_vtk) + ' not supported')
+            raise ValueError("vtkCellType " + str(cell_type_vtk) + " not supported")
 
         points = geo.GetCell(i).GetPointIds()
         point_ids = []

@@ -44,6 +44,7 @@ def _safe_div(a, b):
     except (TypeError, ValueError):
         return None
 
+
 def _safe_mult(a, b):
     """Return a*b, or None if either operand is None."""
     if a is None or b is None:
@@ -52,6 +53,7 @@ def _safe_mult(a, b):
         return float(a) * float(b)
     except (TypeError, ValueError):
         return None
+
 
 # ---------------------------------------------------------------------------
 # Computed per-outlet features
@@ -66,29 +68,28 @@ def _safe_mult(a, b):
 # To add a new computed feature, just append a tuple here.
 # ---------------------------------------------------------------------------
 COMPUTED_OUTLET_FEATURES: List[Tuple[str, Any]] = [
-    ("radius_ratio",
-     lambda out, junc: _safe_div(out["r_local"], junc["inlet_max_r"])),
-     ("poiseuille_resistance_calc",
-     lambda out, junc: _safe_div(8 * 0.04 * out["path_length"], np.pi * out["r_local"]**4)),
-     ("inductance_calc",   
-     lambda out, junc: _safe_mult(1.06*out["path_length"], out["r_local"]**2)),
-     ("rneg4",
-     lambda out, junc: out["r_local"] ** -4),
-     ("rneg2",
-     lambda out, junc: out["r_local"] ** -2),
-     ("rmin_rat",
-     lambda out, junc: _safe_div(out["r_min_path"], out["r_local"])),
-     ("rmax_rat",
-     lambda out, junc: _safe_div(out["r_max_path"], out["r_local"])),
-     ("nd_length",
-     lambda out, junc: out["path_length"]/out["r_local"]),
+    ("radius_ratio", lambda out, junc: _safe_div(out["r_local"], junc["inlet_max_r"])),
+    (
+        "poiseuille_resistance_calc",
+        lambda out, junc: _safe_div(8 * 0.04 * out["path_length"], np.pi * out["r_local"] ** 4),
+    ),
+    (
+        "inductance_calc",
+        lambda out, junc: _safe_mult(1.06 * out["path_length"], out["r_local"] ** 2),
+    ),
+    ("rneg4", lambda out, junc: out["r_local"] ** -4),
+    ("rneg2", lambda out, junc: out["r_local"] ** -2),
+    ("rmin_rat", lambda out, junc: _safe_div(out["r_min_path"], out["r_local"])),
+    ("rmax_rat", lambda out, junc: _safe_div(out["r_max_path"], out["r_local"])),
+    ("nd_length", lambda out, junc: out["path_length"] / out["r_local"]),
 ]
 
 # ---------------------------------------------------------------------------
 # Computed per-vessel features (for vessel NN input)
 # ---------------------------------------------------------------------------
 # Each entry is (name, func) where func(vessel_raw) returns a float or None.
-# vessel_raw has: inlet_area, outlet_area, path_length, area_ratio, r_local (sqrt(inlet_area/pi)), inlet_max_r (inlet_max_inscribed_radius).
+# vessel_raw has: inlet_area, outlet_area, path_length, area_ratio,
+# r_local (sqrt(inlet_area/pi)), inlet_max_r (inlet_max_inscribed_radius).
 # To add a new computed vessel feature, append a tuple here.
 # ---------------------------------------------------------------------------
 COMPUTED_VESSEL_FEATURES: List[Tuple[str, Any]] = [
@@ -96,9 +97,15 @@ COMPUTED_VESSEL_FEATURES: List[Tuple[str, Any]] = [
     ("rmin_rat", lambda d: _safe_div(d["max_inscribed_radius_min"], d["outlet_max_r"])),
     ("rmax_rat", lambda d: _safe_div(d["max_inscribed_radius_max"], d["outlet_max_r"])),
     ("nd_length", lambda d: _safe_div(d["path_length"], d["outlet_max_r"])),
-    ("poiseuille_resistance_calc", lambda d: _safe_div(8.0 * 0.04 * d["path_length"], np.pi * (d["r_local"] ** 4))),
+    (
+        "poiseuille_resistance_calc",
+        lambda d: _safe_div(8.0 * 0.04 * d["path_length"], np.pi * (d["r_local"] ** 4)),
+    ),
     ("inductance_calc", lambda d: _safe_div(1.06 * d["path_length"], d["inlet_area"])),
-    ("stenosis_calc", lambda d: max(0.0, 1.0 - d["area_ratio"]) if d.get("inlet_area", 0) > 0 else 0.0),
+    (
+        "stenosis_calc",
+        lambda d: max(0.0, 1.0 - d["area_ratio"]) if d.get("inlet_area", 0) > 0 else 0.0,
+    ),
     ("rneg4", lambda d: d["outlet_max_r"] ** -4),
     ("rneg2", lambda d: d["outlet_max_r"] ** -2),
 ]
@@ -137,9 +144,7 @@ def compute_bifurcation_generation_by_vessel(cfg: Dict[str, Any]) -> Dict[Any, f
     """
     root = _find_root_vessel_id_for_generation(cfg)
     if root is None:
-        raise ValueError(
-            "Cannot compute bifurcation generation: no root inlet vessel found in config."
-        )
+        raise ValueError("Cannot compute bifurcation generation: no root inlet vessel found in config.")
     try:
         root = int(root)
     except (TypeError, ValueError):
@@ -256,9 +261,7 @@ def load_junction_geometric_features(
 
         inlet_ids_list = j.get("inlet_vessels", []) or []
         if not inlet_ids_list:
-            raise ValueError(
-                f"Junction {j_name!r}: no inlet_vessels (expected one inlet for id-based wiring)."
-            )
+            raise ValueError(f"Junction {j_name!r}: no inlet_vessels (expected one inlet for id-based wiring).")
         if len(inlet_ids_list) != 1:
             raise ValueError(
                 f"Junction {j_name!r}: expected exactly one inlet vessel for id-based wiring, "
@@ -310,8 +313,6 @@ def load_junction_geometric_features(
                 if 0 <= vid < len(vessels):
                     outlet_names.append(vessels[vid].get("vessel_name", f"v{vid}"))
 
-        
-
         def _to_float(x):
             try:
                 return float(x)
@@ -338,9 +339,15 @@ def load_junction_geometric_features(
             sten = outlet_stenosis_coeff.get(outlet_name, 0.0)
 
             outlet_raw = {
-                "path_length": pl, "tortuosity": tor, "tangent": tan,
-                "r_local": r_loc, "r_min_path": r_min_p, "r_max_path": r_max_p,
-                "angle_diff": ang, "L": L_val, "R_poiseuille": R_pois,
+                "path_length": pl,
+                "tortuosity": tor,
+                "tangent": tan,
+                "r_local": r_loc,
+                "r_min_path": r_min_p,
+                "r_max_path": r_max_p,
+                "angle_diff": ang,
+                "L": L_val,
+                "R_poiseuille": R_pois,
                 "stenosis_coefficient": sten,
             }
 
@@ -364,13 +371,13 @@ def load_junction_geometric_features(
 
             return features
 
-    # Build TWO rows per junction: one with outlet0 first, one with outlet1 first
+        # Build TWO rows per junction: one with outlet0 first, one with outlet1 first
         # Look up vessel IDs from outlet_names via the authoritative mapping
         outlet0_name = outlet_names[0]
         outlet1_name = outlet_names[1]
         outlet0_vid = outlet_vessel_id_map.get(outlet0_name)
         outlet1_vid = outlet_vessel_id_map.get(outlet1_name)
-        
+
         if outlet0_vid is None:
             raise ValueError(
                 f"Junction {j_name}: outlet '{outlet0_name}' not found in outlet_vessels {outlet_vessels}. "
@@ -381,12 +388,15 @@ def load_junction_geometric_features(
                 f"Junction {j_name}: outlet '{outlet1_name}' not found in outlet_vessels {outlet_vessels}. "
                 f"Vessel name-to-id mapping: {outlet_vessel_id_map}"
             )
-        
+
         if verbose:
-            print(f"  outlet0: {outlet0_name} (vessel_id={outlet0_vid}), outlet1: {outlet1_name} (vessel_id={outlet1_vid})")
+            print(
+                f"  outlet0: {outlet0_name} (vessel_id={outlet0_vid}), "
+                f"outlet1: {outlet1_name} (vessel_id={outlet1_vid})"
+            )
 
         # Row 1: inlet + outlet0 + outlet1
-        if 'connector' not in outlet0_name or 'connectorEL' in outlet0_name:
+        if "connector" not in outlet0_name or "connectorEL" in outlet0_name:
             feat_row_0_first: List[float] = [outlet0_vid]
             if verbose:
                 print(f"Adding outlet 0 features: {outlet0_name}, outlet vessel id: {outlet0_vid}")
@@ -402,7 +412,7 @@ def load_junction_geometric_features(
 
         # Row 2: inlet + outlet1 + outlet0 (swapped)
         # Skip swapped sample if outlet1 would be a connector (connector-as-primary exclusion)
-        if 'connector' not in outlet1_name or 'connectorEL' in outlet1_name:
+        if "connector" not in outlet1_name or "connectorEL" in outlet1_name:
             if verbose:
                 print(f"Adding outlet 1 features: {outlet1_name}, outlet vessel id: {outlet1_vid}")
             feat_row_1_first: List[float] = [outlet1_vid]
@@ -417,8 +427,7 @@ def load_junction_geometric_features(
         else:
             if verbose:
                 print(
-                    f"Skipping swapped sample for junction {j_name}: "
-                    f"primary outlet would be connector {outlet1_name}"
+                    f"Skipping swapped sample for junction {j_name}: primary outlet would be connector {outlet1_name}"
                 )
 
     if not rows:
@@ -476,9 +485,7 @@ def _resolve_original_inlet_per_junction(cfg: Dict[str, Any]) -> Dict[str, str]:
     vessels = cfg.get("vessels", [])
     junctions = cfg.get("junctions", [])
     vessel_id_to_name = {
-        v.get("vessel_id"): v.get("vessel_name", "")
-        for v in vessels
-        if v.get("vessel_id") is not None
+        v.get("vessel_id"): v.get("vessel_name", "") for v in vessels if v.get("vessel_id") is not None
     }
     # vessel_id -> junction that has this vessel as an outlet (for tracing back)
     outlet_vessel_id_to_junction: Dict[int, str] = {}
@@ -554,9 +561,7 @@ def compute_junction_flow_splits(
 
     vessels = cfg.get("vessels", [])
     vessel_id_to_name = {
-        v.get("vessel_id"): v.get("vessel_name", "")
-        for v in vessels
-        if v.get("vessel_id") is not None
+        v.get("vessel_id"): v.get("vessel_name", "") for v in vessels if v.get("vessel_id") is not None
     }
     original_inlet_by_junction = _resolve_original_inlet_per_junction(cfg)
 
@@ -572,9 +577,7 @@ def compute_junction_flow_splits(
         if require_two_outlets and len(outlet_vessels) != 2:
             continue
         if not inlet_vessels:
-            raise ValueError(
-                f"Junction {j_name!r} has no inlet vessels; cannot compute flow split."
-            )
+            raise ValueError(f"Junction {j_name!r} has no inlet vessels; cannot compute flow split.")
 
         # Use original inlet (trace back through connectors) for denominator
         original_inlet_name = original_inlet_by_junction.get(j_name, "")
@@ -656,28 +659,33 @@ def load_vessel_geometric_features(
         raise ValueError("Expected 'vessels' to be a list in config.")
 
     # Feature column names (order must match row construction below)
-    # vessel_id, is_inlet, generation, base geometric params + all COMPUTED_VESSEL_FEATURES + zero_d_element_values from config
+    # vessel_id, is_inlet, generation, base geometric params + all COMPUTED_VESSEL_FEATURES
+    # + zero_d_element_values from config
     _computed_vessel_suffixes = [name for name, _ in COMPUTED_VESSEL_FEATURES]
-    feature_names = [
-        "vessel_id",
-        "is_inlet",
-        "generation",
-        "vessel_length",
-        "inlet_area",
-        "outlet_area",
-        "path_length",
-        "tortuosity",
-        "angle_diff",
-        "area_ratio",
-        "inlet_max_inscribed_radius",
-        "outlet_max_inscribed_radius",
-        "max_inscribed_radius_min",
-        "max_inscribed_radius_max",
-    ] + _computed_vessel_suffixes + [
-        "R_poiseuille_geometric",
-        "L_geometric",
-        "stenosis_coefficient_geometric",
-    ]
+    feature_names = (
+        [
+            "vessel_id",
+            "is_inlet",
+            "generation",
+            "vessel_length",
+            "inlet_area",
+            "outlet_area",
+            "path_length",
+            "tortuosity",
+            "angle_diff",
+            "area_ratio",
+            "inlet_max_inscribed_radius",
+            "outlet_max_inscribed_radius",
+            "max_inscribed_radius_min",
+            "max_inscribed_radius_max",
+        ]
+        + _computed_vessel_suffixes
+        + [
+            "R_poiseuille_geometric",
+            "L_geometric",
+            "stenosis_coefficient_geometric",
+        ]
+    )
 
     rows: List[List[float]] = []
     vessel_ids: List[int] = []
@@ -702,8 +710,7 @@ def load_vessel_geometric_features(
             vk = vessel_id
         if vk not in gen_by_vessel:
             raise ValueError(
-                f"Vessel {vessel_name!r} (id={vk}): no bifurcation generation "
-                f"(not reachable from root inlet vessel)."
+                f"Vessel {vessel_name!r} (id={vk}): no bifurcation generation (not reachable from root inlet vessel)."
             )
         gnum = float(gen_by_vessel[vk])
         vessel_length = float(v.get("vessel_length", 0.0) or 0.0)
@@ -744,26 +751,30 @@ def load_vessel_geometric_features(
             val = func(vessel_raw)
             computed_vals.append(float(val) if val is not None else 0.0)
 
-        row = [
-            float(vessel_id),
-            is_inlet,
-            gnum,
-            vessel_length,
-            inlet_area,
-            outlet_area,
-            path_length,
-            tortuosity,
-            angle_diff,
-            area_ratio,
-            inlet_misr,
-            outlet_misr,
-            misr_min,
-            misr_max,
-        ] + computed_vals + [
-            R_poiseuille_geometric,
-            L_geometric,
-            stenosis_coefficient_geometric,
-        ]
+        row = (
+            [
+                float(vessel_id),
+                is_inlet,
+                gnum,
+                vessel_length,
+                inlet_area,
+                outlet_area,
+                path_length,
+                tortuosity,
+                angle_diff,
+                area_ratio,
+                inlet_misr,
+                outlet_misr,
+                misr_min,
+                misr_max,
+            ]
+            + computed_vals
+            + [
+                R_poiseuille_geometric,
+                L_geometric,
+                stenosis_coefficient_geometric,
+            ]
+        )
         rows.append(row)
         vessel_ids.append(int(vessel_id))
         vessel_names_out.append(vessel_name)
@@ -823,5 +834,3 @@ __all__ = [
     "load_vessel_geometric_features",
     "load_vessel_targets_from_config",
 ]
-
-

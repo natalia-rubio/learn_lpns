@@ -8,12 +8,15 @@ import numpy as np
 from util.visualizations.matplotlib_tex import configure_matplotlib_latex
 
 _STYLE_MAP = {
-    'geometric': {"color": "green", "label": "0D Poiseuille"},
-    'NORMAL_JUNCTION': {"color": "red", "label": "0D $\\Delta P = 0$ Junction (Calibrated)"},
-    'BloodVesselJunction': {"color": "orange", "label": "0D RRI Junction (Calibrated)"},
-    'BloodVesselJunction_NN': {"color": "dodgerblue", "label": "0D RRI Junction (NN)"},
-    'BloodVesselJunction_NN_plus_Vessel_NN': {"color": "orchid", "label": "0D RRI Junction (NN + Vessel NN)"},
-    'NN_vessel': {"color": "chartreuse", "label": "0D NN Vessel Only"},
+    "geometric": {"color": "green", "label": "0D Poiseuille"},
+    "NORMAL_JUNCTION": {"color": "red", "label": "0D $\\Delta P = 0$ Junction (Calibrated)"},
+    "BloodVesselJunction": {"color": "orange", "label": "0D RRI Junction (Calibrated)"},
+    "BloodVesselJunction_NN": {"color": "dodgerblue", "label": "0D RRI Junction (NN)"},
+    "BloodVesselJunction_NN_plus_Vessel_NN": {
+        "color": "orchid",
+        "label": "0D RRI Junction (NN + Vessel NN)",
+    },
+    "NN_vessel": {"color": "chartreuse", "label": "0D NN Vessel Only"},
 }
 
 
@@ -21,10 +24,12 @@ def _is_non_el_connector(vessel_name):
     if not vessel_name:
         return True
     vlower = vessel_name.lower()
-    return 'connector' in vlower and 'connectorel' not in vlower
+    return "connector" in vlower and "connectorel" not in vlower
 
 
-def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name='zero_d_parameter_bars.png', verbose=False):
+def plot_zero_d_parameter_bars(
+    modality_json_paths, output_dir=None, output_name="zero_d_parameter_bars.png", verbose=False
+):
     """
     Create grouped bar charts comparing R_poiseuille, stenosis_coefficient, and L
     across multiple modalities (e.g., geometric, NORMAL_JUNCTION, BloodVesselJunction).
@@ -48,7 +53,7 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
             modality_data[mod] = None
             continue
         try:
-            with open(path, 'r') as f:
+            with open(path, "r") as f:
                 modality_data[mod] = json.load(f)
         except Exception as e:
             if verbose:
@@ -56,10 +61,10 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
             modality_data[mod] = None
 
     base_mod = None
-    if modality_data.get('bifurcations'):
-        base_mod = 'bifurcations'
-    elif modality_data.get('geometric'):
-        base_mod = 'geometric'
+    if modality_data.get("bifurcations"):
+        base_mod = "bifurcations"
+    elif modality_data.get("geometric"):
+        base_mod = "geometric"
     else:
         for k, v in modality_data.items():
             if v:
@@ -71,10 +76,11 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
             print("  ✗ No valid modality JSONs found to determine vessel ordering")
         return None
 
-    vessels = modality_data[base_mod].get('vessels', [])
+    vessels = modality_data[base_mod].get("vessels", [])
     vessel_names = [
-        v.get('vessel_name') for v in vessels
-        if v.get('vessel_name') and 'connector' not in v.get('vessel_name', '').lower()
+        v.get("vessel_name")
+        for v in vessels
+        if v.get("vessel_name") and "connector" not in v.get("vessel_name", "").lower()
     ]
     if len(vessel_names) > 10:
         if verbose:
@@ -85,23 +91,23 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
     for mod_json in modality_data.values():
         if not mod_json:
             continue
-        for j in mod_json.get('junctions', []):
-            jname = j.get('junction_name')
-            if jname and j.get('junction_values'):
+        for j in mod_json.get("junctions", []):
+            jname = j.get("junction_name")
+            if jname and j.get("junction_values"):
                 junctions_to_include.add(jname)
 
     junction_outlet_labels = []
     junction_outlet_map = {}  # label -> (junction_name, outlet_index)
-    for j in modality_data[base_mod].get('junctions', []):
-        jname = j.get('junction_name')
+    for j in modality_data[base_mod].get("junctions", []):
+        jname = j.get("junction_name")
         if not jname or jname not in junctions_to_include:
             continue
-        for oi, vidx in enumerate(j.get('outlet_vessels', [])):
+        for oi, vidx in enumerate(j.get("outlet_vessels", [])):
             try:
                 vidx_int = int(vidx)
             except Exception:
                 continue
-            out_vname = vessels[vidx_int].get('vessel_name') if 0 <= vidx_int < len(vessels) else None
+            out_vname = vessels[vidx_int].get("vessel_name") if 0 <= vidx_int < len(vessels) else None
             if _is_non_el_connector(out_vname):
                 continue
             label = f"{jname}:out{oi}"
@@ -115,9 +121,9 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         return None
 
     params = [
-        ('R_poiseuille', 'Poiseuille resistance'),
-        ('stenosis_coefficient', 'Stenosis coefficient'),
-        ('L', 'Inductance'),
+        ("R_poiseuille", "Poiseuille resistance"),
+        ("stenosis_coefficient", "Stenosis coefficient"),
+        ("L", "Inductance"),
     ]
     modalities = list(modality_json_paths.keys())
     data_by_param = {p[0]: {mod: [] for mod in modalities} for p in params}
@@ -127,16 +133,16 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
             mod_json = modality_data.get(mod)
             vmap = {}
             if mod_json:
-                for v in mod_json.get('vessels', []):
-                    name = v.get('vessel_name')
+                for v in mod_json.get("vessels", []):
+                    name = v.get("vessel_name")
                     if name:
-                        vmap[name] = v.get('zero_d_element_values', {})
+                        vmap[name] = v.get("zero_d_element_values", {})
             jmap = {}
             if mod_json:
-                for j in mod_json.get('junctions', []):
-                    jn = j.get('junction_name')
+                for j in mod_json.get("junctions", []):
+                    jn = j.get("junction_name")
                     if jn:
-                        jmap[jn] = j.get('junction_values', {})
+                        jmap[jn] = j.get("junction_values", {})
 
             values = []
             for name in vessel_names_extended:
@@ -170,7 +176,8 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
 
     try:
         import matplotlib
-        matplotlib.use('Agg')
+
+        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         from matplotlib import patches as mpatches
 
@@ -180,9 +187,9 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         width = 0.7 / n_mod if n_mod > 0 else 0.2
 
         configure_matplotlib_latex(plt)
-        plt.rcParams['axes.labelsize'] = 14
-        plt.rcParams['axes.titlesize'] = 16
-        plt.rcParams['legend.fontsize'] = 12
+        plt.rcParams["axes.labelsize"] = 14
+        plt.rcParams["axes.titlesize"] = 16
+        plt.rcParams["legend.fontsize"] = 12
 
         fig, axes = plt.subplots(3, 1, figsize=(max(8, n_v * 0.3 + 6), 10), sharex=True)
         cycle_colors = [_STYLE_MAP.get(mod, {"color": "gray"})["color"] for mod in modalities]
@@ -207,14 +214,19 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
             ax.grid(True, alpha=0.3)
 
         if legend_patches:
-            fig.legend(handles=legend_patches, loc='upper center', ncol=max(1, len(legend_patches)), bbox_to_anchor=(0.5, 0.995))
+            fig.legend(
+                handles=legend_patches,
+                loc="upper center",
+                ncol=max(1, len(legend_patches)),
+                bbox_to_anchor=(0.5, 0.995),
+            )
         fig.suptitle(r"Zero-D parameter comparison: $R$, $S$, and $L$", y=1.005, fontsize=18)
         axes[-1].set_xticks(x)
         axes[-1].set_xticklabels(vessel_names_extended, rotation=90, fontsize=8)
         plt.subplots_adjust(top=0.88)
         plt.tight_layout()
-        plt.savefig(out_path, dpi=150, bbox_inches='tight')
-        plt.savefig(out_path.replace('.png', '.pdf'), dpi=150, bbox_inches='tight')
+        plt.savefig(out_path, dpi=150, bbox_inches="tight")
+        plt.savefig(out_path.replace(".png", ".pdf"), dpi=150, bbox_inches="tight")
         plt.close()
 
         if verbose:

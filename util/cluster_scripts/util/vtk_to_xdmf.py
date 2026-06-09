@@ -17,13 +17,13 @@ def split(array):
     """
     Split array name in name and time step if possible
     """
-    comp = array.split('_')
+    comp = array.split("_")
     num = comp[-1]
 
     # check if array name has a time step
     try:
         time = float(num)
-        name = '_'.join([c for c in comp[:-1]])
+        name = "_".join([c for c in comp[:-1]])
     except ValueError:
         time = 0
         name = array
@@ -53,10 +53,12 @@ def get_time_series(geo):
     point_arrays, cell_arrays = get_all_arrays(geo)
 
     # collect all arrays
-    rec_dd = lambda: defaultdict(rec_dd)
+    def rec_dd():
+        return defaultdict(rec_dd)
+
     arrays = rec_dd()
-    collect_arrays('point', point_arrays, arrays)
-    collect_arrays('cell', cell_arrays, arrays)
+    collect_arrays("point", point_arrays, arrays)
+    collect_arrays("cell", cell_arrays, arrays)
     return arrays
 
 
@@ -81,11 +83,11 @@ def write_xdmf(geo, arrays, f_out):
 
         # write arrays
         for time, data in arrays.items():
-            if time == '0':
+            if time == "0":
                 for t in times:
-                    writer.write_data(t, point_data=data['point'], cell_data=data['cell'])
+                    writer.write_data(t, point_data=data["point"], cell_data=data["cell"])
             else:
-                writer.write_data(time, point_data=data['point'], cell_data=data['cell'])
+                writer.write_data(time, point_data=data["point"], cell_data=data["cell"])
 
 
 def osmsc_to_xdmf(f_in, f_out):
@@ -104,10 +106,10 @@ def main(db, geometries):
     Loop all geometries
     """
     for geo in geometries:
-        print('Running geometry ' + geo)
+        print("Running geometry " + geo)
 
         f_in = db.get_3d_flow(geo)
-        f_out = os.path.splitext(f_in)[0] + '.xdmf'
+        f_out = os.path.splitext(f_in)[0] + ".xdmf"
 
         if not os.path.exists(f_in):
             continue
@@ -115,7 +117,8 @@ def main(db, geometries):
         osmsc_to_xdmf(f_in, f_out)
 
 
-if __name__ == '__main__':
-    descr = 'Extract 3d-results at 1d-locations'
-    d, g, _ = input_args(descr)
-    main(d, g)
+if __name__ == "__main__":
+    raise SystemExit(
+        "vtk_to_xdmf is a library module; call main(db, geometries) from a cluster driver. "
+        "The legacy input_args() entry point is not available in this repo."
+    )

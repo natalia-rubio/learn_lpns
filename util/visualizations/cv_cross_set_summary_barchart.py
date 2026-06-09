@@ -33,23 +33,18 @@ from util.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_
 from util.visualizations.plot_location_comparison import get_line_style
 from util.zerod_calibration.modality_paths import read_cv_metric_from_row
 
-SET_NAMES_DEFAULT = [
-    "VMR_rigid_aorta_adults_all",
-    "VMR_abdo",
-    "VMR_pulmo_healthy",
-    "VMR_all"
-]
+SET_NAMES_DEFAULT = ["VMR_rigid_aorta_adults_all", "VMR_abdo", "VMR_pulmo_healthy", "VMR_all"]
 
 # X-axis labels for each set_name (internal folder name -> plot text). Use "\n" for a line break.
 # Names not listed here fall back to _format_set_label default (VMR_… split or raw set_name).
 SET_DISPLAY_NAME = {
     "VMR_rigid_aorta_adults_all": "Aortic",
-    #"VMR_rigid_aorta_adults": "Rigid aorta\n(adults)",
+    # "VMR_rigid_aorta_adults": "Rigid aorta\n(adults)",
     "VMR_abdo": "Aortofemoral ",
     "VMR_pulmo": "Pulmonary",
     "VMR_pulmo_healthy": "Pulmonary",
     "VMR_all": "All",
-    "VMR_all_balanced": "Mixed"
+    "VMR_all_balanced": "Mixed",
 }
 
 RUN_CONFIG_FALLBACK_ORDER = [
@@ -83,6 +78,7 @@ def _multiline_label(display_spec):
     if isinstance(display_spec, (list, tuple)):
         return "\n".join(str(line) for line in display_spec)
     return str(display_spec)
+
 
 METRIC_CONFIG = {
     "pressure_max_rel_error": {
@@ -198,9 +194,7 @@ def _resolve_csv_path(data_root, set_name, run_config, geometry_variant, csv_suf
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Grouped bar chart: CV averages across set names, with 95% CI."
-    )
+    parser = argparse.ArgumentParser(description="Grouped bar chart: CV averages across set names, with 95% CI.")
     parser.add_argument(
         "--set_names",
         nargs="+",
@@ -295,10 +289,7 @@ def main():
 
     valid_sets = [s for s in args.set_names if s in means]
     if not valid_sets:
-        raise SystemExit(
-            "No valid CSV files were found for the requested set names.\n"
-            + "\n".join(missing)
-        )
+        raise SystemExit("No valid CSV files were found for the requested set names.\n" + "\n".join(missing))
 
     use_latex = configure_matplotlib_latex(plt)
 
@@ -361,14 +352,14 @@ def main():
                 bbox=label_bbox,
             )
 
-    y_hi_auto = ax.get_ylim()[1]
-    #ax.set_ylim(0.0, max(y_hi_auto, max_top * 1.06))
+    ax.get_ylim()[1]
+    # ax.set_ylim(0.0, max(y_hi_auto, max_top * 1.06))
     ax.set_ylim(0, 37)
 
     ax.set_xticks(x)
     ax.set_xticklabels([_format_set_label(s) for s in valid_sets], fontsize=18)
     ax.set_ylabel(plot_label(mcfg["ylabel"], use_latex=use_latex), fontsize=18)
-    #ax.set_xlabel("Set Name", fontsize=16)
+    # ax.set_xlabel("Set Name", fontsize=16)
     ax.tick_params(axis="y", labelsize=18)
     ax.grid(axis="y", alpha=0.3)
     for spine in ax.spines.values():
@@ -398,9 +389,7 @@ def main():
     else:
         out_dir = os.path.join(args.data_root, "cross_validation")
         os.makedirs(out_dir, exist_ok=True)
-        out_name = (
-            f"cv_cross_set_summary_{args.run_config}_{args.geometry_variant}_{mcfg['out_suffix']}.pdf"
-        )
+        out_name = f"cv_cross_set_summary_{args.run_config}_{args.geometry_variant}_{mcfg['out_suffix']}.pdf"
         out_path = os.path.join(out_dir, out_name)
 
     fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")

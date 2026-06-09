@@ -23,8 +23,8 @@ def transfer_solution(node_trg, node_src, res_fields):
         res_fields: point data names to transfer
     """
     # get global node ids in both meshes
-    nd_id_trg = v2n(node_trg.GetArray('GlobalNodeID')).astype(int)
-    nd_id_src = v2n(node_src.GetArray('GlobalNodeID')).astype(int)
+    nd_id_trg = v2n(node_trg.GetArray("GlobalNodeID")).astype(int)
+    nd_id_src = v2n(node_src.GetArray("GlobalNodeID")).astype(int)
 
     # map volume mesh to surface mesh
     index = np.argsort(nd_id_src)
@@ -34,7 +34,7 @@ def transfer_solution(node_trg, node_src, res_fields):
     # transfer results from volume mesh to surface mesh
     for i in range(node_src.GetNumberOfArrays()):
         res_name = node_src.GetArrayName(i)
-        if res_name.split('_')[0] in res_fields:
+        if res_name.split("_")[0] in res_fields:
             # read results from volume mesh
             res = v2n(node_src.GetArray(res_name))
 
@@ -60,7 +60,7 @@ def sort_faces(res_faces, area):
     times = np.unique(np.array(times))
 
     # sort data in arrays according to time steps
-    res_array = {'time': times}
+    res_array = {"time": times}
     dim = (times.shape[0], max(list(res_faces.keys())))
 
     for f, f_res in res_faces.items():
@@ -71,9 +71,9 @@ def sort_faces(res_faces, area):
             res_array[name][float(time) == times, f - 1] = res
 
     # repeat area for all time steps to match format
-    res_array['area'] = np.zeros(dim)
+    res_array["area"] = np.zeros(dim)
     for f, f_res in area.items():
-        res_array['area'][:, f - 1] = f_res
+        res_array["area"][:, f - 1] = f_res
 
     return res_array
 
@@ -95,7 +95,7 @@ def get_res_names(inp, res_fields):
     return res
 
 
-def integrate_surfaces(surf, cell_surf, res_fields, face_array='BC_FaceID'):
+def integrate_surfaces(surf, cell_surf, res_fields, face_array="BC_FaceID"):
     """
     Integrate desired fields on all caps of surface mesh (as defined by BC_FaceID)
     Args:
@@ -113,8 +113,8 @@ def integrate_surfaces(surf, cell_surf, res_fields, face_array='BC_FaceID'):
 
     # recursively add calculators for normal velocities
     calc = normals
-    for v in get_res_names(surf, 'velocity'):
-        calc = calculator(calc, 'Normals.' + v, ['Normals', v], 'normal_' + v)
+    for v in get_res_names(surf, "velocity"):
+        calc = calculator(calc, "Normals." + v, ["Normals", v], "normal_" + v)
 
     # get all output array names
     res_names = get_res_names(surf, res_fields)
@@ -145,7 +145,7 @@ def integrate_surfaces(surf, cell_surf, res_fields, face_array='BC_FaceID'):
     return sort_faces(res, area)
 
 
-def integrate_bcs(fpath_surf, fpath_vol, res_fields, debug=False, debug_out='', face_array='BC_FaceID'):
+def integrate_bcs(fpath_surf, fpath_vol, res_fields, debug=False, debug_out="", face_array="BC_FaceID"):
     """
     Perform all steps necessary to get results averaged on caps
     Args:
@@ -182,13 +182,13 @@ def main(db, geometries):
     Loop all geometries in database
     """
     for geo in geometries:
-        print('Processing ' + geo)
+        print("Processing " + geo)
 
         # file paths
-        fpath_surf = db.get_surfaces(geo, 'all_exterior')
+        fpath_surf = db.get_surfaces(geo, "all_exterior")
         fpath_vol = db.get_volume(geo)
 
-        bc_flow = integrate_bcs(fpath_surf, fpath_vol, ['pressure', 'velocity'])
+        bc_flow = integrate_bcs(fpath_surf, fpath_vol, ["pressure", "velocity"])
 
         if bc_flow is not None:
             np.save(db.get_bc_flow_path(geo), bc_flow)

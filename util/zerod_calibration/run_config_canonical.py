@@ -13,12 +13,14 @@ _PENALTY_ON_SUFFIX = "_penalty_on"
 # Default ``--run_config`` path suffix for repo CLIs when omitted (under ``set_name``).
 DEFAULT_CLI_RUN_CONFIG = "gen_loss"
 
-RUN_CONFIG_TOKENS: FrozenSet[str] = frozenset({
-    "penalty_on",
-    "gen_loss",
-    "asymmetric_loss",
-    "quadratic_resistor",
-})
+RUN_CONFIG_TOKENS: FrozenSet[str] = frozenset(
+    {
+        "penalty_on",
+        "gen_loss",
+        "asymmetric_loss",
+        "quadratic_resistor",
+    }
+)
 
 RUN_CONFIG_ALIASES: Dict[str, str] = {
     # User token ``generation_weighted_loss`` → path token ``gen_loss`` (suffix ``_gen_loss``).
@@ -51,11 +53,9 @@ def parse_underscore_tokens(
             if remaining == token or remaining.startswith(token + "_"):
                 canonical = aliases.get(token, token)
                 if canonical not in vocabulary:
-                    raise ValueError(
-                        f"Alias {token!r} maps to unknown token {canonical!r}"
-                    )
+                    raise ValueError(f"Alias {token!r} maps to unknown token {canonical!r}")
                 found.add(canonical)
-                remaining = remaining[len(token):].lstrip("_")
+                remaining = remaining[len(token) :].lstrip("_")
                 matched = True
                 break
         if not matched:
@@ -69,22 +69,14 @@ def parse_underscore_tokens(
 def compose_run_config_suffix(tokens: FrozenSet[str]) -> str:
     """Build canonical path suffix from a set of run-config tokens."""
     if "penalty_on" in tokens and "quadratic_resistor" not in tokens:
-        raise ValueError(
-            "penalty_on requires quadratic_resistor "
-            "(L2 calibration penalties apply only in RRI mode)."
-        )
+        raise ValueError("penalty_on requires quadratic_resistor (L2 calibration penalties apply only in RRI mode).")
 
     has_quadratic_resistor = "quadratic_resistor" in tokens
     has_penalty_on = "penalty_on" in tokens
     has_asymmetric_loss = "asymmetric_loss" in tokens
     has_gen_loss = "gen_loss" in tokens
 
-    if (
-        not has_quadratic_resistor
-        and not has_penalty_on
-        and not has_asymmetric_loss
-        and not has_gen_loss
-    ):
+    if not has_quadratic_resistor and not has_penalty_on and not has_asymmetric_loss and not has_gen_loss:
         return "base"
 
     parts: List[str] = []
@@ -117,11 +109,7 @@ def discover_run_config_suffixes(parent_dir: str) -> List[str]:
     """List run-config subfolder names under ``parent_dir`` (e.g. a CV set directory)."""
     if not os.path.isdir(parent_dir):
         return []
-    return sorted(
-        name
-        for name in os.listdir(parent_dir)
-        if os.path.isdir(os.path.join(parent_dir, name))
-    )
+    return sorted(name for name in os.listdir(parent_dir) if os.path.isdir(os.path.join(parent_dir, name)))
 
 
 def resolve_run_config_suffix(spec: Optional[str]) -> str:
@@ -170,11 +158,7 @@ def run_config_suffix_has_asymmetric_loss(run_config_suffix: Optional[str]) -> b
     if not run_config_suffix:
         return False
     s = str(run_config_suffix).strip()
-    return (
-        s == "asymmetric_loss"
-        or _ASYMMETRIC_LOSS_SUFFIX in s
-        or s.startswith("asymmetric_loss_")
-    )
+    return s == "asymmetric_loss" or _ASYMMETRIC_LOSS_SUFFIX in s or s.startswith("asymmetric_loss_")
 
 
 def run_config_suffix_has_quadratic_resistor(run_config_suffix: Optional[str]) -> bool:
@@ -182,11 +166,7 @@ def run_config_suffix_has_quadratic_resistor(run_config_suffix: Optional[str]) -
     if not run_config_suffix:
         return False
     s = str(run_config_suffix).strip()
-    return (
-        s == "quadratic_resistor"
-        or _QUADRATIC_RESISTOR_SUFFIX in s
-        or s.startswith("quadratic_resistor_")
-    )
+    return s == "quadratic_resistor" or _QUADRATIC_RESISTOR_SUFFIX in s or s.startswith("quadratic_resistor_")
 
 
 def run_config_suffix_has_penalty_on(run_config_suffix: Optional[str]) -> bool:
@@ -194,11 +174,7 @@ def run_config_suffix_has_penalty_on(run_config_suffix: Optional[str]) -> bool:
     if not run_config_suffix:
         return False
     s = str(run_config_suffix).strip()
-    return (
-        s == "penalty_on"
-        or s == "quadratic_resistor_penalty_on"
-        or _PENALTY_ON_SUFFIX in s
-    )
+    return s == "penalty_on" or s == "quadratic_resistor_penalty_on" or _PENALTY_ON_SUFFIX in s
 
 
 def run_config_includes_gen_loss(run_config_suffix: Optional[str]) -> bool:

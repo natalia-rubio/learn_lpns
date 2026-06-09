@@ -100,20 +100,25 @@ def trial_metrics_to_row(trial_id, val_geometries_str, trial_metrics):
         row[f"PressureMSE_{mod}"] = np.nanmean(data["mean_pressure_mse"]) if data["mean_pressure_mse"] else np.nan
         row[f"FlowMSE_{mod}"] = np.nanmean(data["mean_flow_mse"]) if data["mean_flow_mse"] else np.nan
         row[f"MaxError_{mod}"] = np.nanmean(data["overall_max_error"]) if data["overall_max_error"] else np.nan
-        row[f"PressureMaxError_{mod}"] = np.nanmean(data["mean_pressure_max_error"]) if data["mean_pressure_max_error"] else np.nan
+        row[f"PressureMaxError_{mod}"] = (
+            np.nanmean(data["mean_pressure_max_error"]) if data["mean_pressure_max_error"] else np.nan
+        )
         row[f"FlowMaxError_{mod}"] = np.nanmean(data["mean_flow_max_error"]) if data["mean_flow_max_error"] else np.nan
-        row[f"MaxRelError_{mod}"] = np.nanmean(data["overall_max_rel_error"]) if data.get("overall_max_rel_error") else np.nan
-        row[f"PressureMaxRelError_{mod}"] = np.nanmean(data["mean_pressure_max_rel_error"]) if data.get("mean_pressure_max_rel_error") else np.nan
-        row[f"FlowMaxRelError_{mod}"] = np.nanmean(data["mean_flow_max_rel_error"]) if data.get("mean_flow_max_rel_error") else np.nan
+        row[f"MaxRelError_{mod}"] = (
+            np.nanmean(data["overall_max_rel_error"]) if data.get("overall_max_rel_error") else np.nan
+        )
+        row[f"PressureMaxRelError_{mod}"] = (
+            np.nanmean(data["mean_pressure_max_rel_error"]) if data.get("mean_pressure_max_rel_error") else np.nan
+        )
+        row[f"FlowMaxRelError_{mod}"] = (
+            np.nanmean(data["mean_flow_max_rel_error"]) if data.get("mean_flow_max_rel_error") else np.nan
+        )
     return row
 
 
 def _metric_values(all_trial_results, col):
     vals = [r.get(col) for r in all_trial_results if "error" not in r and col in r]
-    return [
-        float(v) for v in vals
-        if v is not None and v != "" and (not isinstance(v, float) or not np.isnan(v))
-    ]
+    return [float(v) for v in vals if v is not None and v != "" and (not isinstance(v, float) or not np.isnan(v))]
 
 
 def write_metric_summary_csv(path, prefix, modalities, all_trial_results):
@@ -126,7 +131,9 @@ def write_metric_summary_csv(path, prefix, modalities, all_trial_results):
             if "error" in row:
                 writer.writerow([row.get("trial_id", ""), row.get("val_geometries", "")] + [""] * len(cols))
             else:
-                writer.writerow([row.get("trial_id", ""), row.get("val_geometries", "")] + [row.get(c, "") for c in cols])
+                writer.writerow(
+                    [row.get("trial_id", ""), row.get("val_geometries", "")] + [row.get(c, "") for c in cols]
+                )
         writer.writerow([])
         mean_row = ["mean", ""]
         std_row = ["std", ""]

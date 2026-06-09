@@ -45,9 +45,7 @@ except ImportError as e:
 from util.zerod_calibration.tools.file_io import read_centerline_vtp
 
 
-def find_centerline_file(
-    set_name: str, geo_name: str, data_dir: str = "data"
-) -> Optional[str]:
+def find_centerline_file(set_name: str, geo_name: str, data_dir: str = "data") -> Optional[str]:
     """
     Find centerline VTP under data/oneD or data/threeD for a geometry.
 
@@ -64,19 +62,19 @@ def find_centerline_file(
         os.path.join(data_dir, "threeD", set_name, geo_name, "centerlines.vtp"),
     ]
     if "VMR" in set_name:
-        possible_paths.extend([
-            os.path.join(data_dir, "oneD", "VMR", geo_name, "unsteady_soln.vtp"),
-            os.path.join(data_dir, "oneD", "VMR_rigid_aortas", geo_name, "unsteady_soln.vtp"),
-        ])
+        possible_paths.extend(
+            [
+                os.path.join(data_dir, "oneD", "VMR", geo_name, "unsteady_soln.vtp"),
+                os.path.join(data_dir, "oneD", "VMR_rigid_aortas", geo_name, "unsteady_soln.vtp"),
+            ]
+        )
     for path in possible_paths:
         if os.path.exists(path):
             return path
     return None
 
 
-def _centerline_search_paths(
-    set_name: str, geo_name: str, data_dir: str = "data"
-) -> List[str]:
+def _centerline_search_paths(set_name: str, geo_name: str, data_dir: str = "data") -> List[str]:
     """Return candidate centerline paths (for error messages)."""
     paths = [
         os.path.join(data_dir, "oneD", set_name, geo_name, "unsteady_soln.vtp"),
@@ -87,10 +85,12 @@ def _centerline_search_paths(
         os.path.join(data_dir, "threeD", set_name, geo_name, "centerlines.vtp"),
     ]
     if "VMR" in set_name:
-        paths.extend([
-            os.path.join(data_dir, "oneD", "VMR", geo_name, "unsteady_soln.vtp"),
-            os.path.join(data_dir, "oneD", "VMR_rigid_aortas", geo_name, "unsteady_soln.vtp"),
-        ])
+        paths.extend(
+            [
+                os.path.join(data_dir, "oneD", "VMR", geo_name, "unsteady_soln.vtp"),
+                os.path.join(data_dir, "oneD", "VMR_rigid_aortas", geo_name, "unsteady_soln.vtp"),
+            ]
+        )
     return paths
 
 
@@ -118,9 +118,7 @@ def infer_paths_from_set_run_geo(
     else:
         zerod_dir = os.path.join(data_dir, "zeroD", set_name, geo_name)
 
-    geometric_input_path = os.path.join(
-        zerod_dir, "bifurcations_EL_geometric_input.json"
-    )
+    geometric_input_path = os.path.join(zerod_dir, "bifurcations_EL_geometric_input.json")
 
     centerline_path = find_centerline_file(set_name, geo_name, data_dir)
     if centerline_path is None:
@@ -148,9 +146,7 @@ def _find_gid_index(gid_arr: np.ndarray, gid: int) -> Optional[int]:
     return int(matches[0]) if len(matches) > 0 else None
 
 
-def _build_adjacency(
-    n_points: int, cells: Sequence[Sequence[int]]
-) -> List[List[int]]:
+def _build_adjacency(n_points: int, cells: Sequence[Sequence[int]]) -> List[List[int]]:
     adj: List[List[int]] = [[] for _ in range(n_points)]
     for edge in cells:
         if len(edge) != 2:
@@ -354,9 +350,7 @@ def export_el_labeled_centerline_vtp(
 
     branch_el, bif_el = _assign_el_labels(centerline_arrays, geometric_input)
     if len(branch_el) != poly.GetNumberOfPoints():
-        raise ValueError(
-            "EL label length mismatch with polydata (GlobalNodeId vs number of points)"
-        )
+        raise ValueError("EL label length mismatch with polydata (GlobalNodeId vs number of points)")
 
     # Preserve originals (only if not already present, so re-runs keep true SimVascular ids)
     if not pd.HasArray("BranchId_orig") and pd.HasArray("BranchId"):
@@ -475,8 +469,7 @@ Examples:
     else:
         if not args.geometric_input or not args.centerline or not args.output:
             parser.error(
-                "Either pass --set_name and --geo_name, or all of "
-                "--geometric_input, --centerline, and --output"
+                "Either pass --set_name and --geo_name, or all of --geometric_input, --centerline, and --output"
             )
         geometric_input = args.geometric_input
         centerline = args.centerline

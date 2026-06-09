@@ -7,7 +7,7 @@ arrays onto the centerline VTP. Import and call extract_results(fpath_1d, fpath_
 import sys
 
 sys.path.append("/home/users/nrubio/SV_scripts")
-#from util.tools.basic import *
+# from util.tools.basic import *
 
 import pickle
 
@@ -25,16 +25,18 @@ from util.vtk_functions import (
 )
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 
-#from sklearn.linear_model import LinearRegression
+# from sklearn.linear_model import LinearRegression
+
 
 def save_dict(di_, filename_):
-    with open(filename_, 'wb') as f:
+    with open(filename_, "wb") as f:
         pickle.dump(di_, f)
+
 
 def get_length(locs):
     length = 0
     for i in range(1, locs.shape[0]):
-        length += np.linalg.norm(locs[i, :] - locs[i-1, :])
+        length += np.linalg.norm(locs[i, :] - locs[i - 1, :])
     return length
 
 
@@ -51,11 +53,11 @@ def slice_vessel(inp_3d, origin, normal):
     """
     # cut 3d geometry
     cut_3d = cut_plane(inp_3d, origin, normal)
-    #write_geo(f'slice_{origin[0]}.vtp', cut_3d.GetOutput())
+    # write_geo(f'slice_{origin[0]}.vtp', cut_3d.GetOutput())
 
     # extract region closest to centerline
     con = connectivity(cut_3d, origin)
-    #write_geo(f'con_{origin[0]}.vtp', con.GetOutput())
+    # write_geo(f'con_{origin[0]}.vtp', con.GetOutput())
     return con
 
 
@@ -74,7 +76,7 @@ def get_integral(inp_3d, origin, normal):
     inp = slice_vessel(inp_3d, origin, normal)
 
     # recursively add calculators for normal velocities
-    for v in get_res_names(inp_3d, 'velocity'):
+    for v in get_res_names(inp_3d, "velocity"):
         fun = (
             "(iHat*"
             + repr(float(normal[0]))
@@ -86,27 +88,28 @@ def get_integral(inp_3d, origin, normal):
             + v
         )
         # fun = "dot(iHat*" + repr(float(normal[0])) + "+jHat*" + repr(float(normal[1])) + "+kHat*" + repr(float(normal[2])) + "," + v + ")"
-        inp = calculator(inp, fun, [v], 'normal_' + v)
+        inp = calculator(inp, fun, [v], "normal_" + v)
 
     return Integration(inp)
 
-def extract_results(fpath_1d, fpath_3d, fpath_out, only_caps=False, num_time_steps = 1000):
+
+def extract_results(fpath_1d, fpath_3d, fpath_out, only_caps=False, num_time_steps=1000):
 
     reader_1d = read_geo(fpath_1d).GetOutput()
-    reader_3d = read_geo(fpath_3d).GetOutput()# get all result array names
-    res_names = get_res_names(reader_3d, ['pressure', 'velocity'])# get point and normals from centerline
+    reader_3d = read_geo(fpath_3d).GetOutput()  # get all result array names
+    res_names = get_res_names(reader_3d, ["pressure", "velocity"])  # get point and normals from centerline
     points = v2n(reader_1d.GetPoints().GetData())
-    normals = v2n(reader_1d.GetPointData().GetArray('CenterlineSectionNormal'))
-    gid = v2n(reader_1d.GetPointData().GetArray('GlobalNodeId'))# initialize output
+    normals = v2n(reader_1d.GetPointData().GetArray("CenterlineSectionNormal"))
+    gid = v2n(reader_1d.GetPointData().GetArray("GlobalNodeId"))  # initialize output
 
-    for name in res_names + ['area']:
+    for name in res_names + ["area"]:
         array = vtk.vtkDoubleArray()
         array.SetName(name)
         array.SetNumberOfValues(reader_1d.GetNumberOfPoints())
         array.Fill(0)
-        reader_1d.GetPointData().AddArray(array) # move points on caps slightly to ensure nice integration
+        reader_1d.GetPointData().AddArray(array)  # move points on caps slightly to ensure nice integration
     ids = vtk.vtkIdList()
-    eps_norm = 1.0e-3 # integrate results on all points of intergration cells
+    eps_norm = 1.0e-3  # integrate results on all points of intergration cells
     print(f"Extracting solution at {reader_1d.GetNumberOfPoints()} points.")
     for i in tqdm(range(reader_1d.GetNumberOfPoints())):
         # check if point is cap
@@ -120,16 +123,16 @@ def extract_results(fpath_1d, fpath_3d, fpath_out, only_caps=False, num_time_ste
                 points[i] -= eps_norm * normals[i]
         else:
             if only_caps:
-                continue # create integration object (slice geometry at point/normal)
+                continue  # create integration object (slice geometry at point/normal)
 
         try:
-            #import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace()
             integral = get_integral(reader_3d, points[i], normals[i])
         except Exception:
-            continue # integrate all output arrays
+            continue  # integrate all output arrays
 
         for name in res_names:
             reader_1d.GetPointData().GetArray(name).SetValue(i, integral.evaluate(name))
-        reader_1d.GetPointData().GetArray('area').SetValue(i, integral.area())
+        reader_1d.GetPointData().GetArray("area").SetValue(i, integral.area())
     write_geo(fpath_out, reader_1d)
     return

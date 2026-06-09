@@ -48,8 +48,8 @@ def get_path_length_from_gid_list(gid_list, centerline_data):
     if len(gid_list) < 2:
         return 0.0
 
-    gid_arr = np.asarray(centerline_data['GlobalNodeId'])
-    points  = np.asarray(centerline_data['Points'])
+    gid_arr = np.asarray(centerline_data["GlobalNodeId"])
+    points = np.asarray(centerline_data["Points"])
 
     # Build GID -> point-index lookup (once)
     gid_to_idx = {}
@@ -74,6 +74,7 @@ def get_path_length_from_gid_list(gid_list, centerline_data):
 def _get_branch_id_from_name(vessel_name):
     """Extract integer branch ID from a vessel name like 'branch3_seg0'."""
     import re
+
     m = re.match(r"branch(\d+)", vessel_name)
     if m:
         return int(m.group(1))
@@ -96,35 +97,35 @@ def extract_junction_centerline_paths(centerline_data, geometric_input):
             }
         }
     """
-    gid        = np.asarray(centerline_data['GlobalNodeId'])
-    branch_id  = np.asarray(centerline_data['BranchId']).astype(int)
-    bif_id     = np.asarray(centerline_data['BifurcationId'])
-    path_arr   = np.asarray(centerline_data['Path'])
-    points     = np.asarray(centerline_data['Points'])
+    gid = np.asarray(centerline_data["GlobalNodeId"])
+    branch_id = np.asarray(centerline_data["BranchId"]).astype(int)
+    bif_id = np.asarray(centerline_data["BifurcationId"])
+    path_arr = np.asarray(centerline_data["Path"])
+    points = np.asarray(centerline_data["Points"])
 
-    if 'BranchIdTmp' not in centerline_data:
+    if "BranchIdTmp" not in centerline_data:
         raise ValueError("BranchIdTmp array not found in centerline data")
-    branch_id_tmp = np.asarray(centerline_data['BranchIdTmp']).astype(int)
+    branch_id_tmp = np.asarray(centerline_data["BranchIdTmp"]).astype(int)
 
-    mir = centerline_data.get('MaximumInscribedSphereRadius')
+    mir = centerline_data.get("MaximumInscribedSphereRadius")
     if mir is not None:
         mir = np.asarray(mir)
 
-    vessels   = geometric_input.get('vessels', [])
-    junctions = geometric_input.get('junctions', [])
+    vessels = geometric_input.get("vessels", [])
+    junctions = geometric_input.get("junctions", [])
 
-    n_pts = len(gid)
+    len(gid)
 
     # Pre-compute: for each BranchId, the inlet/outlet point indices (by Path)
-    branch_inlet_idx  = {}
+    branch_inlet_idx = {}
     branch_outlet_idx = {}
     for b in np.unique(branch_id):
         if b < 0:
             continue
         mask = branch_id == b
-        idx  = np.where(mask)[0]
-        bp   = path_arr[idx]
-        branch_inlet_idx[int(b)]  = int(idx[np.argmin(bp)])
+        idx = np.where(mask)[0]
+        bp = path_arr[idx]
+        branch_inlet_idx[int(b)] = int(idx[np.argmin(bp)])
         branch_outlet_idx[int(b)] = int(idx[np.argmax(bp)])
 
     def find_point_from_gid(gid_value):
@@ -135,28 +136,28 @@ def extract_junction_centerline_paths(centerline_data, geometric_input):
     result = {}
 
     for junc in junctions:
-        junc_name = junc.get('junction_name', '')
+        junc_name = junc.get("junction_name", "")
 
         # Derive BifurcationId for this junction
         jid_part = junc_name[1:]  # strip leading 'J'
-        if '_bif' in jid_part:
-            jid_part = jid_part.split('_bif')[0]
+        if "_bif" in jid_part:
+            jid_part = jid_part.split("_bif")[0]
         junction_bif_id = int(jid_part)
 
-        inlet_vessel_ids  = junc.get('inlet_vessels', [])
-        outlet_vessel_ids = junc.get('outlet_vessels', [])
+        inlet_vessel_ids = junc.get("inlet_vessels", [])
+        outlet_vessel_ids = junc.get("outlet_vessels", [])
         if not inlet_vessel_ids or not outlet_vessel_ids:
             continue
 
         # Inlet vessel info
-        inlet_id     = inlet_vessel_ids[0]
+        inlet_id = inlet_vessel_ids[0]
         inlet_vessel = vessels[inlet_id]
-        inlet_name   = inlet_vessel.get('vessel_name', '')
+        inlet_name = inlet_vessel.get("vessel_name", "")
         inlet_branch = _get_branch_id_from_name(inlet_name)
 
         # Junction inlet GID (from centerline_node_ids or branch outlet)
-        junc_node_ids = junc.get('centerline_node_ids', {})
-        inlet_gid_val = junc_node_ids.get('inlet')
+        junc_node_ids = junc.get("centerline_node_ids", {})
+        inlet_gid_val = junc_node_ids.get("inlet")
         if inlet_gid_val is not None:
             inlet_pt = find_point_from_gid(inlet_gid_val)
         else:
@@ -171,17 +172,17 @@ def extract_junction_centerline_paths(centerline_data, geometric_input):
         inlet_bit = int(branch_id_tmp[inlet_pt])
 
         # Mask for junction region
-        junc_mask = (bif_id == junction_bif_id)
+        junc_mask = bif_id == junction_bif_id
 
         junc_result = {}
 
         for vessel_id in outlet_vessel_ids:
-            vessel      = vessels[vessel_id]
-            vessel_name = vessel.get('vessel_name', '')
-            b_id        = _get_branch_id_from_name(vessel_name)
+            vessel = vessels[vessel_id]
+            vessel_name = vessel.get("vessel_name", "")
+            b_id = _get_branch_id_from_name(vessel_name)
 
             # Outlet GID
-            outlet_gids_dict = junc_node_ids.get('outlets', {})
+            outlet_gids_dict = junc_node_ids.get("outlets", {})
             outlet_gid_val = outlet_gids_dict.get(vessel_name) if isinstance(outlet_gids_dict, dict) else None
             if outlet_gid_val is not None:
                 outlet_pt = find_point_from_gid(outlet_gid_val)
@@ -191,9 +192,9 @@ def extract_junction_centerline_paths(centerline_data, geometric_input):
             else:
                 print(f"    Warning: could not locate outlet point for {vessel_name}, skipping")
                 junc_result[vessel_name] = {
-                    'outlet_branch_id_tmp': None,
-                    'connector_branch_id_tmps': [],
-                    'path_gids': [],
+                    "outlet_branch_id_tmp": None,
+                    "connector_branch_id_tmps": [],
+                    "path_gids": [],
                 }
                 continue
 
@@ -253,7 +254,7 @@ def extract_junction_centerline_paths(centerline_data, geometric_input):
                 # start.  A connector's highest-Path point in the junction
                 # should be close to start_pt.
                 best_connector = None
-                best_dist = float('inf')
+                best_dist = float("inf")
                 for cand_bit, cand_pts in bits_in_junction.items():
                     if cand_bit in visited_bits:
                         continue
@@ -331,17 +332,17 @@ def extract_junction_centerline_paths(centerline_data, geometric_input):
             #         next_coord = points[next_coord]
             #         dist_prev = float(np.linalg.norm(curr_coord - prev_coord))
             #         dist_next = float(np.linalg.norm(curr_coord - next_coord))
-                    # if dist > 1e-6:
-                    #     print(f"    Warning: Points {prev_gid} and {curr_gid} are not physically close, distance={dist}")
-                    #     import pdb; pdb.set_trace()
+            # if dist > 1e-6:
+            #     print(f"    Warning: Points {prev_gid} and {curr_gid} are not physically close, distance={dist}")
+            #     import pdb; pdb.set_trace()
 
             # Remove the inlet_bit from connector list if it ended up there
             connector_bits_clean = [b for b in connector_bits if b != inlet_bit]
 
             junc_result[vessel_name] = {
-                'outlet_branch_id_tmp': outlet_bit,
-                'connector_branch_id_tmps': connector_bits_clean,
-                'path_gids': ordered_gids,
+                "outlet_branch_id_tmp": outlet_bit,
+                "connector_branch_id_tmps": connector_bits_clean,
+                "path_gids": ordered_gids,
             }
 
         result[junc_name] = junc_result
@@ -354,13 +355,13 @@ def add_centerline_paths_to_config(geometric_input, junction_paths):
     Add 'geometric_params' -> 'centerline_path' info to each junction
     in the config dict (in-place).
     """
-    for junc in geometric_input.get('junctions', []):
-        junc_name = junc.get('junction_name', '')
+    for junc in geometric_input.get("junctions", []):
+        junc_name = junc.get("junction_name", "")
         if junc_name not in junction_paths:
             continue
-        if 'geometric_params' not in junc:
-            junc['geometric_params'] = {}
-        junc['geometric_params']['outlet_centerline_paths'] = junction_paths[junc_name]
+        if "geometric_params" not in junc:
+            junc["geometric_params"] = {}
+        junc["geometric_params"]["outlet_centerline_paths"] = junction_paths[junc_name]
     return geometric_input
 
 
@@ -384,7 +385,7 @@ def process_geometric_input(centerline_path, geometric_input_path, output_path=N
     centerline_data, _ = read_centerline_vtp(centerline_path)
 
     print(f"Reading geometric input from: {geometric_input_path}")
-    with open(geometric_input_path, 'r') as f:
+    with open(geometric_input_path, "r") as f:
         geometric_input = json.load(f)
 
     print("Extracting junction centerline paths using BranchIdTmp ...")
@@ -392,18 +393,17 @@ def process_geometric_input(centerline_path, geometric_input_path, output_path=N
 
     for jname, outlets in junction_paths.items():
         for vname, info in outlets.items():
-            n_gids = len(info['path_gids'])
-            conn = info['connector_branch_id_tmps']
-            print(f"  {jname} -> {vname}: BranchIdTmp={info['outlet_branch_id_tmp']}, "
-                  f"connectors={conn}, {n_gids} GIDs")
+            n_gids = len(info["path_gids"])
+            conn = info["connector_branch_id_tmps"]
+            print(f"  {jname} -> {vname}: BranchIdTmp={info['outlet_branch_id_tmp']}, connectors={conn}, {n_gids} GIDs")
 
     add_centerline_paths_to_config(geometric_input, junction_paths)
 
     if output_path is None:
         base, ext = os.path.splitext(geometric_input_path)
-        output_path = base.replace('geometric_input', 'geometric_centerline_input') + ext
+        output_path = base.replace("geometric_input", "geometric_centerline_input") + ext
 
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         json.dump(geometric_input, f, indent=4)
     print(f"Saved augmented config to: {output_path}")
 
@@ -411,14 +411,18 @@ def process_geometric_input(centerline_path, geometric_input_path, output_path=N
 
 
 # ---- CLI entry point ----
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(
-        description="Extract in-junction centerline paths using BranchIdTmp")
-    parser.add_argument('centerline_path', help='Path to centerline VTP file')
-    parser.add_argument('geometric_input_path', help='Path to geometric_input.json')
-    parser.add_argument('--output', '-o', default=None,
-                        help='Output path (default: geometric_centerline_input.json)')
+
+    parser = argparse.ArgumentParser(description="Extract in-junction centerline paths using BranchIdTmp")
+    parser.add_argument("centerline_path", help="Path to centerline VTP file")
+    parser.add_argument("geometric_input_path", help="Path to geometric_input.json")
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Output path (default: geometric_centerline_input.json)",
+    )
     args = parser.parse_args()
 
     process_geometric_input(args.centerline_path, args.geometric_input_path, args.output)

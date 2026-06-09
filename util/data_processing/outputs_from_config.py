@@ -87,13 +87,21 @@ def load_junction_lumped_parameters(
             other_i = abs(i - 1)
             if verbose:
                 print(f"Processing outlet {i} of junction {j_name}: {vessel_name} (vessel_id={outlet_vessel_ids[i]})")
-            if 'connector' in vessel_name and 'connectorEL' not in vessel_name:
+            if "connector" in vessel_name and "connectorEL" not in vessel_name:
                 if verbose:
-                    print(f"Skipping outlet {i} of junction {j_name}: {vessel_name} is a connector vessel (not EL-adjusted)")
+                    print(
+                        f"Skipping outlet {i} of junction {j_name}: {vessel_name} "
+                        f"is a connector vessel (not EL-adjusted)"
+                    )
                 continue
             if verbose:
-                print(f"Adding outlet {i} of junction {j_name}: {vessel_name} with outlet vessel id: {outlet_vessel_ids[i]}")
-            row = [outlet_vessel_ids[i],]
+                print(
+                    f"Adding outlet {i} of junction {j_name}: {vessel_name} "
+                    f"with outlet vessel id: {outlet_vessel_ids[i]}"
+                )
+            row = [
+                outlet_vessel_ids[i],
+            ]
             for param_name in sorted(jv.keys()):
                 val = jv[param_name]
                 if isinstance(val, list):
@@ -104,7 +112,9 @@ def load_junction_lumped_parameters(
             out_junction_names.append(j_name)
             out_primary_outlet_names.append(vessel_name)
 
-        target_names = ["outlet_vessel_id"] + [f"{param_name}_outlet{i}" for param_name in sorted(jv.keys()) for i in range(len(outlet_vessel_ids))]
+        target_names = ["outlet_vessel_id"] + [
+            f"{param_name}_outlet{i}" for param_name in sorted(jv.keys()) for i in range(len(outlet_vessel_ids))
+        ]
     if not rows:
         raise ValueError("No junctions with usable junction_values were found in calibration output.")
     if target_names is None:
@@ -118,5 +128,3 @@ def load_junction_lumped_parameters(
 __all__ = [
     "load_junction_lumped_parameters",
 ]
-
-

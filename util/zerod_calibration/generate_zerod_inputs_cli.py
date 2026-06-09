@@ -14,15 +14,17 @@ from util.zerod_calibration.run_config_canonical import (
     run_config_suffix_to_flags,
 )
 
-SKIP_STEP_TOKENS = frozenset({
-    "base_generation",
-    "observation",
-    "calibration",
-    "forward",
-    "nn_inference",
-    "mse",
-    "plots",
-})
+SKIP_STEP_TOKENS = frozenset(
+    {
+        "base_generation",
+        "observation",
+        "calibration",
+        "forward",
+        "nn_inference",
+        "mse",
+        "plots",
+    }
+)
 
 _SKIP_STEP_TO_ATTR = {
     "base_generation": "skip_base_generation",
@@ -235,9 +237,7 @@ def namespace_to_generate_zerod_argv(
     geo_name: str,
 ) -> List[str]:
     """Build argv tail for generate_zerod_inputs.py from a prepared namespace."""
-    script_path = os.path.join(
-        os.path.dirname(__file__), "generate_zerod_inputs.py"
-    )
+    script_path = os.path.join(os.path.dirname(__file__), "generate_zerod_inputs.py")
     cmd: List[str] = [
         sys.executable,
         script_path,

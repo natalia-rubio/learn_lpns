@@ -69,9 +69,7 @@ def get_geometry_row_ranges(
     ml_inputs_dir = _ml_inputs_dir(ml_inputs_root, set_name, geometry_variant, run_config_suffix)
     geom_csv_template = os.path.join(ml_inputs_dir, "%s", "geometric_features.csv")
     if geometries is None:
-        geometries = list_ml_input_geometries(
-            ml_inputs_root, set_name, geometry_variant, run_config_suffix
-        )
+        geometries = list_ml_input_geometries(ml_inputs_root, set_name, geometry_variant, run_config_suffix)
 
     row_ranges = []
     start = 0
@@ -105,15 +103,9 @@ def resolve_geometry_row_ranges_from_jax_dict(
     stored_ranges = data_dict.get("geometry_row_ranges")
     stored_geoms = data_dict.get("geometry_names_order")
     if not isinstance(stored_ranges, list) or not stored_ranges:
-        raise ValueError(
-            "Jax pickle missing geometry_row_ranges. "
-            "Re-run data processing to rebuild the pickle."
-        )
+        raise ValueError("Jax pickle missing geometry_row_ranges. Re-run data processing to rebuild the pickle.")
     if not isinstance(stored_geoms, list) or not stored_geoms:
-        raise ValueError(
-            "Jax pickle missing geometry_names_order. "
-            "Re-run data processing to rebuild the pickle."
-        )
+        raise ValueError("Jax pickle missing geometry_names_order. Re-run data processing to rebuild the pickle.")
     if len(stored_ranges) != len(stored_geoms):
         raise ValueError(
             f"Jax pickle geometry_row_ranges length ({len(stored_ranges)}) "
@@ -145,9 +137,7 @@ def generate_split_indices(
     if geometry_row_ranges is not None:
         total_from_ranges = sum(end - start for start, end in geometry_row_ranges)
         if total_from_ranges != num_pts:
-            raise ValueError(
-                f"Geometry row ranges sum to {total_from_ranges} but num_pts={num_pts}"
-            )
+            raise ValueError(f"Geometry row ranges sum to {total_from_ranges} but num_pts={num_pts}")
         num_geos = len(geometry_row_ranges)
         rng = np.random.default_rng(seed)
         geo_order = rng.permutation(num_geos)
@@ -238,18 +228,13 @@ def build_split_dict(
     """Assemble the split pickle dict; validates geometry names exist in geometry_indices."""
     for geo in train_geometries + val_geometries:
         if geo not in geometry_indices:
-            raise KeyError(
-                f"Geometry {geo!r} not in geometry_indices (available: {sorted(geometry_indices)})"
-            )
+            raise KeyError(f"Geometry {geo!r} not in geometry_indices (available: {sorted(geometry_indices)})")
     return {
         "split_by_geometry": True,
         "num_offsets": int(num_offsets),
         "train_geometries": list(train_geometries),
         "val_geometries": list(val_geometries),
-        "geometry_indices": {
-            geo: {k: tuple(v) for k, v in ranges.items()}
-            for geo, ranges in geometry_indices.items()
-        },
+        "geometry_indices": {geo: {k: tuple(v) for k, v in ranges.items()} for geo, ranges in geometry_indices.items()},
         **meta,
     }
 
@@ -310,12 +295,29 @@ def write_geometries_txt(
 def main():
     parser = argparse.ArgumentParser(description="Generate train/val split indices for NN training.")
     parser.add_argument("--set_name", required=True, help="e.g. VMR")
-    parser.add_argument("--geometry_variant", default="bifurcations", 
-                       choices=["bifurcations", "bifurcations_EL"],
-                       help="Geometry variant (default: bifurcations)")
-    parser.add_argument("--set_type", default="all", help="Cohort folder tier under jax_arrays/split_indices (default: all)")
-    parser.add_argument("--num_geos", type=int, required=True, help="Number of geometries used to build the jax arrays")
-    parser.add_argument("--percent_train", type=float, required=True, help="Fraction of points to use for training (0,1)")
+    parser.add_argument(
+        "--geometry_variant",
+        default="bifurcations",
+        choices=["bifurcations", "bifurcations_EL"],
+        help="Geometry variant (default: bifurcations)",
+    )
+    parser.add_argument(
+        "--set_type",
+        default="all",
+        help="Cohort folder tier under jax_arrays/split_indices (default: all)",
+    )
+    parser.add_argument(
+        "--num_geos",
+        type=int,
+        required=True,
+        help="Number of geometries used to build the jax arrays",
+    )
+    parser.add_argument(
+        "--percent_train",
+        type=float,
+        required=True,
+        help="Fraction of points to use for training (0,1)",
+    )
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for reproducible split")
     parser.add_argument("--data_root", default="data", help="Repo data root (default: data)")
     args = parser.parse_args()
@@ -341,9 +343,7 @@ def main():
             f"but jax arrays were built with num_geos={args.num_geos}"
         )
 
-    train_geometries, val_geometries = generate_geometry_split(
-        args.percent_train, args.seed, geometries
-    )
+    train_geometries, val_geometries = generate_geometry_split(args.percent_train, args.seed, geometries)
 
     vessel_jax_path = os.path.join(
         os.path.dirname(jax_arrays_path),
@@ -373,7 +373,10 @@ def main():
     write_geometries_txt(geometries_txt_path, train_geometries, val_geometries)
 
     print(f"Wrote split indices to {out_path}")
-    print(f"  num_pts={num_pts}  n_train={len(train_ind)}  n_val={len(val_ind)}  split_by_geometry=True  num_offsets={split_dict['num_offsets']}")
+    print(
+        f"  num_pts={num_pts}  n_train={len(train_ind)}  n_val={len(val_ind)}  "
+        f"split_by_geometry=True  num_offsets={split_dict['num_offsets']}"
+    )
     print(f"Wrote geometry set assignment to {geometries_txt_path}")
     print("Train geometries:")
     for g in train_geometries:
@@ -385,5 +388,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

@@ -30,9 +30,7 @@ from util.data_processing.run_data_processing import discover_geometries_with_cs
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Regenerate feature histogram figures from ML input CSVs."
-    )
+    parser = argparse.ArgumentParser(description="Regenerate feature histogram figures from ML input CSVs.")
     parser.add_argument(
         "set_name",
         help="Set name; must match directory under data/ml_inputs/ (e.g., VMR_rigid_aorta_adults)",
@@ -60,10 +58,10 @@ def main():
         help="Repo data root (default: data)",
     )
     parser.add_argument(
-        "-o", "--output_dir",
+        "-o",
+        "--output_dir",
         default=None,
-        help="Override histogram output directory (default: data/feature_histograms/... "
-        "mirroring jax_arrays path)",
+        help="Override histogram output directory (default: data/feature_histograms/... mirroring jax_arrays path)",
     )
     args = parser.parse_args()
 

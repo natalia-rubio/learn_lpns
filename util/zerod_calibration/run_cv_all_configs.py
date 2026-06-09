@@ -27,7 +27,10 @@ DEFAULT_CONFIGS = [
     ("gen_loss", ["--run_config", "gen_loss"]),
     ("base", ["--run_config", "base"]),
     ("quadratic_resistor_gen_loss", ["--run_config", "quadratic_resistor_gen_loss"]),
-    ("quadratic_resistor_penalty_on_gen_loss", ["--run_config", "quadratic_resistor_penalty_on_gen_loss"]),
+    (
+        "quadratic_resistor_penalty_on_gen_loss",
+        ["--run_config", "quadratic_resistor_penalty_on_gen_loss"],
+    ),
     ("gen_loss:bifurcations", ["--run_config", "gen_loss"]),
 ]
 
@@ -59,17 +62,13 @@ def _parse_config_entry(entry: str, default_geometry_variant: str):
         run_cfg = run_cfg.strip()
         geom_var = geom_var.strip()
         if not run_cfg or not geom_var:
-            raise ValueError(
-                f"Invalid config entry {entry!r}. Use 'config' or 'config:geometry_variant'."
-            )
+            raise ValueError(f"Invalid config entry {entry!r}. Use 'config' or 'config:geometry_variant'.")
         return raw, run_cfg, geom_var
     return raw, raw, default_geometry_variant
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Run CV for several configs, then per-config and by-config barcharts."
-    )
+    parser = argparse.ArgumentParser(description="Run CV for several configs, then per-config and by-config barcharts.")
     parser.add_argument(
         "set_name",
         nargs="?",
@@ -122,9 +121,7 @@ def main():
     configs_with_flags = []
     for c in config_list:
         try:
-            entry_key, run_config_suffix, cfg_geometry_variant = _parse_config_entry(
-                c, geometry_variant
-            )
+            entry_key, run_config_suffix, cfg_geometry_variant = _parse_config_entry(c, geometry_variant)
         except ValueError as e:
             print(str(e), file=sys.stderr)
             sys.exit(1)
@@ -134,28 +131,32 @@ def main():
                 file=sys.stderr,
             )
             sys.exit(1)
-        configs_with_flags.append(
-            (entry_key, run_config_suffix, cfg_geometry_variant, config_map[run_config_suffix])
-        )
+        configs_with_flags.append((entry_key, run_config_suffix, cfg_geometry_variant, config_map[run_config_suffix]))
 
-    cv_script = os.path.join(REPO_ROOT, "util", "zerod_calibration", "run_cross_validation.py")
-    barchart_per_config = os.path.join(REPO_ROOT, "util", "visualizations", "cv_pressure_max_pct_error_barchart.py")
-    barchart_by_config = os.path.join(REPO_ROOT, "util", "visualizations", "cv_max_pct_error_by_config_barchart.py")
+    os.path.join(REPO_ROOT, "util", "zerod_calibration", "run_cross_validation.py")
+    os.path.join(REPO_ROOT, "util", "visualizations", "cv_pressure_max_pct_error_barchart.py")
+    os.path.join(REPO_ROOT, "util", "visualizations", "cv_max_pct_error_by_config_barchart.py")
 
     if not args.only_barcharts:
         for entry_key, run_config_suffix, cfg_geometry_variant, cv_flags in configs_with_flags:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(
                 f"Running cross-validation: config = {entry_key} "
                 f"(run-config={run_config_suffix}, geometry={cfg_geometry_variant})"
             )
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             cmd = [
-                sys.executable, "-m", "util.zerod_calibration.run_cross_validation",
-                "--set_name", set_name,
-                "--geometry_variant", cfg_geometry_variant,
-                "--num_trials", str(num_trials),
-                "--data_root", args.data_root,
+                sys.executable,
+                "-m",
+                "util.zerod_calibration.run_cross_validation",
+                "--set_name",
+                set_name,
+                "--geometry_variant",
+                cfg_geometry_variant,
+                "--num_trials",
+                str(num_trials),
+                "--data_root",
+                args.data_root,
                 *cv_flags,
             ]
             if args.skip_per_config_barchart:
@@ -163,8 +164,7 @@ def main():
             ret = subprocess.run(cmd, cwd=REPO_ROOT)
             if ret.returncode != 0:
                 print(
-                    f"Cross-validation failed for config {entry_key} "
-                    f"(exit {ret.returncode}). Stopping.",
+                    f"Cross-validation failed for config {entry_key} (exit {ret.returncode}). Stopping.",
                     file=sys.stderr,
                 )
                 sys.exit(ret.returncode)
@@ -174,27 +174,38 @@ def main():
             for entry_key, run_config_suffix, cfg_geometry_variant, _ in configs_with_flags:
                 print(f"\nRunning per-config barchart for {entry_key}...")
                 cmd_barchart = [
-                    sys.executable, "-m", "util.visualizations.cv_pressure_max_pct_error_barchart",
-                    set_name, cfg_geometry_variant,
-                    "--run_config", run_config_suffix,
-                    "--data_root", "results",
+                    sys.executable,
+                    "-m",
+                    "util.visualizations.cv_pressure_max_pct_error_barchart",
+                    set_name,
+                    cfg_geometry_variant,
+                    "--run_config",
+                    run_config_suffix,
+                    "--data_root",
+                    "results",
                 ]
                 subprocess.run(cmd_barchart, cwd=REPO_ROOT)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Running by-config comparison barchart...")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     by_config_list = [c[0] for c in configs_with_flags]
     # Extra bar: gen_loss config but using bifurcations (not bifurcations_EL) error CSV
     if "gen_loss" in by_config_list:
         by_config_list.append("gen_loss:bifurcations")
     cmd_by = [
-        sys.executable, "-m", "util.visualizations.cv_max_pct_error_by_config_barchart",
+        sys.executable,
+        "-m",
+        "util.visualizations.cv_max_pct_error_by_config_barchart",
         set_name,
-        "--geometry", geometry_variant,
-        "--configs", *by_config_list,
-        "--data_root", "results",
-        "--xmax", "40",
+        "--geometry",
+        geometry_variant,
+        "--configs",
+        *by_config_list,
+        "--data_root",
+        "results",
+        "--xmax",
+        "40",
     ]
     ret_by = subprocess.run(cmd_by, cwd=REPO_ROOT)
     if ret_by.returncode != 0:

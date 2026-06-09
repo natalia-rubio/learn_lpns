@@ -16,7 +16,8 @@ output are included. Elements whose calibrated parameter is exactly 0 are exclud
 Test geometry list from CV summary.
 
 Usage:
-  python -m util.visualizations.cv_geometric_vs_calibrated_histograms VMR_rigid_aorta_adults --run_config gen_loss -o histograms.pdf
+  python -m util.visualizations.cv_geometric_vs_calibrated_histograms \\
+    VMR_rigid_aorta_adults --run_config gen_loss -o histograms.pdf
 
   Multiple sets (same --run_config and --geometry_variant; pooled histograms and stats):
   python -m util.visualizations.cv_geometric_vs_calibrated_histograms \\
@@ -34,8 +35,10 @@ import numpy as np
 # Matplotlib
 try:
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
     HAS_MPL = True
 except ImportError:
     HAS_MPL = False
@@ -118,9 +121,7 @@ def _get_validation_geometries(set_name, run_config, geometry_variant, results_r
     out_dir = os.path.abspath(out_dir)
     summary_path = os.path.join(out_dir, f"{geometry_variant}_cv_summary.csv")
     if not os.path.exists(summary_path):
-        raise FileNotFoundError(
-            f"CV summary not found: {summary_path}. Run cross-validation first."
-        )
+        raise FileNotFoundError(f"CV summary not found: {summary_path}. Run cross-validation first.")
     val_geos = []
     with open(summary_path, "r", newline="") as f:
         reader = csv.DictReader(f)
@@ -158,9 +159,7 @@ def _collect_differences(set_name, run_config, geometry_variant, data_root, resu
     else:
         zero_d_base = os.path.join(data_root, "zeroD", set_name)
 
-    val_geos = _get_validation_geometries(
-        set_name, run_config, geometry_variant, results_root
-    )
+    val_geos = _get_validation_geometries(set_name, run_config, geometry_variant, results_root)
     out = {
         k: {
             "geo_minus_cal": [],
@@ -230,9 +229,16 @@ def _report_average_pct_error(diffs, file=None, min_abs_cal=5.0):
     Excludes elements where |calibrated| < min_abs_cal.
     """
     file = file or sys.stdout
-    param_names = {"junction_R": "Junction R_poiseuille", "junction_L": "Junction L",
-                   "vessel_R": "Vessel R_poiseuille", "vessel_L": "Vessel L"}
-    print("Average percent error (value − calibrated) / |calibrated| × 100 (excluding |calibrated| < 5):", file=file)
+    param_names = {
+        "junction_R": "Junction R_poiseuille",
+        "junction_L": "Junction L",
+        "vessel_R": "Vessel R_poiseuille",
+        "vessel_L": "Vessel L",
+    }
+    print(
+        "Average percent error (value − calibrated) / |calibrated| × 100 (excluding |calibrated| < 5):",
+        file=file,
+    )
     print(file=file)
     for key in ("junction_R", "junction_L", "vessel_R", "vessel_L"):
         geo_pct = np.array(diffs[key].get("geo_pct_err", []), dtype=float)
@@ -247,7 +253,10 @@ def _report_average_pct_error(diffs, file=None, min_abs_cal=5.0):
         mean_nn = np.mean(nn_pct) * 100 if nn_pct.size else float("nan")
         n_geo = len(geo_pct)
         n_nn = len(nn_pct)
-        print(f"  {param_names[key]:25s}  geometric: {mean_geo:8.2f}% (n={n_geo})   NN: {mean_nn:8.2f}% (n={n_nn})", file=file)
+        print(
+            f"  {param_names[key]:25s}  geometric: {mean_geo:8.2f}% (n={n_geo})   NN: {mean_nn:8.2f}% (n={n_nn})",
+            file=file,
+        )
     print(file=file)
 
 
@@ -257,8 +266,12 @@ def _report_average_error(diffs, file=None):
     per parameter (R_poiseuille, L), element type (junction, vessel), and source (geometric, NN).
     """
     file = file or sys.stdout
-    param_names = {"junction_R": "Junction R_poiseuille", "junction_L": "Junction L",
-                   "vessel_R": "Vessel R_poiseuille", "vessel_L": "Vessel L"}
+    param_names = {
+        "junction_R": "Junction R_poiseuille",
+        "junction_L": "Junction L",
+        "vessel_R": "Vessel R_poiseuille",
+        "vessel_L": "Vessel L",
+    }
     print("Average error (value − calibrated), no scaling:", file=file)
     print(file=file)
     for key in ("junction_R", "junction_L", "vessel_R", "vessel_L"):
@@ -270,7 +283,10 @@ def _report_average_error(diffs, file=None):
         mean_nn = np.mean(nn_err) if nn_err.size else float("nan")
         n_geo = len(geo_err)
         n_nn = len(nn_err)
-        print(f"  {param_names[key]:25s}  geometric: {mean_geo:12.4e} (n={n_geo})   NN: {mean_nn:12.4e} (n={n_nn})", file=file)
+        print(
+            f"  {param_names[key]:25s}  geometric: {mean_geo:12.4e} (n={n_geo})   NN: {mean_nn:12.4e} (n={n_nn})",
+            file=file,
+        )
     print(file=file)
 
 
@@ -289,8 +305,7 @@ def _report_extreme_errors(diffs, file=None, min_abs_cal=5.0):
         "vessel_L": "Vessel L",
     }
     print(
-        "Extreme errors (value − calibrated), with validation geometry "
-        f"(excluding |calibrated| < {min_abs_cal}):",
+        f"Extreme errors (value − calibrated), with validation geometry (excluding |calibrated| < {min_abs_cal}):",
         file=file,
     )
     print(file=file)
@@ -387,7 +402,7 @@ def _format_latex_num(x, is_pct=False):
     if x == 0:
         return "0"
     exp = int(np.floor(np.log10(np.abs(x))))
-    mant = x / (10 ** exp)
+    mant = x / (10**exp)
     return f"{mant:.2f} \\times 10^{{{exp}}}"
 
 
@@ -426,14 +441,24 @@ def _print_latex_tables(diffs, file=None, min_abs_cal=5.0):
         err_nn.append(np.mean(nn_err) if nn_err.size else float("nan"))
         n_vals.append(len(geo_pct))
     # Print single LaTeX table
-    print("% LaTeX table: average percent error and average error (geometric vs NN vs calibrated)", file=file)
+    print(
+        "% LaTeX table: average percent error and average error (geometric vs NN vs calibrated)",
+        file=file,
+    )
     print(file=file)
     print("\\begin{table}[htbp]", file=file)
     print("\\centering", file=file)
     print("\\begin{tabular}{l r r r r}", file=file)
     print("\\toprule", file=file)
-    print("Parameter & \\multicolumn{2}{c}{Relative Error (\\%)} & \\multicolumn{2}{c}{Absolute Error} \\\\", file=file)
-    print(" & \\underline{Baseline} & \\underline{Neural Network} & \\underline{Baseline} & \\underline{Neural Network} \\\\", file=file)
+    print(
+        "Parameter & \\multicolumn{2}{c}{Relative Error (\\%)} & \\multicolumn{2}{c}{Absolute Error} \\\\",
+        file=file,
+    )
+    print(
+        " & \\underline{Baseline} & \\underline{Neural Network} "
+        "& \\underline{Baseline} & \\underline{Neural Network} \\\\",
+        file=file,
+    )
     print("\\midrule", file=file)
     for i, label in enumerate(row_labels):
         pg = _format_latex_num(pct_geo[i], is_pct=True)
@@ -487,26 +512,44 @@ def _plot_histograms(diffs, output_path, nbins=25, dpi=150):
                 ax.set_title(title)
                 ax.set_xlabel("Error (geometric − cal, NN − cal)")
                 continue
-            all_vals = np.concatenate([geo_data, nn_data]) if geo_data.size and nn_data.size else (geo_data if geo_data.size else nn_data)
+            all_vals = (
+                np.concatenate([geo_data, nn_data])
+                if geo_data.size and nn_data.size
+                else (geo_data if geo_data.size else nn_data)
+            )
             x_min, x_max = np.nanmin(all_vals), np.nanmax(all_vals)
             if x_max <= x_min:
                 x_max = x_min + 1.0
             bins = np.linspace(x_min, x_max, nbins + 1)
             if geo_data.size > 0:
-                ax.hist(geo_data, bins=bins, color=COLOR_GEO_CAL, alpha=ALPHA, label="Baseline (Poiseuille)", edgecolor="none")
+                ax.hist(
+                    geo_data,
+                    bins=bins,
+                    color=COLOR_GEO_CAL,
+                    alpha=ALPHA,
+                    label="Baseline (Poiseuille)",
+                    edgecolor="none",
+                )
             if nn_data.size > 0:
-                ax.hist(nn_data, bins=bins, color=COLOR_NN_CAL, alpha=ALPHA, label="Neural Network", edgecolor="none")
+                ax.hist(
+                    nn_data,
+                    bins=bins,
+                    color=COLOR_NN_CAL,
+                    alpha=ALPHA,
+                    label="Neural Network",
+                    edgecolor="none",
+                )
             ax.axvline(0, color="gray", linestyle="--", linewidth=1)
             ax.set_yscale("log")
             ax.set_ylim(bottom=0.8)
-            #ax.set_title(title)
-            #ax.set_xlabel("Error (geometric − cal, NN − cal)")
-            #ax.set_ylabel("Count")
-    axes[1,0].legend(loc="upper left", fontsize=8)
+            # ax.set_title(title)
+            # ax.set_xlabel("Error (geometric − cal, NN − cal)")
+            # ax.set_ylabel("Count")
+    axes[1, 0].legend(loc="upper left", fontsize=8)
     axes[0, 0].set_title(r"$R_{\mathrm{lin}}$ Error (dyne s cm$^{-3}$)")
-    axes[0,1].set_title("$L$ Error (dyne s$^2$ cm$^{-3}$)")
-    axes[0,0].set_ylabel("Junctions")
-    axes[1,0].set_ylabel("Vessels")
+    axes[0, 1].set_title("$L$ Error (dyne s$^2$ cm$^{-3}$)")
+    axes[0, 0].set_ylabel("Junctions")
+    axes[1, 0].set_ylabel("Vessels")
 
     # set figure title
     fig.suptitle("Error in 0D Parameters")
@@ -546,7 +589,8 @@ def main():
         help="Root containing cross_validation directory (default: results)",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default=None,
         help="Output figure path (default: under results/cross_validation/; multi-set dir joins names with __)",
     )
@@ -596,17 +640,18 @@ def main():
         n_jL = len(part["junction_L"]["geo_minus_cal"])
         n_vR = len(part["vessel_R"]["geo_minus_cal"])
         n_vL = len(part["vessel_L"]["geo_minus_cal"])
-        print(
-            f"  [{sn}] geo−cal counts: junctions R={n_jR} L={n_jL}, vessels R={n_vR} L={n_vL}"
-        )
+        print(f"  [{sn}] geo−cal counts: junctions R={n_jR} L={n_jL}, vessels R={n_vR} L={n_vL}")
 
     n_jR_geo = len(diffs["junction_R"]["geo_minus_cal"])
     n_jL_geo = len(diffs["junction_L"]["geo_minus_cal"])
     n_vR_geo = len(diffs["vessel_R"]["geo_minus_cal"])
     n_vL_geo = len(diffs["vessel_L"]["geo_minus_cal"])
     print(
-        f"Collected (geo−cal / NN−cal): junctions R={n_jR_geo}/{len(diffs['junction_R']['nn_minus_cal'])} L={n_jL_geo}/{len(diffs['junction_L']['nn_minus_cal'])}, "
-        f"vessels R={n_vR_geo}/{len(diffs['vessel_R']['nn_minus_cal'])} L={n_vL_geo}/{len(diffs['vessel_L']['nn_minus_cal'])}"
+        f"Collected (geo−cal / NN−cal): "
+        f"junctions R={n_jR_geo}/{len(diffs['junction_R']['nn_minus_cal'])} "
+        f"L={n_jL_geo}/{len(diffs['junction_L']['nn_minus_cal'])}, "
+        f"vessels R={n_vR_geo}/{len(diffs['vessel_R']['nn_minus_cal'])} "
+        f"L={n_vL_geo}/{len(diffs['vessel_L']['nn_minus_cal'])}"
     )
     _report_average_pct_error(diffs)
     _report_average_error(diffs)
@@ -616,14 +661,8 @@ def main():
     if args.output:
         output_path = args.output
     else:
-        cross_dir = (
-            set_names[0]
-            if len(set_names) == 1
-            else "__".join(set_names)
-        )
-        out_dir = os.path.join(
-            results_root, "cross_validation", cross_dir, args.run_config
-        )
+        cross_dir = set_names[0] if len(set_names) == 1 else "__".join(set_names)
+        out_dir = os.path.join(results_root, "cross_validation", cross_dir, args.run_config)
         os.makedirs(out_dir, exist_ok=True)
         base_name = "cv_geometric_vs_calibrated_histograms"
         if len(set_names) > 1:

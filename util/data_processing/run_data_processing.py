@@ -46,13 +46,13 @@ from util.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
 def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", data_root="data", run_config_suffix=None):
     """
     Discover all geometries that have both geometric_features.csv and junction_lumped_parameters.csv.
-    
+
     Args:
         set_name: Set name (e.g., VMR)
         geometry_variant: Geometry variant name (e.g., "bifurcations" or "bifurcations_EL")
         data_root: Repo data root (default: data)
         run_config_suffix: If set, ml_inputs path is .../set_name/run_config_suffix/geometry_variant/
-        
+
     Returns:
         List of geometry names sorted alphabetically
     """
@@ -62,35 +62,55 @@ def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", dat
         ml_inputs_dir = os.path.join(data_root, "ml_inputs", set_name, geometry_variant)
     if not os.path.exists(ml_inputs_dir):
         return []
-    
+
     geometries = []
-    
+
     # Iterate through all subdirectories in ml_inputs/<set_name>/<geometry_variant>/
     for geo_dir in glob.glob(os.path.join(ml_inputs_dir, "*")):
         if not os.path.isdir(geo_dir):
             continue
-        
+
         geo_name = os.path.basename(geo_dir)
-        
+
         # Check for both required CSV files
         geometric_features_path = os.path.join(geo_dir, "geometric_features.csv")
         junction_params_path = os.path.join(geo_dir, "junction_lumped_parameters.csv")
-        
+
         if os.path.exists(geometric_features_path) and os.path.exists(junction_params_path):
             geometries.append(geo_name)
-    
+
     return sorted(geometries)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run the full data processing pipeline for NN training")
     parser.add_argument("--set_name", required=True, help="Set name (e.g., VMR)")
-    parser.add_argument("--geometry_variant", default="all", 
-                       choices=["bifurcations", "bifurcations_EL", "all"],
-                       help="Geometry variant (default: all - processes both bifurcations and bifurcations_EL)")
-    parser.add_argument("--set_type", default="all", help="Cohort folder tier for jax_arrays/split_indices (default: all; not the ML train/test split)")
-    parser.add_argument("--geometries", nargs="+", default=None, 
-                       help="List of geometries (e.g., 0063_1001 ...). If not provided, auto-discovers geometries with both CSV files.")
-    parser.add_argument("--percent_train", type=float, default=0.8, help="Fraction of points used for training (default: 0.8)")
+    parser.add_argument(
+        "--geometry_variant",
+        default="all",
+        choices=["bifurcations", "bifurcations_EL", "all"],
+        help="Geometry variant (default: all - processes both bifurcations and bifurcations_EL)",
+    )
+    parser.add_argument(
+        "--set_type",
+        default="all",
+        help="Cohort folder tier for jax_arrays/split_indices (default: all; not the ML train/test split)",
+    )
+    parser.add_argument(
+        "--geometries",
+        nargs="+",
+        default=None,
+        help=(
+            "List of geometries (e.g., 0063_1001 ...). "
+            "If not provided, auto-discovers geometries with both CSV files."
+        ),
+    )
+    parser.add_argument(
+        "--percent_train",
+        type=float,
+        default=0.8,
+        help="Fraction of points used for training (default: 0.8)",
+    )
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for train/val split (default: 0)")
     parser.add_argument("--data_root", default="data", help="Repo data root (default: data)")
     parser.add_argument(
@@ -109,20 +129,22 @@ def main():
         geometry_variants_to_process = ["bifurcations", "bifurcations_EL"]
     else:
         geometry_variants_to_process = [args.geometry_variant]
-    
+
     # Process each geometry variant
     for geometry_variant in geometry_variants_to_process:
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"Processing geometry variant: {geometry_variant}")
-        print(f"{'='*80}")
-        
+        print(f"{'=' * 80}")
+
         # Get list of geometries to process
         if args.geometries:
             geometries = args.geometries
             print(f"Using {len(geometries)} specified geometries: {geometries}")
         else:
             print(f"Auto-discovering geometries with both CSV files for {args.set_name}/{geometry_variant}...")
-            geometries = discover_geometries_with_csvs(args.set_name, geometry_variant, args.data_root, run_config_suffix)
+            geometries = discover_geometries_with_csvs(
+                args.set_name, geometry_variant, args.data_root, run_config_suffix
+            )
             if len(geometries) == 0:
                 _search_parts = [args.data_root, "ml_inputs", args.set_name]
                 if run_config_suffix:
@@ -134,11 +156,13 @@ def main():
                 continue
             print(f"  Found {len(geometries)} geometries: {geometries}")
 
-        print(f"Running data processing pipeline for {args.set_name}/{geometry_variant} with {len(geometries)} geometries")
+        print(
+            f"Running data processing pipeline for {args.set_name}/{geometry_variant} with {len(geometries)} geometries"
+        )
         for geo in geometries:
             print(f"Processing geometry {geo}")
 
-        # Check if both CSV files already exist
+            # Check if both CSV files already exist
             if run_config_suffix:
                 _ml_base = os.path.join(args.data_root, "ml_inputs", args.set_name, run_config_suffix)
                 _zero_d_base = os.path.join(args.data_root, "zeroD", args.set_name, run_config_suffix)
@@ -152,10 +176,8 @@ def main():
                 geometric_input_filename = "bifurcations_EL_geometric_input.json"
             else:
                 geometric_input_filename = "bifurcations_geometric_input.json"
-            
-            geometric_input_path = os.path.join(
-                _zero_d_base, geo, geometric_input_filename
-            )
+
+            geometric_input_path = os.path.join(_zero_d_base, geo, geometric_input_filename)
             X, feature_names, junction_names, outlet_primary_names = load_junction_geometric_features(
                 geometric_input_path, verbose=args.verbose
             )
@@ -219,7 +241,7 @@ def main():
                 calib_output_filename = "bifurcations_EL_calibrated_output_BloodVesselJunction.json"
             else:
                 calib_output_filename = "bifurcations_calibrated_output_BloodVesselJunction.json"
-            
+
             calib_output_path = os.path.join(
                 _zero_d_base,
                 geo,
@@ -232,7 +254,7 @@ def main():
                 verbose=args.verbose,
             )
             print(f"Loaded {len(Y)} junctions with {len(target_names)} target values")
-            
+
             # --- Reorder outputs to match input row ordering, then verify ---
             # Build a lookup from (junction_name, primary_outlet_name) -> output row index
             if y_primary_outlet_names != outlet_primary_names or y_junction_names != junction_names:
@@ -245,8 +267,7 @@ def main():
                     oi = output_key_to_idx.get((jn, pn))
                     if oi is None:
                         raise ValueError(
-                            f"Output row for junction={jn}, outlet={pn} not found in "
-                            f"calibration output for {geo}."
+                            f"Output row for junction={jn}, outlet={pn} not found in calibration output for {geo}."
                         )
                     reorder.append(oi)
 
@@ -257,8 +278,7 @@ def main():
 
             # Verify alignment after reordering
             assert y_junction_names == junction_names, (
-                f"Junction name mismatch after reordering for {geo}: "
-                f"{y_junction_names} != {junction_names}"
+                f"Junction name mismatch after reordering for {geo}: {y_junction_names} != {junction_names}"
             )
             assert y_primary_outlet_names == outlet_primary_names, (
                 f"Primary outlet name mismatch after reordering for {geo}: "
@@ -275,7 +295,10 @@ def main():
                         f"input has vessel_id={input_vid}, output has vessel_id={output_vid}. "
                         f"Junction={junction_names[row_idx]}, primary_outlet={outlet_primary_names[row_idx]}"
                     )
-            print(f"  ✓ Consistency check passed: {len(X)} rows — junction names, primary outlets, and outlet_vessel_ids all match")
+            print(
+                f"  ✓ Consistency check passed: {len(X)} rows — "
+                f"junction names, primary outlets, and outlet_vessel_ids all match"
+            )
 
             os.makedirs(os.path.dirname(targets_csv_path), exist_ok=True)
             with open(targets_csv_path, "w") as f:
@@ -344,7 +367,14 @@ def main():
             )
 
             if run_config_suffix:
-                jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, run_config_suffix, geometry_variant, args.set_type)
+                jax_out_dir = os.path.join(
+                    args.data_root,
+                    "jax_arrays",
+                    args.set_name,
+                    run_config_suffix,
+                    geometry_variant,
+                    args.set_type,
+                )
             else:
                 jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, geometry_variant, args.set_type)
             os.makedirs(jax_out_dir, exist_ok=True)
@@ -388,9 +418,18 @@ def main():
             )
 
             if run_config_suffix:
-                split_out_dir = os.path.join(args.data_root, "split_indices", args.set_name, run_config_suffix, geometry_variant, args.set_type)
+                split_out_dir = os.path.join(
+                    args.data_root,
+                    "split_indices",
+                    args.set_name,
+                    run_config_suffix,
+                    geometry_variant,
+                    args.set_type,
+                )
             else:
-                split_out_dir = os.path.join(args.data_root, "split_indices", args.set_name, geometry_variant, args.set_type)
+                split_out_dir = os.path.join(
+                    args.data_root, "split_indices", args.set_name, geometry_variant, args.set_type
+                )
             os.makedirs(split_out_dir, exist_ok=True)
             split_out_path = os.path.join(split_out_dir, f"train_val_ind_{args.set_name}_num_geos_{num_geos}")
             save_dict(split_dict, split_out_path)
@@ -408,9 +447,10 @@ def main():
             print(f"  Failed to build data_dict / jax_arrays / split for {geometry_variant}: {e}")
             if args.verbose:
                 import traceback
+
                 traceback.print_exc()
             raise
 
+
 if __name__ == "__main__":
     main()
-        

@@ -72,9 +72,7 @@ def _load_legacy_to_name_from_csv(csv_path: str) -> Dict[str, str]:
         reader = csv.DictReader(f)
         fields = reader.fieldnames or []
         if "Legacy Name" not in fields or "Name" not in fields:
-            raise KeyError(
-                f"CSV must have 'Name' and 'Legacy Name'; got fields: {fields!r}"
-            )
+            raise KeyError(f"CSV must have 'Name' and 'Legacy Name'; got fields: {fields!r}")
         out: Dict[str, str] = {}
         for row in reader:
             leg = (row.get("Legacy Name") or "").strip()
@@ -84,10 +82,7 @@ def _load_legacy_to_name_from_csv(csv_path: str) -> Dict[str, str]:
             if not name:
                 raise ValueError(f"CSV row with Legacy Name {leg!r} has empty Name")
             if leg in out and out[leg] != name:
-                raise ValueError(
-                    f"Duplicate Legacy Name {leg!r} with different Name: "
-                    f"{out[leg]!r} vs {name!r}"
-                )
+                raise ValueError(f"Duplicate Legacy Name {leg!r} with different Name: {out[leg]!r} vs {name!r}")
             out[leg] = name
         return out
 
@@ -105,9 +100,7 @@ def discover_geometry_legacy_names(set_name: str, zero_d_root: str) -> List[str]
         if not os.path.isdir(rc_path):
             continue
         names = sorted(
-            x
-            for x in os.listdir(rc_path)
-            if os.path.isdir(os.path.join(rc_path, x)) and not x.startswith(".")
+            x for x in os.listdir(rc_path) if os.path.isdir(os.path.join(rc_path, x)) and not x.startswith(".")
         )
         if names:
             return names
@@ -115,9 +108,7 @@ def discover_geometry_legacy_names(set_name: str, zero_d_root: str) -> List[str]
     std_0d = os.path.join(set_dir, STANDARD_0D_SUBDIR)
     if os.path.isdir(std_0d):
         out = sorted(
-            os.path.splitext(x)[0]
-            for x in os.listdir(std_0d)
-            if x.endswith(".json") and not x.startswith(".")
+            os.path.splitext(x)[0] for x in os.listdir(std_0d) if x.endswith(".json") and not x.startswith(".")
         )
         if out:
             return out
@@ -145,9 +136,7 @@ def build_latex_table(
         geos = discover_geometry_legacy_names(canonical, zero_d_root)
         missing = [g for g in geos if g not in legacy_to_name]
         if missing:
-            raise ValueError(
-                f"Set {canonical}: legacy IDs not in CSV Legacy Name column: {missing}"
-            )
+            raise ValueError(f"Set {canonical}: legacy IDs not in CSV Legacy Name column: {missing}")
         columns.append([legacy_to_name[g] for g in geos])
 
     ncols = len(headers)

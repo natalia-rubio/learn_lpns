@@ -30,8 +30,10 @@ import numpy as np
 # Try to import matplotlib for histogram generation
 try:
     import matplotlib
-    matplotlib.use('Agg')  # Use non-interactive backend
+
+    matplotlib.use("Agg")  # Use non-interactive backend
     import matplotlib.pyplot as plt
+
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
@@ -57,6 +59,7 @@ def _setup_latex_histograms() -> bool:
         plt.rcParams["font.serif"] = ["DejaVu Serif"]
         return False
 
+
 def _feature_name_to_latex(name: str) -> str:
     """Return LaTeX-safe string for a feature name (escape underscores).
 
@@ -64,6 +67,7 @@ def _feature_name_to_latex(name: str) -> str:
     """
     escaped = name.replace("_", r"\_")
     return rf"\texttt{{{escaped}}}"
+
 
 def get_default_include_features() -> List[str]:
     """
@@ -122,17 +126,15 @@ def get_default_include_features() -> List[str]:
     #     "flow_split"
     # ]
 
+
 def get_default_include_outputs() -> List[str]:
     """
     Default junction NN output column names (R, stenosis, L for primary outlet).
 
     Called by: :func:`filter_outputs_from_array`, :func:`build_data_dict_from_csvs`.
     """
-    return [
-        "R_poiseuille_outlet0",
-        "stenosis_coefficient_outlet0",
-        "L_outlet0"
-    ]
+    return ["R_poiseuille_outlet0", "stenosis_coefficient_outlet0", "L_outlet0"]
+
 
 def get_default_include_features_vessel() -> List[str]:
     """
@@ -151,7 +153,7 @@ def get_default_include_features_vessel() -> List[str]:
         "path_length",
         "tortuosity",
         "angle_diff",
-        #"area_ratio",
+        # "area_ratio",
         "inlet_max_inscribed_radius",
         "outlet_max_inscribed_radius",
         "max_inscribed_radius_min",
@@ -170,6 +172,7 @@ def get_default_include_features_vessel() -> List[str]:
         "stenosis_coefficient_geometric",
     ]
 
+
 def get_default_include_outputs_vessel() -> List[str]:
     """
     Default vessel NN output column names (R_poiseuille, stenosis_coefficient, L).
@@ -181,6 +184,7 @@ def get_default_include_outputs_vessel() -> List[str]:
         "stenosis_coefficient",
         "L",
     ]
+
 
 def filter_features_from_array(
     X: np.ndarray,
@@ -199,10 +203,7 @@ def filter_features_from_array(
 
     missing_features = [f for f in include_features if f not in feature_names]
     if missing_features:
-        raise ValueError(
-            f"Missing requested features: {missing_features}. "
-            f"Available features: {feature_names}"
-        )
+        raise ValueError(f"Missing requested features: {missing_features}. Available features: {feature_names}")
 
     col_to_idx = {name: idx for idx, name in enumerate(feature_names)}
     feature_indices = [col_to_idx[f] for f in include_features]
@@ -224,22 +225,19 @@ def filter_outputs_from_array(
     """
     if include_outputs is None:
         include_outputs = get_default_include_outputs()
-    
+
     # Validate that all requested outputs exist
     missing_outputs = [o for o in include_outputs if o not in output_names]
     if missing_outputs:
-        raise ValueError(
-            f"Missing requested outputs: {missing_outputs}. "
-            f"Available outputs: {output_names}"
-        )
-    
+        raise ValueError(f"Missing requested outputs: {missing_outputs}. Available outputs: {output_names}")
+
     # Get column indices for requested outputs in the specified order
     col_to_idx = {name: idx for idx, name in enumerate(output_names)}
     output_indices = [col_to_idx[o] for o in include_outputs]
-    
+
     # Extract only the requested outputs in the specified order
     Y_filtered = Y[:, output_indices]
-    
+
     return Y_filtered, include_outputs
 
 
@@ -316,15 +314,11 @@ def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[L
             row_vals = []
             for col_name, i in zip(column_names, col_indices):
                 if i >= len(r):
-                    raise ValueError(
-                        f"{csv_path} row {row_idx}: missing value for column '{col_name}'"
-                    )
+                    raise ValueError(f"{csv_path} row {row_idx}: missing value for column '{col_name}'")
                 try:
                     row_vals.append(_parse_float_cell(r[i]))
                 except ValueError as exc:
-                    raise ValueError(
-                        f"{csv_path} row {row_idx}, column '{col_name}': {exc}"
-                    ) from exc
+                    raise ValueError(f"{csv_path} row {row_idx}, column '{col_name}': {exc}") from exc
             rows.append(row_vals)
     if not rows:
         raise ValueError(f"No data rows in CSV: {csv_path}")
@@ -351,8 +345,7 @@ def _plot_column_histograms(
     n_cols = len(column_names)
     if data_array.shape[1] != n_cols:
         raise ValueError(
-            f"Column count mismatch: data_array has {data_array.shape[1]} columns, "
-            f"but {n_cols} names provided"
+            f"Column count mismatch: data_array has {data_array.shape[1]} columns, but {n_cols} names provided"
         )
 
     use_latex = _setup_latex_histograms()
@@ -380,18 +373,19 @@ def _plot_column_histograms(
             std_val = np.std(col_data_clean)
             n_val = len(col_data_clean)
             if use_latex:
-                stats_text = (
-                    rf"Mean: ${mean_val:.4f}$" + "\n"
-                    + rf"Std: ${std_val:.4f}$" + "\n"
-                    + rf"$N = {n_val}$"
-                )
+                stats_text = rf"Mean: ${mean_val:.4f}$" + "\n" + rf"Std: ${std_val:.4f}$" + "\n" + rf"$N = {n_val}$"
                 title_str = _feature_name_to_latex(col_name)
             else:
                 stats_text = f"Mean: {mean_val:.4f}\nStd: {std_val:.4f}\nN: {n_val}"
                 title_str = col_name
             ax.text(
-                0.98, 0.98, stats_text, transform=ax.transAxes,
-                fontsize=9, verticalalignment="top", horizontalalignment="right",
+                0.98,
+                0.98,
+                stats_text,
+                transform=ax.transAxes,
+                fontsize=9,
+                verticalalignment="top",
+                horizontalalignment="right",
                 bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
             )
 
@@ -403,12 +397,16 @@ def _plot_column_histograms(
         if set_label:
             fig.suptitle(
                 rf"{set_label} ($n_{{\mathrm{{geos}}}} = {num_geos}$, $n_{{\mathrm{{samples}}}} = {n_samples}$)",
-                fontsize=11, fontweight="bold", y=1.02,
+                fontsize=11,
+                fontweight="bold",
+                y=1.02,
             )
         else:
             fig.suptitle(
                 rf"$n_{{\mathrm{{geos}}}} = {num_geos}$, $n_{{\mathrm{{samples}}}} = {n_samples}$",
-                fontsize=11, fontweight="bold", y=1.02,
+                fontsize=11,
+                fontweight="bold",
+                y=1.02,
             )
         plt.tight_layout()
 
@@ -450,9 +448,7 @@ def plot_feature_histograms(
     if not HAS_MATPLOTLIB:
         print("Warning: matplotlib not available, skipping histogram generation")
         return
-    n = _plot_column_histograms(
-        input_array, feature_names, output_dir, set_name, num_geos
-    )
+    n = _plot_column_histograms(input_array, feature_names, output_dir, set_name, num_geos)
     print(f"Saved {n} feature histograms (PNG + PDF) to: {output_dir}")
 
 
@@ -472,9 +468,7 @@ def plot_lumped_param_histograms(
     if not HAS_MATPLOTLIB:
         return
     lumped_dir = os.path.join(output_dir, "lumped_parameters")
-    n = _plot_column_histograms(
-        output_array, output_names, lumped_dir, set_name, num_geos
-    )
+    n = _plot_column_histograms(output_array, output_names, lumped_dir, set_name, num_geos)
     if n:
         print(f"Saved {n} junction lumped parameter histograms (PNG + PDF) to: {lumped_dir}")
 
@@ -518,9 +512,7 @@ def _require_consistent_column_order(
     if canonical is None:
         return list(selected)
     if selected != canonical:
-        raise ValueError(
-            f"{kind} list mismatch: first geometry had {canonical}, but {geo} has {selected}"
-        )
+        raise ValueError(f"{kind} list mismatch: first geometry had {canonical}, but {geo} has {selected}")
     return canonical
 
 
@@ -573,15 +565,11 @@ def _read_vessel_lumped_parameters_csv(
             row_y: List[float] = []
             for col_name, i in zip(include_outputs, out_indices):
                 if i >= len(r):
-                    raise ValueError(
-                        f"{csv_path} row {row_idx}: missing value for column '{col_name}'"
-                    )
+                    raise ValueError(f"{csv_path} row {row_idx}: missing value for column '{col_name}'")
                 try:
                     row_y.append(_parse_float_cell(r[i]))
                 except ValueError as exc:
-                    raise ValueError(
-                        f"{csv_path} row {row_idx}, column '{col_name}': {exc}"
-                    ) from exc
+                    raise ValueError(f"{csv_path} row {row_idx}, column '{col_name}': {exc}") from exc
             rows_y.append(row_y)
     if not rows_y:
         raise ValueError(f"No data rows in CSV: {csv_path}")
@@ -679,21 +667,38 @@ def _write_data_summary_csv(
     os.makedirs(summary_dir, exist_ok=True)
     with open(summary_path, "w", newline="") as sf:
         writer = csv.writer(sf)
-        writer.writerow([
-            "variable", "type", "mean", "std", "min", "max",
-            "min_geometry", "min_outlet", "max_geometry", "max_outlet",
-        ])
+        writer.writerow(
+            [
+                "variable",
+                "type",
+                "mean",
+                "std",
+                "min",
+                "max",
+                "min_geometry",
+                "min_outlet",
+                "max_geometry",
+                "max_outlet",
+            ]
+        )
 
         def _summary_row_for_col(col: np.ndarray, kind: str, name: str) -> None:
             min_idx = int(np.argmin(col))
             max_idx = int(np.argmax(col))
-            writer.writerow([
-                name, kind,
-                f"{np.mean(col):.6g}", f"{np.std(col):.6g}",
-                f"{np.min(col):.6g}", f"{np.max(col):.6g}",
-                row_geo_names[min_idx], row_instance_names[min_idx],
-                row_geo_names[max_idx], row_instance_names[max_idx],
-            ])
+            writer.writerow(
+                [
+                    name,
+                    kind,
+                    f"{np.mean(col):.6g}",
+                    f"{np.std(col):.6g}",
+                    f"{np.min(col):.6g}",
+                    f"{np.max(col):.6g}",
+                    row_geo_names[min_idx],
+                    row_instance_names[min_idx],
+                    row_geo_names[max_idx],
+                    row_instance_names[max_idx],
+                ]
+            )
 
         for col_idx, fname in enumerate(feature_order):
             _summary_row_for_col(input_array[:, col_idx], "input", fname)
@@ -739,9 +744,7 @@ def _finalize_stacked_ml_data(
     is validated and stored in the returned dict.
     """
     _clamp_tortuosity(input_array, feature_order)
-    _validate_no_nans(
-        input_array, output_array, input_msg=input_nan_msg, output_msg=output_nan_msg
-    )
+    _validate_no_nans(input_array, output_array, input_msg=input_nan_msg, output_msg=output_nan_msg)
 
     label_set_name = cohort_set_name if cohort_set_name is not None else set_name
     summary_dir = histogram_output_dir or feature_histograms_dir(
@@ -786,12 +789,8 @@ def _finalize_stacked_ml_data(
     n_rows = int(input_array.shape[0])
     if row_junction_names is not None:
         if row_primary_outlet_names is None or outlet_vessel_ids is None:
-            raise ValueError(
-                "row_junction_names requires row_primary_outlet_names and outlet_vessel_ids"
-            )
-        if not (
-            len(row_junction_names) == len(row_primary_outlet_names) == len(outlet_vessel_ids) == n_rows
-        ):
+            raise ValueError("row_junction_names requires row_primary_outlet_names and outlet_vessel_ids")
+        if not (len(row_junction_names) == len(row_primary_outlet_names) == len(outlet_vessel_ids) == n_rows):
             raise ValueError(
                 f"Junction row metadata length mismatch: junctions={len(row_junction_names)}, "
                 f"outlets={len(row_primary_outlet_names)}, vessel_ids={len(outlet_vessel_ids)}, "
@@ -864,9 +863,7 @@ def build_data_dict_from_csvs(
     output_order: Optional[List[str]] = None
 
     for geo in geometries:
-        features_csv_path = os.path.join(
-            ml_inputs_root, set_name, geometry_variant, geo, "geometric_features.csv"
-        )
+        features_csv_path = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "geometric_features.csv")
         lumped_parameters_csv_path = os.path.join(
             ml_inputs_root, set_name, geometry_variant, geo, "junction_lumped_parameters.csv"
         )
@@ -891,13 +888,9 @@ def build_data_dict_from_csvs(
                 f"junction_lumped_parameters has {lumped_params_array.shape[0]} rows"
             )
 
-        meta_csv = os.path.join(
-            ml_inputs_root, set_name, geometry_variant, geo, "geometric_features_meta.csv"
-        )
+        meta_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "geometric_features_meta.csv")
         if not os.path.exists(meta_csv):
-            raise FileNotFoundError(
-                f"Missing geometric_features_meta.csv: {meta_csv}. Run data processing first."
-            )
+            raise FileNotFoundError(f"Missing geometric_features_meta.csv: {meta_csv}. Run data processing first.")
         geo_junction_names: List[str] = []
         geo_primary_outlets: List[str] = []
         with open(meta_csv, "r", newline="") as fm:
@@ -921,16 +914,12 @@ def build_data_dict_from_csvs(
         filtered_features_array, selected_features = filter_features_from_array(
             features_array, features_header, include_features=include_features
         )
-        feature_order = _require_consistent_column_order(
-            selected_features, feature_order, kind="Feature", geo=geo
-        )
+        feature_order = _require_consistent_column_order(selected_features, feature_order, kind="Feature", geo=geo)
 
         lumped_params_array, selected_outputs = filter_outputs_from_array(
             lumped_params_array, lumped_params_header, include_outputs=include_outputs
         )
-        output_order = _require_consistent_column_order(
-            selected_outputs, output_order, kind="Output", geo=geo
-        )
+        output_order = _require_consistent_column_order(selected_outputs, output_order, kind="Output", geo=geo)
 
         n_stack = int(filtered_features_array.shape[0])
         geometry_row_ranges.append((row_offset, row_offset + n_stack))
@@ -943,13 +932,9 @@ def build_data_dict_from_csvs(
     output_array = np.vstack(all_outputs)
     generation_array = np.concatenate(all_generation, axis=0)
     if row_offset != input_array.shape[0]:
-        raise ValueError(
-            f"internal row offset {row_offset} != stacked input rows {input_array.shape[0]}"
-        )
+        raise ValueError(f"internal row offset {row_offset} != stacked input rows {input_array.shape[0]}")
     if generation_array.shape[0] != input_array.shape[0]:
-        raise ValueError(
-            f"generation row count {generation_array.shape[0]} != input rows {input_array.shape[0]}"
-        )
+        raise ValueError(f"generation row count {generation_array.shape[0]} != input rows {input_array.shape[0]}")
     assert feature_order is not None and output_order is not None
 
     label_set_name = cohort_set_name if cohort_set_name is not None else set_name
@@ -1044,16 +1029,12 @@ def build_data_dict_from_vessel_csvs(
         filtered_features_array, selected_features = filter_features_from_array(
             features_array, features_header, include_features=include_features
         )
-        feature_order = _require_consistent_column_order(
-            selected_features, feature_order, kind="Feature", geo=geo
-        )
+        feature_order = _require_consistent_column_order(selected_features, feature_order, kind="Feature", geo=geo)
 
         lumped_params_array, selected_outputs, vessel_names = _read_vessel_lumped_parameters_csv(
             lumped_parameters_csv_path, include_outputs
         )
-        output_order = _require_consistent_column_order(
-            selected_outputs, output_order, kind="Output", geo=geo
-        )
+        output_order = _require_consistent_column_order(selected_outputs, output_order, kind="Output", geo=geo)
 
         if require_same_rows and filtered_features_array.shape[0] != lumped_params_array.shape[0]:
             raise ValueError(
@@ -1074,13 +1055,9 @@ def build_data_dict_from_vessel_csvs(
     output_array = np.vstack(all_outputs)
     generation_array = np.concatenate(all_generation, axis=0)
     if row_offset != input_array.shape[0]:
-        raise ValueError(
-            f"internal row offset {row_offset} != stacked input rows {input_array.shape[0]}"
-        )
+        raise ValueError(f"internal row offset {row_offset} != stacked input rows {input_array.shape[0]}")
     if generation_array.shape[0] != input_array.shape[0]:
-        raise ValueError(
-            f"generation row count {generation_array.shape[0]} != input rows {input_array.shape[0]}"
-        )
+        raise ValueError(f"generation row count {generation_array.shape[0]} != input rows {input_array.shape[0]}")
     assert feature_order is not None and output_order is not None
 
     label_set_name = cohort_set_name if cohort_set_name is not None else set_name
@@ -1138,9 +1115,7 @@ def load_junction_rows_from_jax_dict(
         "geometry_names_order",
     ):
         if key not in data_dict:
-            raise ValueError(
-                f"Jax pickle missing {key!r}. Re-run data processing to rebuild the pickle."
-            )
+            raise ValueError(f"Jax pickle missing {key!r}. Re-run data processing to rebuild the pickle.")
 
     n_rows = int(np.asarray(inp).shape[0])
     junction_names = [str(g) for g in data_dict["row_junction_names"]]
@@ -1148,9 +1123,7 @@ def load_junction_rows_from_jax_dict(
     outlet_vessel_ids = [int(v) for v in data_dict["outlet_vessel_ids"]]
     feature_names = [str(f) for f in data_dict["input_feature_names"]]
 
-    if not (
-        len(junction_names) == len(outlet_primary_names) == len(outlet_vessel_ids) == n_rows
-    ):
+    if not (len(junction_names) == len(outlet_primary_names) == len(outlet_vessel_ids) == n_rows):
         raise ValueError(
             f"Jax pickle row metadata length mismatch: junctions={len(junction_names)}, "
             f"outlets={len(outlet_primary_names)}, vessel_ids={len(outlet_vessel_ids)}, "
@@ -1162,9 +1135,7 @@ def load_junction_rows_from_jax_dict(
         geoms = [str(g) for g in data_dict["geometry_names_order"]]
         ranges = data_dict["geometry_row_ranges"]
         if geo_name not in geoms:
-            raise ValueError(
-                f"Geometry {geo_name!r} not in jax pickle geometry_names_order: {geoms}"
-            )
+            raise ValueError(f"Geometry {geo_name!r} not in jax pickle geometry_names_order: {geoms}")
         gi = geoms.index(geo_name)
         start, end = int(ranges[gi][0]), int(ranges[gi][1])
 
@@ -1193,5 +1164,3 @@ __all__ = [
     "plot_lumped_param_histograms",
     "_read_csv_matrix",
 ]
-
-

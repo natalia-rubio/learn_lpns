@@ -128,9 +128,7 @@ def _isnan(x):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Convert CV pressure error CSVs to a LaTeX table."
-    )
+    parser = argparse.ArgumentParser(description="Convert CV pressure error CSVs to a LaTeX table.")
     parser.add_argument("set_name", help="Set name (e.g., VMR_rigid_aorta_adults)")
     parser.add_argument(
         "geometry_variant",
@@ -139,7 +137,8 @@ def main():
         help="Geometry variant (default: bifurcations_EL)",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default=None,
         help="Output .tex file (default: print to stdout)",
     )
@@ -151,7 +150,10 @@ def main():
     parser.add_argument(
         "--run_config",
         default="base",
-        help="Run-config subfolder (default: base). Use e.g. gen_loss or quadratic_resistor_penalty_on_gen_loss when CV was run with that config.",
+        help=(
+            "Run-config subfolder (default: base). Use e.g. gen_loss or "
+            "quadratic_resistor_penalty_on_gen_loss when CV was run with that config."
+        ),
     )
     args = parser.parse_args()
 
@@ -189,7 +191,7 @@ def main():
     n_mods = len(MODALITY_KEYS)
     lines = []
     lines.append(r"\begin{tabular}{l r " + "c" * n_mods + "}")
-    
+
     header = r"\underline{Trial \#} & \underline{Metric}"
     for mod in MODALITY_KEYS:
         header += " & \\underline{" + _header_cell(MODALITY_DISPLAY[mod]) + "}"
@@ -232,7 +234,10 @@ def main():
         finite = [x for x in vals if not _isnan(x)]
         return statistics.stdev(finite) if len(finite) > 1 else (0.0 if len(finite) == 1 else float("nan"))
 
-    for label, first_col_text in [("Mean", r"\multirow{3}{*}{\shortstack[l]{Average}}"), ("Std", r"\multirow{3}{*}{\shortstack[l]{Standard Deviation}}")]:
+    for label, first_col_text in [
+        ("Mean", r"\multirow{3}{*}{\shortstack[l]{Average}}"),
+        ("Std", r"\multirow{3}{*}{\shortstack[l]{Standard Deviation}}"),
+    ]:
         r_vals = []
         m_vals = []
         s_vals = []

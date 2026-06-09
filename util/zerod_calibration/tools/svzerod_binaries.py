@@ -12,9 +12,7 @@ def svzerod_install_dir() -> str:
     if env:
         return os.path.abspath(env)
 
-    repo_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..")
-    )
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     sibling = os.path.join(os.path.dirname(repo_root), "svZeroDPlus", "Release")
     return sibling
 

@@ -33,9 +33,9 @@ def run_location_comparison_plots(
     verbose=False,
 ):
     """Generate per-location 3D vs 0D comparison plots for one geometry variant."""
-    variant_calibration_input = geo_variant_paths['calibration_input']
-    variant_geometric_results = geo_variant_paths['geometric_results']
-    variant_geometric_input = geo_variant_paths['geometric_input']
+    variant_calibration_input = geo_variant_paths["calibration_input"]
+    variant_geometric_results = geo_variant_paths["geometric_results"]
+    variant_geometric_input = geo_variant_paths["geometric_input"]
 
     if not os.path.exists(variant_calibration_input) or not os.path.exists(variant_geometric_results):
         print(f"    Skipping location plots for {geometry_variant} (missing calibration or geometric CSV)")
@@ -43,16 +43,22 @@ def run_location_comparison_plots(
 
     locations = get_all_locations_from_calibration_input(str(variant_calibration_input))
     if inflow_only:
-        locations = [loc for loc in locations if loc.startswith('INFLOW:')]
+        locations = [loc for loc in locations if loc.startswith("INFLOW:")]
     if not locations:
         print(f"    Skipping location plots for {geometry_variant} (no locations in calibration input)")
         return 0
 
     all_csv_paths = modality_csv_paths(
-        geo_variant_paths, base_dir, geometry_variant, junction_type, nn_vessel,
+        geo_variant_paths,
+        base_dir,
+        geometry_variant,
+        junction_type,
+        nn_vessel,
     )
     geometric_csv_path, calibrated_csv_paths, geometric_csv_paths = split_location_plot_csv_paths(
-        all_csv_paths, geometry_variant, geo_variant_paths,
+        all_csv_paths,
+        geometry_variant,
+        geo_variant_paths,
     )
     if not calibrated_csv_paths and not geometric_csv_paths:
         print(f"    Skipping location plots for {geometry_variant} (no result CSVs found)")
@@ -60,25 +66,30 @@ def run_location_comparison_plots(
 
     trial_suffix = f"_trial_{trial_id}" if trial_id is not None else ""
     output_dir = os.path.join(
-        'results', 'location_comparison', run_config, set_name, geo_name,
-        f'{geometry_variant}{trial_suffix}',
+        "results",
+        "location_comparison",
+        run_config,
+        set_name,
+        geo_name,
+        f"{geometry_variant}{trial_suffix}",
     )
     os.makedirs(output_dir, exist_ok=True)
 
     time_period = get_time_period(set_name, geo_name)
 
     vessel_name_mapping = None
-    if geometry_variant == 'bifurcations_EL':
-        bifurcations_input = geometry_variants['bifurcations']['geometric_input']
+    if geometry_variant == "bifurcations_EL":
+        bifurcations_input = geometry_variants["bifurcations"]["geometric_input"]
         if os.path.exists(bifurcations_input) and os.path.exists(variant_geometric_input):
             vessel_name_mapping = build_vessel_name_mapping(
-                bifurcations_input, variant_geometric_input,
+                bifurcations_input,
+                variant_geometric_input,
             )
 
     print(f"\n  Creating {geometry_variant} location comparison plots...")
     success_count = 0
     for location in locations:
-        safe_location = location.replace(':', '_')
+        safe_location = location.replace(":", "_")
         plot_path = os.path.join(output_dir, f"{safe_location}{trial_suffix}_comparison.png")
         try:
             if plot_location_comparison(
@@ -121,15 +132,23 @@ def run_zero_d_parameter_bar_plot(
 ):
     """Generate R/S/L parameter bar chart for one geometry variant."""
     trial_suffix = f"_trial_{trial_id}" if trial_id is not None else ""
-    prefix = '' if geometry_variant == 'original' else f'{geometry_variant}_'
+    prefix = "" if geometry_variant == "original" else f"{geometry_variant}_"
     output_dir = os.path.join(
-        'results', 'param_comparison', run_config, set_name, geo_name,
-        f'{geometry_variant}{trial_suffix}',
+        "results",
+        "param_comparison",
+        run_config,
+        set_name,
+        geo_name,
+        f"{geometry_variant}{trial_suffix}",
     )
     os.makedirs(output_dir, exist_ok=True)
 
     modality_jsons = modality_json_paths(
-        geo_variant_paths, base_dir, geometry_variant, junction_type, nn_vessel,
+        geo_variant_paths,
+        base_dir,
+        geometry_variant,
+        junction_type,
+        nn_vessel,
     )
     if not modality_jsons:
         print(f"    Skipping parameter bar chart for {geometry_variant} (no modality JSONs found)")
@@ -140,11 +159,14 @@ def run_zero_d_parameter_bar_plot(
     elif prefix:
         out_name = f"{prefix}zero_d_parameter_bars.png"
     else:
-        out_name = 'zero_d_parameter_bars.png'
+        out_name = "zero_d_parameter_bars.png"
 
     print(f"\n  Creating zero-D parameter bar chart for {geometry_variant}...")
     out_path = plot_zero_d_parameter_bars(
-        modality_jsons, output_dir=output_dir, output_name=out_name, verbose=verbose,
+        modality_jsons,
+        output_dir=output_dir,
+        output_name=out_name,
+        verbose=verbose,
     )
     if out_path:
         print(f"    ✓ Saved zero-D parameter bar chart: {out_path}")
