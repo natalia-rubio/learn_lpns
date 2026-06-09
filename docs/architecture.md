@@ -29,7 +29,7 @@ $k$-fold cross-validation splits geometries into train/validation sets across mu
 
 ## Design decisions
 
-- **Separate R / S / L networks** — Each RRI coefficient (linear resistor, stenosis resistor, inductor) is a single-output network with its own learning rate and architecture (`RRI_COEF_TRAIN_SPECS` in `launch_training.py`). This allows per-coefficient asymmetric loss weights and avoids one output dominating training.
+- **Separate R / S / L networks** — Each RRI coefficient (linear resistor, stenosis resistor, inductor) is a single-output network with its own learning rate and architecture (`training.rri_coefficients` in `config/defaults.yaml`). This allows per-coefficient asymmetric loss weights and avoids one output dominating training.
 - **Geometry-level CV splits** — Train/validation splits assign whole geometries, not individual junction rows, so validation measures generalization to unseen vasculatures.
 - **Canonical `--run_config` paths** — Underscore tokens (e.g. `gen_loss`, `quadratic_resistor`) compose a single on-disk suffix under `data/` and `results/`, keeping physics variants and training modes reproducible without ad-hoc folder names (`run_config_canonical.py`).
 - **Bootstrap-on-missing** — Cross-validation only regenerates prerequisites that are absent (calibrated zeroD, ml_inputs, jax pickles), reducing rerun cost.

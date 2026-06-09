@@ -116,6 +116,7 @@ results/                             # gitignored outputs
 ├── models/                          # trained NN checkpoints
 └── cross_validation/                # CV summary CSVs and barchart PDFs
 
+config/                              # pipeline defaults (physics, solver, calibration, splits, training)
 tests/                               # unit tests (no C++ solver)
 scripts/                             # environment setup (setup_cross_validation.sh)
 docs/                                # usage, architecture, data layout

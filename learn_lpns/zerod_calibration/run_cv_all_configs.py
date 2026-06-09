@@ -15,6 +15,8 @@ import os
 import subprocess
 import sys
 
+from learn_lpns.config import get_pipeline_config
+
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -81,12 +83,13 @@ def main():
         default="bifurcations_EL",
         help="Geometry variant (default: bifurcations_EL)",
     )
+    cv_num_trials_default = get_pipeline_config().split.cv_num_trials
     parser.add_argument(
         "num_trials",
         nargs="?",
         type=int,
-        default=5,
-        help="Number of CV trials (default: 5)",
+        default=cv_num_trials_default,
+        help=f"Number of CV trials (default: {cv_num_trials_default} from config)",
     )
     parser.add_argument(
         "--configs",

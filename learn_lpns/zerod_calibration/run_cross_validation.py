@@ -19,6 +19,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.data_processing.data_dict_from_csvs import get_default_include_features
 from learn_lpns.data_processing.generate_split_indices import (
     build_geometry_index_map,
@@ -590,8 +591,9 @@ def run_cross_validation(
             max_attempts = 200
             train_geometries = []
             val_geometries = []
+            trial_seed_stride = get_pipeline_config().split.cv_trial_seed_stride
             for attempt in range(max_attempts):
-                seed = trial * 1000 + attempt
+                seed = trial * trial_seed_stride + attempt
                 train_geometries, val_geometries = generate_geometry_split(percent_train, seed, geometries)
                 if not val_geometries:
                     if attempt == 0:
@@ -920,6 +922,7 @@ def regenerate_cv_metrics_from_existing(
 
 
 def main():
+    split_defaults = get_pipeline_config().split
     parser = argparse.ArgumentParser(
         description=(
             "Run cross-validation: X random 90/10 splits, train and deploy per trial, "
@@ -939,8 +942,8 @@ def main():
     parser.add_argument(
         "--num_trials",
         type=int,
-        default=5,
-        help="Number of random 90/10 splits (default: 5)",
+        default=split_defaults.cv_num_trials,
+        help=f"Number of random CV splits (default: {split_defaults.cv_num_trials} from config)",
     )
     parser.add_argument("--data_root", default="data", help="Data root (default: data)")
     parser.add_argument(
@@ -989,9 +992,12 @@ def main():
     parser.add_argument(
         "--percent_train",
         type=float,
-        default=0.9,
+        default=split_defaults.percent_train,
         metavar="P",
-        help="Fraction of geometries for training (0–1); remainder used for validation (default: 0.9).",
+        help=(
+            f"Fraction of geometries for training (0–1); remainder used for validation "
+            f"(default: {split_defaults.percent_train} from config)."
+        ),
     )
     parser.add_argument(
         "--metrics_only",

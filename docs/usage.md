@@ -126,7 +126,7 @@ Checkpoints: `rri_{set_name}_pred_{0,1,2}_model` (one scalar-output network per 
 
 ## Neural network training
 
-Each RRI coefficient (R, S, L) is a **separate single-output network** against one column of `output_rri`. Hyperparameters: `RRI_COEF_TRAIN_SPECS` in `launch_training.py`.
+Each RRI coefficient (R, S, L) is a **separate single-output network** against one column of `output_rri`. Hyperparameters: `training.rri_coefficients` in `config/defaults.yaml`.
 
 ```bash
 learn-lpns-train VMR_aortas 5 bifurcations_EL \
@@ -141,7 +141,7 @@ Positional args: `set_name`, `num_geos`, optional `geometry_variant` (default `a
 | `--run_config` | Path suffix for jax_arrays and split_indices |
 | `--asymmetric_loss` | Per-coefficient overestimate weights |
 | `--generation_weighted_loss` | Enable generation-weighted loss |
-| `--generation_weighted_loss_scale` | Multiplier for generation weights (default 1.0) |
+| `--generation_weighted_loss_scale` | Multiplier for generation weights (default from `config/defaults.yaml`) |
 | `--vessel` | Train vessel NNs |
 | `--leaky_relu` | Leaky ReLU activations |
 | `--quiet_epochs` | Suppress per-epoch loss logging |

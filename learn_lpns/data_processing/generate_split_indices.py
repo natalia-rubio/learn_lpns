@@ -19,6 +19,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.tools.basic import load_dict, save_dict
 
 
@@ -318,7 +319,13 @@ def main():
         required=True,
         help="Fraction of points to use for training (0,1)",
     )
-    parser.add_argument("--seed", type=int, default=0, help="RNG seed for reproducible split")
+    split_seed_default = get_pipeline_config().split.seed
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=split_seed_default,
+        help=f"RNG seed for reproducible split (default: {split_seed_default} from config)",
+    )
     parser.add_argument("--data_root", default="data", help="Repo data root (default: data)")
     args = parser.parse_args()
 

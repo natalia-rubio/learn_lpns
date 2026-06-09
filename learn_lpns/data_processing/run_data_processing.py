@@ -20,6 +20,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.data_processing.data_dict_from_csvs import (
     build_data_dict_from_csvs,
     build_data_dict_from_vessel_csvs,
@@ -83,6 +84,7 @@ def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", dat
 
 
 def main():
+    split_defaults = get_pipeline_config().split
     parser = argparse.ArgumentParser(description="Run the full data processing pipeline for NN training")
     parser.add_argument("--set_name", required=True, help="Set name (e.g., VMR)")
     parser.add_argument(
@@ -108,10 +110,18 @@ def main():
     parser.add_argument(
         "--percent_train",
         type=float,
-        default=0.8,
-        help="Fraction of points used for training (default: 0.8)",
+        default=split_defaults.data_processing_percent_train,
+        help=(
+            f"Fraction of points used for training "
+            f"(default: {split_defaults.data_processing_percent_train} from config)"
+        ),
     )
-    parser.add_argument("--seed", type=int, default=0, help="RNG seed for train/val split (default: 0)")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=split_defaults.seed,
+        help=f"RNG seed for train/val split (default: {split_defaults.seed} from config)",
+    )
     parser.add_argument("--data_root", default="data", help="Repo data root (default: data)")
     parser.add_argument(
         "--run_config",

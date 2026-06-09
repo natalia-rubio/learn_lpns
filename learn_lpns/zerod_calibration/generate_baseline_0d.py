@@ -4,14 +4,11 @@ import subprocess
 
 import numpy as np
 
+from learn_lpns.config import apply_solver_parameters, get_pipeline_config
 from learn_lpns.zerod_calibration.oned_to_zerod import (
     find_inlet_outlet_caps,
     find_inlet_outlet_caps_from_centerline,
 )
-
-# Constants
-RHO = 1.06  # Blood density (g/cm^3)
-MU = 0.04  # Blood viscosity (Poise)
 
 
 def update_simulation_parameters(geo_dir, json_path, inlet_cap_name, capacitance_value=1e-10, zero_stenosis=False):
@@ -23,10 +20,7 @@ def update_simulation_parameters(geo_dir, json_path, inlet_cap_name, capacitance
         zerod_input = json.load(f)
 
     if "simulation_parameters" in zerod_input:
-        zerod_input["simulation_parameters"]["number_of_cardiac_cycles"] = 1
-        zerod_input["simulation_parameters"]["steady_initial"] = False
-        zerod_input["simulation_parameters"]["absolute_tolerance"] = 1e-5
-        zerod_input["simulation_parameters"]["maximum_nonlinear_iterations"] = 50
+        apply_solver_parameters(zerod_input["simulation_parameters"], get_pipeline_config().solver)
 
         # Calculate cardiac cycle period from boundary condition time array
         if "boundary_conditions" in zerod_input and len(zerod_input["boundary_conditions"]) > 0:
@@ -300,8 +294,9 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
     cap_value = 1e-10
     for vessel in zerod_input["vessels"]:
         vessel["zero_d_element_values"]["C"] = cap_value
-    # Set number of cardiac cycles to 1
-    zerod_input["simulation_parameters"]["number_of_cardiac_cycles"] = 1
+    zerod_input["simulation_parameters"]["number_of_cardiac_cycles"] = (
+        get_pipeline_config().solver.number_of_cardiac_cycles
+    )
 
     # Fix junction types and validate junction structure
     if "junctions" in zerod_input:
@@ -351,7 +346,9 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
             print(f"    Removed {removed_count} unused resistance BC(s)")
         print(f"    Kept {len(used_resistance_bcs)} used resistance BC(s)")
 
-    zerod_input["simulation_parameters"]["number_of_cardiac_cycles"] = 1
+    zerod_input["simulation_parameters"]["number_of_cardiac_cycles"] = (
+        get_pipeline_config().solver.number_of_cardiac_cycles
+    )
     # Move to final output location
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w") as f:

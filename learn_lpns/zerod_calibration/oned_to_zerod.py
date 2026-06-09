@@ -10,7 +10,7 @@ from collections import defaultdict
 import numpy as np
 import vtk
 
-from learn_lpns.zerod_calibration.generate_baseline_0d import MU, RHO
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.zerod_calibration.tools.file_io import (
     VMR_time_step_dict,
     parse_simulation_xml,
@@ -1038,6 +1038,7 @@ def extract_vessel_segments(centerline_data, centerline_polydata):
     # Create vessel segments
     vessels = []
     vessel_id = 0
+    physics = get_pipeline_config().physics
 
     for branch_idx in sorted(branches.keys()):
         branch_points = branches[branch_idx]
@@ -1072,7 +1073,9 @@ def extract_vessel_segments(centerline_data, centerline_polydata):
 
         # Calculate geometric 0D parameters
         # Poiseuille resistance: R = 8*mu*L / (pi*r^4)
-        R_poiseuille = 8 * MU * segment_length / (np.pi * mean_radius**4) if mean_radius > 0 else 0.0
+        R_poiseuille = (
+            8 * physics.mu * segment_length / (np.pi * mean_radius**4) if mean_radius > 0 else 0.0
+        )
 
         # Capacitance: C = 3*pi*r^3*L / (2*E*h) where E*h is wall stiffness
         # Using typical value: E*h = 1e6 dyn/cm^2 (approximate)
@@ -1080,7 +1083,7 @@ def extract_vessel_segments(centerline_data, centerline_polydata):
         C = 3 * np.pi * mean_radius**3 * segment_length / (2 * E_h) if mean_radius > 0 else 0.0
 
         # Inductance: L = rho*L / A
-        L = RHO * segment_length / mean_area if mean_area > 0 else 0.0
+        L = physics.rho * segment_length / mean_area if mean_area > 0 else 0.0
 
         vessel = {
             "vessel_id": vessel_id,

@@ -3,18 +3,12 @@ import os
 
 import numpy as np
 
+from learn_lpns.config import (
+    apply_solver_parameters,
+    build_calibration_parameters,
+    get_pipeline_config,
+)
 from learn_lpns.zerod_calibration.tools.file_io import convert_numpy_to_list, timestep_from_1D
-
-# Default L2 penalties when not set-specific (R_poiseuille, stenosis_coefficient)
-DEFAULT_L2_R = 10**5
-DEFAULT_L2_STENOSIS = 10**10
-
-# Per-set L2 penalties (set_name -> (L2_penalty_R_poiseuille, L2_penalty_stenosis_coefficient)).
-# Add entries to tune calibration by anatomy/set; unlisted sets use DEFAULT_L2_*.
-SET_L2_PENALTIES = {
-    "VMR_abdo": (10**2, 10**5),
-    "VMR_rigid_aorta_adults": (10**5, 10**10),
-}
 
 
 def create_calibration_input(
@@ -105,33 +99,24 @@ def create_calibration_input(
             "calibrate_stenosis_coefficient=False, L2 penalties set to 0"
         )
 
-    if quadratic_resistor and penalty_on:
-        l2_R, l2_stenosis = SET_L2_PENALTIES.get(set_name, (DEFAULT_L2_R, DEFAULT_L2_STENOSIS))
-        if set_name and set_name in SET_L2_PENALTIES:
-            print(f"  Set-specific L2 penalties for {set_name}: R={l2_R}, stenosis={l2_stenosis}")
-    else:
-        l2_R = 0.0
-        l2_stenosis = 0.0
-        if quadratic_resistor and not penalty_on:
-            print("  Penalty-on not enabled: L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
-    inp["calibration_parameters"] = {
-        "tolerance_gradient": 1e-4,
-        "tolerance_increment": 1e-4,
-        "maximum_iterations": 20,
-        "calibrate_stenosis_coefficient": quadratic_resistor,
-        "calibrate_capacitance": False,
-        "set_capacitance_to_zero": False,
-        "L2_penalty_R_poiseuille": l2_R,
-        "L2_penalty_stenosis_coefficient": l2_stenosis,
-        "L2_penalty_L": 0,
-    }
+    cfg = get_pipeline_config(set_name=set_name)
+    if quadratic_resistor and penalty_on and set_name and set_name in cfg.calibration.set_l2_penalties:
+        l2_r, l2_stenosis = cfg.calibration.l2_penalties_for_set(set_name)
+        print(f"  Set-specific L2 penalties for {set_name}: R={l2_r}, stenosis={l2_stenosis}")
+    elif quadratic_resistor and not penalty_on:
+        print("  Penalty-on not enabled: L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
+
+    inp["calibration_parameters"] = build_calibration_parameters(
+        cfg.calibration,
+        quadratic_resistor=quadratic_resistor,
+        penalty_on=penalty_on,
+        set_name=set_name,
+    )
 
     inp["simulation_parameters"]["number_of_time_pts_per_cardiac_cycle"] = len(bc_time)
     inp["simulation_parameters"]["output_all_cycles"] = True
-    inp["simulation_parameters"]["steady_initial"] = False
-    inp["simulation_parameters"]["absolute_tolerance"] = 1e-5
-    inp["simulation_parameters"]["maximum_nonlinear_iterations"] = 50
-    inp["simulation_parameters"]["num_cardiac_cycles"] = 1
+    apply_solver_parameters(inp["simulation_parameters"], cfg.solver)
+    inp["simulation_parameters"]["num_cardiac_cycles"] = cfg.solver.number_of_cardiac_cycles
 
     # Convert numpy arrays in observations to lists for JSON serialization
     observations_list = convert_numpy_to_list(observations)

@@ -19,6 +19,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.visualizations.run_zerod_comparison_plots import run_zerod_comparison_plots
 from learn_lpns.zerod_calibration.bc_fitting import (
     apply_fitted_outlet_bcs_to_file,
@@ -179,7 +180,9 @@ def main():
                 std_json_path = standard_0d_json_path("data", args.set_name, args.geo_name)
                 zerod_input = load_from_json(std_json_path)
                 zerod_input["simulation_parameters"]["output_all_cycles"] = True
-                zerod_input["simulation_parameters"]["number_of_cardiac_cycles"] = 1
+                zerod_input["simulation_parameters"]["number_of_cardiac_cycles"] = (
+                    get_pipeline_config().solver.number_of_cardiac_cycles
+                )
                 os.makedirs(os.path.dirname(geometric_input_path), exist_ok=True)
                 save_to_json(zerod_input, geometric_input_path)
                 generated_files.append(geometric_input_path)

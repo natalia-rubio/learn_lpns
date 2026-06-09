@@ -4,10 +4,9 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.neural_network.nn_model import loss_pure
 from learn_lpns.neural_network.nn_util import dill_save, get_batch_indices
-
-EARLY_STOP_LOSS_THRESHOLD = 1e-7
 
 
 def train_nn(model, training_params):
@@ -105,8 +104,12 @@ def train_nn(model, training_params):
                 )
 
         loss_to_check = val_loss if len(val_inds) > 0 and not np.isnan(val_loss) else train_loss
-        if loss_to_check < EARLY_STOP_LOSS_THRESHOLD:
-            print(f"\n  Early stopping: Loss ({loss_to_check:.2e}) is below threshold ({EARLY_STOP_LOSS_THRESHOLD:g})")
+        early_stop_threshold = training_params.get(
+            "early_stop_loss_threshold",
+            get_pipeline_config().training.early_stop_loss_threshold,
+        )
+        if loss_to_check < early_stop_threshold:
+            print(f"\n  Early stopping: Loss ({loss_to_check:.2e}) is below threshold ({early_stop_threshold:g})")
             print(f"  Stopping training at epoch {epoch + 1}/{training_params['num_epochs']}")
             break
 

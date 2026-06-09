@@ -1,79 +1,23 @@
 import os
 import sys
-from dataclasses import dataclass
-
-import numpy as np
 
 # Allow running as a script: python learn_lpns/neural_network/launch_training.py ...
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from learn_lpns.config import TrainingConfig, get_pipeline_config
 from learn_lpns.data_processing.generate_split_indices import (
     load_split_for_training,
     resolve_flat_indices,
 )
-from learn_lpns.neural_network.nn_model import (
-    L_OUTPUT_COLUMN,
-    R_OUTPUT_COLUMN,
-    S_OUTPUT_COLUMN,
-    NeuralNet,
-)
+from learn_lpns.neural_network.nn_model import NeuralNet
 from learn_lpns.neural_network.train_nn import train_nn
 from learn_lpns.tools.basic import load_dict
 from learn_lpns.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
     run_config_suffix_to_flags,
 )
-
-
-@dataclass(frozen=True)
-class RriCoefTrainSpec:
-    """One single-output network trained against a column of output_rri."""
-
-    label: str
-    target_output_column: int
-    lr_init: float
-    junction_num_layers: int
-    junction_layer_width: int
-    junction_asymmetric_overestimate_weight: float
-    vessel_asymmetric_overestimate_weight: float
-
-
-# Each RRI coefficient (R, S, L) gets its own network with one scalar output.
-RRI_COEF_TRAIN_SPECS = (
-    RriCoefTrainSpec(
-        "Linear Resistor (R)",
-        R_OUTPUT_COLUMN,
-        lr_init=0.01,
-        junction_num_layers=2,
-        junction_layer_width=10,
-        junction_asymmetric_overestimate_weight=2000,
-        vessel_asymmetric_overestimate_weight=10,
-    ),
-    RriCoefTrainSpec(
-        "Stenosis Resistor (S)",
-        S_OUTPUT_COLUMN,
-        lr_init=0.001,
-        junction_num_layers=2,
-        junction_layer_width=10,
-        junction_asymmetric_overestimate_weight=100,
-        vessel_asymmetric_overestimate_weight=10,
-    ),
-    RriCoefTrainSpec(
-        "Inductor (L)",
-        L_OUTPUT_COLUMN,
-        lr_init=0.01,
-        junction_num_layers=4,
-        junction_layer_width=20,
-        junction_asymmetric_overestimate_weight=10000,
-        vessel_asymmetric_overestimate_weight=1000,
-    ),
-)
-
-VESSEL_NUM_LAYERS = 2
-VESSEL_LAYER_WIDTH = 10
-TRAIN_EPOCHS = 500
 
 
 def _jax_arrays_path(
@@ -127,6 +71,7 @@ def _build_training_params_for_modality(
     generation_weighted_loss_scale: float,
     leaky_relu: bool,
     model_dir: str | None,
+    training_cfg: TrainingConfig,
 ) -> tuple[dict, dict]:
     modality = "vessel" if vessel else "junction"
     jax_data = load_dict(jax_path)
@@ -176,11 +121,12 @@ def _build_training_params_for_modality(
 
     n_train = max(len(train_inds), 1)
     training_params = {
-        "num_epochs": TRAIN_EPOCHS,
-        "batch_size": int(np.ceil(n_train / 10)),
+        "num_epochs": training_cfg.num_epochs,
+        "batch_size": training_cfg.batch_size_for_n_train(n_train),
         "train_inds": train_inds,
         "val_inds": val_inds,
         "num_offsets": 1 if vessel else num_offsets,
+        "early_stop_loss_threshold": training_cfg.early_stop_loss_threshold,
     }
     if vessel:
         out_dir = model_dir or os.path.join("results", "models", set_name, geometry_variant + "_vessel")
@@ -191,14 +137,9 @@ def _build_training_params_for_modality(
     return network_params, training_params
 
 
-def launch_training(network_params, optimizer_params, training_params):
-    """Train three single-output networks for R, S, and L (junction or vessel).
-
-    Each network predicts one scalar; ``target_output_column`` selects which
-    column of ``output_rri`` is the training target (0=R, 1=S, 2=L).
-
-    Trained models are saved under ``results/models`` (or ``training_params['output_dir']``).
-    """
+def launch_training(network_params, optimizer_params, training_params, training_cfg: TrainingConfig | None = None):
+    """Train one network per RRI coefficient (R, S, L) for junction or vessel modality."""
+    training_cfg = training_cfg or get_pipeline_config().training
     network_params["output_type"] = "rri"
     asymmetric_loss = bool(network_params["asymmetric_loss"])
     is_vessel = network_params.get("model_name_suffix") == "_vessel"
@@ -206,17 +147,17 @@ def launch_training(network_params, optimizer_params, training_params):
     shared_data_dict = network_params.get("data_dict")
     print("Training RRI models (one network per coefficient)...")
 
-    for spec in RRI_COEF_TRAIN_SPECS:
+    for spec in training_cfg.rri_coefficients:
         print(f"training model {spec.target_output_column + 1}:  {spec.label}")
         print(f"{network_params['num_input_features']} input features")
 
         network_params["target_output_column"] = spec.target_output_column
         optimizer_params["init"] = spec.lr_init
-        training_params["num_epochs"] = TRAIN_EPOCHS
+        training_params["num_epochs"] = training_cfg.num_epochs
 
         if is_vessel:
-            network_params["num_layers"] = VESSEL_NUM_LAYERS
-            network_params["layer_width"] = VESSEL_LAYER_WIDTH
+            network_params["num_layers"] = training_cfg.vessel.num_layers
+            network_params["layer_width"] = training_cfg.vessel.layer_width
             overestimate_weight = spec.vessel_asymmetric_overestimate_weight if asymmetric_loss else 1.0
         else:
             network_params["num_layers"] = spec.junction_num_layers
@@ -236,6 +177,7 @@ def launch_training(network_params, optimizer_params, training_params):
 def main():
     import argparse
 
+    training_defaults = get_pipeline_config().training
     parser = argparse.ArgumentParser(description="Launch NN training")
     parser.add_argument("set_name", help="Set name (e.g., VMR)")
     parser.add_argument("num_geos", type=int, help="Number of geometries")
@@ -317,20 +259,23 @@ def main():
     parser.add_argument(
         "--generation_weighted_loss_scale",
         type=float,
-        default=1.0,
+        default=training_defaults.generation_weighted_loss_scale,
         dest="generation_weighted_loss_scale",
         metavar="S",
-        help="Overall multiplier for generation-weighted loss (default: 1.0 gives weight 1/2^gen).",
+        help=(
+            f"Overall multiplier for generation-weighted loss "
+            f"(default: {training_defaults.generation_weighted_loss_scale} from config)."
+        ),
     )
     cli_args = parser.parse_args()
 
+    training_cfg = get_pipeline_config(set_name=cli_args.set_name).training
     set_name = cli_args.set_name
     num_geos = cli_args.num_geos
     print(f"num_geos: {num_geos}")
 
     geometry_variant_arg = getattr(cli_args, "geometry_variant_flag", None) or cli_args.geometry_variant or "all"
     run_config_raw = (cli_args.run_config or "").strip() or None
-    # Paths use the full --run_config string (e.g. ..._gen_loss is its own jax/split tree).
     data_paths_suffix = run_config_raw
     if run_config_raw:
         rc_flags = run_config_suffix_to_flags(run_config_raw)
@@ -343,13 +288,18 @@ def main():
     set_type = "all"
     data_root = "data"
 
-    # Determine which geometry variants to process
     if geometry_variant_arg == "all":
         geometry_variants_to_process = ["bifurcations", "bifurcations_EL"]
     else:
         geometry_variants_to_process = [geometry_variant_arg]
 
-    # Process each geometry variant
+    opt = training_cfg.optimizer
+    optimizer_params = {
+        "init": opt.init,
+        "transition_steps": opt.transition_steps,
+        "decay_rate": opt.decay_rate,
+    }
+
     for geometry_variant in geometry_variants_to_process:
         print(f"\n{'=' * 80}")
         print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}")
@@ -393,16 +343,15 @@ def main():
             output_type=output_type,
             asymmetric_loss_eff=asymmetric_loss_eff,
             generation_weighted_loss_eff=generation_weighted_loss_eff,
-            generation_weighted_loss_scale=float(getattr(cli_args, "generation_weighted_loss_scale", 1.0)),
+            generation_weighted_loss_scale=float(cli_args.generation_weighted_loss_scale),
             leaky_relu=getattr(cli_args, "leaky_relu", False),
             model_dir=cli_args.model_dir,
+            training_cfg=training_cfg,
         )
         training_params["print_gradients"] = getattr(cli_args, "print_gradients", False)
         training_params["verbose_epochs"] = not cli_args.quiet_epochs
 
-        optimizer_params = {"init": 0.02, "transition_steps": 1000, "decay_rate": 0.95}
-
-        launch_training(network_params, optimizer_params, training_params)
+        launch_training(network_params, optimizer_params, training_params, training_cfg=training_cfg)
 
 
 if __name__ == "__main__":
