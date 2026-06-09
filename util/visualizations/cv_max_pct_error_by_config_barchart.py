@@ -28,6 +28,7 @@ import numpy as np
 from scipy import stats
 
 from util.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
+from util.zerod_calibration.modality_paths import read_cv_metric_from_row
 
 
 # Display name for each run config (config subfolder name -> label on y-axis).
@@ -153,10 +154,9 @@ def _load_mean_std_n(path, modality=MODALITY_COLUMN):
     Load mean, std, and number of trials from the pressure max rel error CSV for the
     given modality. Returns (mean_frac, std_frac, n); std_frac is nan if n < 2.
     """
-    col = PREFIX_REL + modality
-    n = 0
     mean_frac = float("nan")
     std_frac = float("nan")
+    n = 0
     with open(path, "r", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -164,12 +164,12 @@ def _load_mean_std_n(path, modality=MODALITY_COLUMN):
             if tid in ("", "mean", "std"):
                 if tid == "mean":
                     try:
-                        mean_frac = float(row.get(col, float("nan")))
+                        mean_frac = float(read_cv_metric_from_row(row, PREFIX_REL, modality) or float("nan"))
                     except (ValueError, TypeError):
                         pass
                 elif tid == "std":
                     try:
-                        std_frac = float(row.get(col, float("nan")))
+                        std_frac = float(read_cv_metric_from_row(row, PREFIX_REL, modality) or float("nan"))
                     except (ValueError, TypeError):
                         pass
                 continue

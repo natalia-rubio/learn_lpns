@@ -3,7 +3,11 @@ import json
 import numpy as np
 import csv
 from util.zerod_calibration.tools.file_io import read_zerod_csv
-from util.zerod_calibration.modality_paths import modality_table_header, sort_modalities
+from util.zerod_calibration.modality_paths import (
+    modality_key_from_table_header,
+    modality_table_header,
+    sort_modalities,
+)
 
 try:
     from scipy.interpolate import interp1d
@@ -149,7 +153,8 @@ def parse_mse_comparison_csv(csv_path):
             if in_summary and header is not None:
                 metric_key = _MSE_ROW_NAME_TO_KEY.get(row[0])
                 if metric_key is not None:
-                    for i, mod in enumerate(header[1:], start=1):
+                    for i, mod_header in enumerate(header[1:], start=1):
+                        mod = modality_key_from_table_header(mod_header)
                         if mod not in result:
                             result[mod] = {}
                         if i < len(row) and row[i].strip() not in ("", "N/A"):

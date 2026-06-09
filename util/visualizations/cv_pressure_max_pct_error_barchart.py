@@ -31,7 +31,10 @@ from scipy import stats as scipy_stats
 from util.visualizations.plot_location_comparison import get_line_style
 from util.visualizations.cv_pressure_errors_to_latex import MODALITY_DISPLAY, VAL_GEOMETRY_DISPLAY
 from util.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
-from util.zerod_calibration.modality_paths import DEFAULT_MODALITY_ORDER
+from util.zerod_calibration.modality_paths import (
+    DEFAULT_MODALITY_ORDER,
+    read_cv_metric_from_row,
+)
 from util.zerod_calibration.run_config_canonical import (
     discover_run_config_suffixes,
     resolve_run_config_suffix,
@@ -107,7 +110,6 @@ def discover_cross_validation_set_names(data_root):
 
 def load_csv_column(path, prefix, modality):
     """Load one metric column from a CV summary CSV. Returns list of values (one per trial)."""
-    col = f"{prefix}{modality}"
     out = []
     with open(path, "r", newline="") as f:
         reader = csv.DictReader(f)
@@ -115,7 +117,7 @@ def load_csv_column(path, prefix, modality):
             trial_id = row.get("trial_id", "").strip()
             if trial_id in ("", "mean", "std"):
                 break
-            val = row.get(col, "")
+            val = read_cv_metric_from_row(row, prefix, modality)
             try:
                 out.append(float(val))
             except (ValueError, TypeError):

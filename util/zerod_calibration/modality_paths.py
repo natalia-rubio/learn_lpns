@@ -25,6 +25,32 @@ def modality_table_header(modality_key):
     return MODALITY_DISPLAY.get(modality_key, modality_key)
 
 
+_DISPLAY_TO_MODALITY = {label: key for key, label in MODALITY_DISPLAY.items()}
+
+
+def modality_key_from_table_header(label):
+    """Map a human-readable table/CSV header back to the internal modality key."""
+    if label in MODALITY_DISPLAY:
+        return label
+    return _DISPLAY_TO_MODALITY.get(label, label)
+
+
+def read_cv_metric_from_row(row, prefix, modality_key):
+    """
+    Read one metric cell from a CV summary CSV row.
+
+    Older CSVs used display labels in column headers (e.g. PressureMaxError_Calibrated);
+    newer rows use internal keys (e.g. PressureMaxError_BloodVesselJunction).
+    """
+    key_col = f"{prefix}{modality_key}"
+    display_col = f"{prefix}{modality_table_header(modality_key)}"
+    for col in (key_col, display_col):
+        val = row.get(col)
+        if val is not None and str(val).strip() not in ("", "N/A"):
+            return val
+    return ""
+
+
 def sort_modalities(modality_keys):
     """Sort modality keys in DEFAULT_MODALITY_ORDER; unknown keys trail alphabetically."""
     order = {k: i for i, k in enumerate(DEFAULT_MODALITY_ORDER)}

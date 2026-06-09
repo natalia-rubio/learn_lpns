@@ -30,6 +30,7 @@ import numpy as np
 
 from util.visualizations.plot_location_comparison import get_line_style
 from util.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
+from util.zerod_calibration.modality_paths import read_cv_metric_from_row
 
 
 SET_NAMES_DEFAULT = [
@@ -112,8 +113,8 @@ def _isnan(x):
     return x != x
 
 
-def _load_trial_values(csv_path, col_name):
-    """Return list of trial-level metric values from the requested column."""
+def _load_trial_values(csv_path, prefix, modality):
+    """Return list of trial-level metric values for one modality column."""
     values = []
     with open(csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
@@ -122,7 +123,7 @@ def _load_trial_values(csv_path, col_name):
             if trial_id in ("", "mean", "std"):
                 break
             try:
-                values.append(float(row.get(col_name, "")))
+                values.append(float(read_cv_metric_from_row(row, prefix, modality)))
             except (TypeError, ValueError):
                 values.append(float("nan"))
     return values
@@ -283,8 +284,7 @@ def main():
         means[set_name] = []
         cis[set_name] = []
         for modality in MODALITY_ORDER:
-            col_name = f"{mcfg['col_prefix']}{modality}"
-            values = _load_trial_values(csv_path, col_name)
+            values = _load_trial_values(csv_path, mcfg["col_prefix"], modality)
             mean_val, std_val, n = _mean_std_n(values)
             ci_val = _ci95_from_std(std_val, n)
             if _isnan(mean_val):

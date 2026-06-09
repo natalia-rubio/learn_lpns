@@ -17,7 +17,11 @@ import math
 import os
 import statistics
 
-from util.zerod_calibration.modality_paths import DEFAULT_MODALITY_ORDER, MODALITY_DISPLAY
+from util.zerod_calibration.modality_paths import (
+    DEFAULT_MODALITY_ORDER,
+    MODALITY_DISPLAY,
+    read_cv_metric_from_row,
+)
 
 
 # Modality keys (column order in CSV/code)
@@ -105,7 +109,6 @@ PREFIX_MSE = "PressureMSE_"
 
 def load_csv_column(path, prefix, modality):
     """Load one metric column from a CV summary CSV. Returns list of values (one per trial)."""
-    col = f"{prefix}{modality}"
     out = []
     with open(path, "r", newline="") as f:
         reader = csv.DictReader(f)
@@ -113,7 +116,7 @@ def load_csv_column(path, prefix, modality):
             trial_id = row.get("trial_id", "").strip()
             if trial_id in ("", "mean", "std"):
                 break
-            val = row.get(col, "")
+            val = read_cv_metric_from_row(row, prefix, modality)
             try:
                 out.append(float(val))
             except (ValueError, TypeError):
