@@ -3,13 +3,33 @@
 This repository contains functionality to train and deploy neural networks that predict lumped parameters (e.g. resistances, inductances) for 0D "electric circuit" models of cardiovascular flows.  The neural networks predict lumped parameters from the vascular geometry and are trained on high-fidelity 3D data.  This work is described in greater detail in this [paper](https://arxiv.org/abs/2604.01549).  A second, more lightweight repo, [learnedZeroD](https://github.com/natalia-rubio/learnedZeroD), provides functionality to convert a standard 0D model of a vasculature into the more accurate learned representation using pre-trained neural networks.
 
 
-![Cross-validation pressure errors by modality](assets/github_figures.png)
+![3D-0D_schematic](assets/github_figures.png)
+
+
+### Inputs:
+* **1D centerline solution file (vtp)**: This file contains a 1D centerline representation of the geometry and the 3D simulation results projected onto the 1D centerline.  The 1D geometry vtp file for a patient-specific anatomy can be generated with the [SimVascular ROM Simulation Tool](https://simvascular.github.io/documentation/rom_simulation.html).  3D simulation results can be projected onto the centerline by integration over centerline-normal cross sections.
+
+* **Standard 0D input file (json)**: This file contains the standard SimVascular 0D representation of the vasculature and the simulation boundary conditions.  The 0D input file can also be generated with the [SimVascular ROM Simulation Tool](https://simvascular.github.io/documentation/rom_simulation.html).
+
+### Outputs:
+* **`learn-lpns-batch-zerod`**:
+  * Augmented 0D input files: contain extra geometric information and modified junction-vessel discretization (saved in **data/zeroD**) 
+  * Calibrated 0D input files: contains the optimal (ground truth) resistances and inductances (saved in **data/zeroD**)
+  * Tabulated geometry (neural network features) and lumped parameter (neural network target) data, saved in human-readable csvs (**data/ml_inputs**)and pickled dictionaries of jax arrays (**data/jax_arrays**).  Train-validation splits also generated.  (Can be generated independently with **`learn-lpns-data-processing`**, run **`learn-lpns-batch-zerod`** first.)
+  * Learned 0D input files: contains neural-network predicted resistances and inductances (saved in **data/zeroD**).  Generated only if trained neural networks are available (**``learn-lpns-train``** has been run).
+  * Forward 0D simulation results:  Flow and pressure results generated for standard, calibrated, and learned input files, as available.  csv files containing results for each 0D node at each timestep, plots of each solution (compared to the 3D solution) in time at a specified (generally inlet) node.  Printed table listing inlet pressure MSE with respect to 3D simulation.
+
+* **``learn-lpns-train``**: Trained neural networks.
+
+* `learn-lpns-cv`: Results of k-fold validation in csv and barchart visualization (saved to **results/cross-validation**).  Also generates all the above outputs in the proceess.
+
 
 ## Requirements
 
 - **Python** 3.10+
 - **Packages:** JAX, Optax, NumPy, pandas, SciPy, matplotlib, VTK, dill (see Setup)
 - **Binaries:** `svzerodsolver` and `svzerodcalibrator` — built from [svZeroDPlus fork](https://github.com/natalia-rubio/svZeroDPlus/tree/J-J_wiring) (`J-J_wiring` branch) via `scripts/setup_cross_validation.sh`
+
 
 ## Setup
 
