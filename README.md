@@ -2,10 +2,6 @@
 
 This repository contains functionality to train and deploy neural networks that predict lumped parameters (e.g. resistances, inductances) for 0D "electric circuit" models of cardiovascular flows.  The neural networks predict lumped parameters from the vascular geometry and are trained on high-fidelity 3D data.  This work is described in greater detail in this [paper](https://arxiv.org/abs/2604.01549).  A second, more lightweight repo, [learnedZeroD](https://github.com/natalia-rubio/learnedZeroD), provides functionality to convert a standard 0D model of a vasculature into the more accurate learned representation using pre-trained neural networks.
 
-** Documentation + production readiness in progress **
-
-
-
 ## Requirements
 
 - **Python** 3.10 or newer
@@ -89,7 +85,7 @@ $k$-fold cross-validation of this workflow is implemented, where $k$ different t
 
 Run from the **repository root** so imports and `--data_root data` resolve as expected.
 
-A **sample VMR cohort** (`VMR_aortas`, 5 geometries) is included under `data/`; see `[data/README.md](data/README.md)`. Use `--set_name VMR_aortas` for quick-start commands below.
+A **sample VMR cohort** (`VMR_aortas`, 5 geometries) is included under `data/`; see [data/README.md](data/README.md). All commands below use `--set_name VMR_aortas` so they run on bundled data without extra downloads.
 
 ### Quick start (cross-validation)
 
@@ -97,7 +93,7 @@ This command exercises most of the pipeline: prerequisite checks, k-fold trainin
 
 ```bash
 python util/zerod_calibration/run_cross_validation.py \
-  --set_name VMR_rigid_aorta_adults_all \
+  --set_name VMR_aortas \
   --geometry_variant bifurcations_EL \
   --num_trials 2 \
   --run_config gen_loss
@@ -174,7 +170,7 @@ Runs `generate_zerod_inputs.py` over VMR geometries discovered from `data/zeroD/
 
 ```bash
 python -m util.zerod_calibration.batch_generate_zerod_inputs_vmr \
-  --set_name VMR_rigid_aorta_adults \
+  --set_name VMR_aortas \
   --run_config gen_loss \
   --skip_steps calibration_forward \
   --geometries 0076_1001
@@ -221,9 +217,9 @@ Training lives in `util/neural_network/`. Each RRI coefficient (linear R, stenos
 
 ```bash
 python util/neural_network/launch_training.py \
-  VMR_rigid_aorta_adults_all 42 bifurcations_EL \
+  VMR_aortas 5 bifurcations_EL \
   --run_config gen_loss \
-  --model_dir results/models/VMR_rigid_aorta_adults_all/bifurcations_EL_trial_0
+  --model_dir results/models/VMR_aortas/bifurcations_EL_trial_0
 ```
 
 Positional args: `set_name`, `num_geos`, optional `geometry_variant` (default `all` → trains both `bifurcations` and `bifurcations_EL`). Use `--geometry_variant` when combined with `--vessel` so flag order does not matter.
@@ -265,7 +261,7 @@ After zeroD outputs exist, build ml_inputs and jax stacks:
 
 ```bash
 python util/data_processing/run_data_processing.py \
-  --set_name VMR_rigid_aorta_adults_all \
+  --set_name VMR_aortas \
   --geometry_variant bifurcations_EL \
   --run_config gen_loss
 ```
@@ -293,7 +289,11 @@ Most accept `--run_config`, `--set_name`, and `--geometry_variant` (underscore k
 
 ## Data
 
-The `data/` directory is organized by `set_name` (the cohort of vascular geometries use for training and testing, e.g. VMR_abdo - abdominal aortas from the Vascular Model Repository), `geometry_id` (each geometry in the cohort), and (optionally) `run_config` suffix.
+The `data/` directory is organized by `set_name` (the cohort of vascular geometries used for training and testing), `geometry_id` (each geometry in the cohort), and (optionally) `run_config` suffix.
+
+### Bundled sample cohort (`VMR_aortas`)
+
+Five adult aortic geometries from the [Vascular Model Repository](https://www.vascularmodel.com/) are included for local testing. Geometries: `0075_1001`, `0076_1001`, `0094_0001`, `0095_0001`, `0105_0001`. See [data/README.md](data/README.md) for layout and `scripts/git-freeze-sample-data.sh` if you want Git to ignore local edits to tracked seed files.
 
 - `zeroD/`: per-geometry simulation workspace and outputs (generated geometric inputs, calibrated configs, forward-simulation result CSVs, downsampled CSVs, and MSE comparison files). VMR cohorts use `data/zeroD/<set_name>/standard-0d/` for reference solver input JSONs; centerlines for VMR live under `data/oneD/VMR/<geo_id>/unsteady_soln.vtp`.
 - `oneD/`: per-geometry 3D solutions projected onto 1D centerlines by integration over vessel cross-sections.  Used to calibrate the 0D model to find the ground truth lumped parameter values.  (Needs to be provided by user.  Sample script to project a 3D solution onto centerline in `util/cluster_scripts`.)
