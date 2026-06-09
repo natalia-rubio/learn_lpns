@@ -9,21 +9,21 @@ to skip svSlicer entirely.
 Usage: python batch_centerline_proj_svslicer.py <set_name> [num_procs] [num_threads]
 """
 
-import os
-import sys
-import vtk
 import glob
+import os
 import subprocess
-import numpy as np
-from tqdm import tqdm
-from functools import lru_cache
-from multiprocessing import Pool, cpu_count
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import sys
 import threading
-from vtk.util.numpy_support import vtk_to_numpy as v2n
-from vtk.util.numpy_support import numpy_to_vtk as n2v
-from util.vtk_functions import read_geo, write_geo, calculator, cut_plane, connectivity, Integration
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from multiprocessing import cpu_count
+
+import numpy as np
+import vtk
+from tqdm import tqdm
 from util.get_bc_integrals import get_res_names
+from util.vtk_functions import Integration, calculator, connectivity, cut_plane, read_geo, write_geo
+from vtk.util.numpy_support import numpy_to_vtk as n2v
+from vtk.util.numpy_support import vtk_to_numpy as v2n
 
 # Timeout for svSlicer subprocess (seconds). Increase for very large runs.
 SVSLICER_TIMEOUT_SECONDS = 3600  # 1 hour
@@ -390,7 +390,7 @@ def call_svslicer(combined_vtu_path, centerline_path, output_path, num_threads=N
                     if any(keyword in line.lower() for keyword in ['completed', 'writing', 'slice extraction', 'per slice']):
                         print(f"  {line.strip()}")
             
-            print(f"  svSlicer completed successfully")
+            print("  svSlicer completed successfully")
             print(f"  Output written to: {output_path}")
             return True
         
@@ -407,14 +407,14 @@ def call_svslicer(combined_vtu_path, centerline_path, output_path, num_threads=N
             if result.stdout:
                 # Show last part of stdout for debugging
                 lines = result.stdout.split('\n')
-                print(f"  Last stdout lines:")
+                print("  Last stdout lines:")
                 for line in lines[-10:]:
                     if line.strip():
                         print(f"    {line.strip()}")
             return False
         else:
             # Exit code 0 but no output file - something went wrong
-            print(f"  Warning: svSlicer exited with code 0 but no output file was created")
+            print("  Warning: svSlicer exited with code 0 but no output file was created")
             if result.stdout:
                 lines = result.stdout.split('\n')
                 for line in lines[-10:]:
@@ -540,7 +540,7 @@ def project_results_python_fallback(geo_dir, sim_dir, centerline_path, num_procs
         num_workers = int(os.getenv('PYTHON_NUM_WORKERS', cpu_count() - 1))
     
     try:
-        print(f"  Using optimized Python-based projection...")
+        print("  Using optimized Python-based projection...")
         
         # Read centerline
         reader_1d = read_geo(centerline_path).GetOutput()
@@ -750,7 +750,7 @@ def process_geometry(geo_dir, sim_dir, centerline_path, num_procs, output_path, 
         
         # Check if we should skip svSlicer entirely
         if use_python_only or os.getenv('SVSLICER_USE_PYTHON_ONLY', '').lower() in ('1', 'true', 'yes'):
-            print(f"  Using Python-based projection (svSlicer skipped)")
+            print("  Using Python-based projection (svSlicer skipped)")
             return project_results_python_fallback(geo_dir, sim_dir, centerline_path, num_procs, output_path, time_files)
         
         # Try processing all timesteps at once first
@@ -772,7 +772,7 @@ def process_geometry(geo_dir, sim_dir, centerline_path, num_procs, output_path, 
         output_exists = os.path.exists(output_path) and os.path.getsize(output_path) > 0
         
         if output_exists:
-            print(f"  Successfully processed all timesteps at once")
+            print("  Successfully processed all timesteps at once")
             return True
         
         # If that failed, try processing in batches
@@ -812,17 +812,17 @@ def process_geometry(geo_dir, sim_dir, centerline_path, num_procs, output_path, 
                 for batch_path, _ in batch_outputs:
                     if os.path.exists(batch_path):
                         os.remove(batch_path)
-                print(f"  Successfully merged batch results")
+                print("  Successfully merged batch results")
                 return True
             else:
-                print(f"  Failed to merge batch results")
+                print("  Failed to merge batch results")
                 # Fall back to Python method
-                print(f"  All svSlicer attempts failed, falling back to Python-based projection...")
+                print("  All svSlicer attempts failed, falling back to Python-based projection...")
                 return project_results_python_fallback(geo_dir, sim_dir, centerline_path, num_procs, output_path, time_files)
         else:
-            print(f"  No batches completed successfully")
+            print("  No batches completed successfully")
             # Fall back to Python method
-            print(f"  All svSlicer attempts failed, falling back to Python-based projection...")
+            print("  All svSlicer attempts failed, falling back to Python-based projection...")
             return project_results_python_fallback(geo_dir, sim_dir, centerline_path, num_procs, output_path, time_files)
         
     except Exception as e:
@@ -924,7 +924,7 @@ def main():
             total_failed += 1
         print()
     
-    print(f"\n\nSummary:")
+    print("\n\nSummary:")
     print(f"  Successfully processed: {total_processed}")
     print(f"  Failed/Skipped: {total_failed}")
     print(f"  Total: {total_processed + total_failed}")

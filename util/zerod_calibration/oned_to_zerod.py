@@ -3,15 +3,17 @@
 Helper functions for calibration workflow.
 """
 
-import os
-import vtk
-import numpy as np
-import xml.etree.ElementTree as ET
-from vtk.util.numpy_support import vtk_to_numpy as v2n
 import json
-from util.zerod_calibration.tools.file_io import read_centerline_vtp
-from util.zerod_calibration.tools.file_io import parse_simulation_xml
-from util.zerod_calibration.tools.file_io import VMR_time_step_dict
+import os
+
+import numpy as np
+import vtk
+
+from util.zerod_calibration.tools.file_io import (
+    VMR_time_step_dict,
+    parse_simulation_xml,
+    read_centerline_vtp,
+)
 
 try:
     from scipy.interpolate import CubicSpline, interp1d
@@ -173,7 +175,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 # Forward differences: df/dt ≈ (f[i+1] - f[i]) / dt
                 # For last point, use backward difference
                 if verbose:
-                    print(f"  Using forward difference method for derivatives")
+                    print("  Using forward difference method for derivatives")
                 pressure_der = np.zeros_like(pressure_data)
                 flow_der = np.zeros_like(flow_data)
                 
@@ -192,7 +194,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
                 # Backward differences: df/dt ≈ (f[i] - f[i-1]) / dt
                 # For first point, use forward difference
                 if verbose:
-                    print(f"  Using backward difference method for derivatives")
+                    print("  Using backward difference method for derivatives")
                 pressure_der = np.zeros_like(pressure_data)
                 flow_der = np.zeros_like(flow_data)
                 
@@ -210,7 +212,7 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
             else:
                 # Central differences (default): uses np.gradient
                 if verbose:
-                    print(f"  Using central difference method for derivatives")
+                    print("  Using central difference method for derivatives")
                 pressure_der = np.gradient(pressure_data, dt).tolist()
                 flow_der = np.gradient(flow_data, dt).tolist()
         else:
@@ -320,10 +322,10 @@ def extract_observations_from_1d(centerline_soln_path, geometric_input_path, geo
     if inlet_idx is not None:
         p_ref, p_der, f_ref, f_der = extract_at_point(inlet_idx, times, dt, derivative_method, verbose=True)
         if p_ref is not None:
-            observations["y"][f"pressure:INFLOW:branch0_seg0"] = p_ref[start_idx:end_idx]
-            observations["dy"][f"pressure:INFLOW:branch0_seg0"] = p_der[start_idx:end_idx]
-            observations["y"][f"flow:INFLOW:branch0_seg0"] = f_ref[start_idx:end_idx]
-            observations["dy"][f"flow:INFLOW:branch0_seg0"] = f_der[start_idx:end_idx]
+            observations["y"]["pressure:INFLOW:branch0_seg0"] = p_ref[start_idx:end_idx]
+            observations["dy"]["pressure:INFLOW:branch0_seg0"] = p_der[start_idx:end_idx]
+            observations["y"]["flow:INFLOW:branch0_seg0"] = f_ref[start_idx:end_idx]
+            observations["dy"]["flow:INFLOW:branch0_seg0"] = f_der[start_idx:end_idx]
     
     # Outlet BCs - find vessels connected to outlets
     for vessel in vessels:
@@ -694,7 +696,6 @@ def find_inlet_outlet_caps(geo_dir):
         outlet_caps: List of outlet cap filenames
         mesh_surfaces_dir: Path to mesh-surfaces directory
     """
-    import vtk
     
     # Try svVascularize format first (mesh/fluid_msh_0/mesh-surfaces)
     mesh_dir = os.path.join(geo_dir, 'mesh', 'fluid_msh_0')
@@ -1177,11 +1178,11 @@ def verify_inlet_flow_matches_bc(input_data, results, inlet_vessel_name='branch0
             max_diff_time = result_times[i] if i < len(result_times) else None
     
     if max_diff > tolerance:
-        print(f"  ⚠ WARNING: Inlet flow does not match BC!")
+        print("  ⚠ WARNING: Inlet flow does not match BC!")
         print(f"    Maximum difference: {max_diff:.6f} cm³/s at t={max_diff_time:.3f}")
         print(f"    BC flow range: [{min(bc_flows):.2f}, {max(bc_flows):.2f}] cm³/s")
         print(f"    Result flow range: [{min(inlet_flows):.2f}, {max(inlet_flows):.2f}] cm³/s")
-        print(f"    This may indicate convergence issues or BC application problems")
+        print("    This may indicate convergence issues or BC application problems")
         return False
     else:
         print(f"  ✓ Verified: Inlet flow matches BC (max diff: {max_diff:.6e} cm³/s)")

@@ -9,9 +9,9 @@ For a set name and list of geometries, run the full data processing pipeline:
 
 import argparse
 import csv
+import glob
 import os
 import sys
-import glob
 
 import numpy as np
 
@@ -20,23 +20,25 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from util.data_processing.inputs_from_0d_config import (
-    load_junction_geometric_features,
-    compute_junction_flow_splits,
-    load_vessel_geometric_features,
-    load_vessel_targets_from_config,
+from util.data_processing.data_dict_from_csvs import (
+    build_data_dict_from_csvs,
+    build_data_dict_from_vessel_csvs,
 )
-from util.data_processing.outputs_from_config import load_junction_lumped_parameters
-from util.data_processing.data_dict_from_csvs import build_data_dict_from_csvs, build_data_dict_from_vessel_csvs
 from util.data_processing.generate_split_indices import (
     build_geometry_index_map,
     build_split_dict,
     generate_geometry_split,
-    load_split_for_training,
     resolve_flat_indices,
     resolve_geometry_row_ranges_from_jax_dict,
     write_geometries_txt,
 )
+from util.data_processing.inputs_from_0d_config import (
+    compute_junction_flow_splits,
+    load_junction_geometric_features,
+    load_vessel_geometric_features,
+    load_vessel_targets_from_config,
+)
+from util.data_processing.outputs_from_config import load_junction_lumped_parameters
 from util.tools.basic import save_dict
 from util.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
 
@@ -127,7 +129,7 @@ def main():
                     _search_parts.append(run_config_suffix)
                 _search_parts.append(geometry_variant)
                 _search_dir = os.path.join(*_search_parts)
-                print(f"  No geometries found with both geometric_features.csv and junction_lumped_parameters.csv")
+                print("  No geometries found with both geometric_features.csv and junction_lumped_parameters.csv")
                 print(f"  Searched in: {_search_dir}")
                 continue
             print(f"  Found {len(geometries)} geometries: {geometries}")

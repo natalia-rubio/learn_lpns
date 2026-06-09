@@ -10,9 +10,9 @@ It searches for calibrated JSON outputs and the geometric input JSON under
 <data_root>/<set_name>/<geo_name>/ and writes a PNG to
 results/param_comparison/<run_config>/<set_name>/<geo_name>/zero_d_parameter_bars.png
 """
-import os
 import argparse
 import glob
+import os
 import sys
 
 # Ensure package imports work relative to repository
@@ -129,7 +129,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     if args.verbose:
-        print(f"Found modality JSONs:")
+        print("Found modality JSONs:")
         for k, v in modality_jsons.items():
             print(f"  {k}: {v}")
         print(f"Saving plot to: {out_dir}")

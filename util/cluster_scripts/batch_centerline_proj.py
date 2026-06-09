@@ -8,15 +8,16 @@ and writes unsteady_soln.vtp under synthetic_junctions_reduced_results/.
 Usage: python batch_centerline_proj.py <set_name> [num_procs]
 """
 
+import glob
 import os
 import sys
+
 import vtk
 from tqdm import tqdm
 from util.get_bc_integrals import get_res_names
-from util.vtk_functions import read_geo, write_geo, calculator, cut_plane, connectivity, Integration
+from util.vtk_functions import Integration, calculator, connectivity, cut_plane, read_geo, write_geo
 from vtk.util.numpy_support import vtk_to_numpy as v2n
-from vtk.util.numpy_support import numpy_to_vtk as n2v
-import glob
+
 
 def slice_vessel(inp_3d, origin, normal):
     """
@@ -250,7 +251,7 @@ def project_results_to_centerline(geo_dir, sim_dir, centerline_path, num_procs, 
                     reader_1d.GetPointData().GetArray(f'pressure_{time_padded}').SetValue(i, integral.evaluate("Pressure"))
                     reader_1d.GetPointData().GetArray(f'velocity_{time_padded}').SetValue(i, integral.evaluate("Velocity"))
                     
-                except Exception as e:
+                except Exception:
                     # Skip this timestep/point if integration fails
                     continue
             
@@ -358,7 +359,7 @@ def main():
         else:
             total_failed += 1
     
-    print(f"\n\nSummary:")
+    print("\n\nSummary:")
     print(f"  Successfully processed: {total_processed}")
     print(f"  Failed/Skipped: {total_failed}")
     print(f"  Total: {total_processed + total_failed}")

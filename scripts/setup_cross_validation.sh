@@ -66,8 +66,7 @@ Prerequisites (checked before clone/build):
 
 After setup:
   source scripts/cv_env.sh
-  python util/zerod_calibration/run_cross_validation.py \
-    --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2
+  learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2
 
 Sample data ships in learn_lpns (5 VMR geometries). Pipeline outputs under data/
 and results/ are generated on first run.
@@ -286,11 +285,11 @@ if ! $SKIP_PYTHON; then
   fi
   # shellcheck disable=SC1091
   source "$VENV_DIR/bin/activate"
-  python -m pip install --upgrade pip
+  python -m pip install --upgrade pip setuptools
   log "Installing $JAX_VARIANT (install JAX before other deps)"
   python -m pip install -U "$JAX_VARIANT"
-  log "Installing requirements.txt"
-  python -m pip install -r "$LEARN_LPNS_DIR/requirements.txt"
+  log "Installing package (editable) and dev extras"
+  python -m pip install -e "$LEARN_LPNS_DIR[dev]"
 else
   log "Skipping Python setup (--skip-python)"
 fi
@@ -304,7 +303,7 @@ Setup complete.
 
   source $LEARN_LPNS_DIR/scripts/cv_env.sh
 
-  python util/zerod_calibration/run_cross_validation.py \\
+  learn-lpns-cv \\
     --set_name VMR_aortas \\
     --geometry_variant bifurcations_EL \\
     --num_trials 2 \\

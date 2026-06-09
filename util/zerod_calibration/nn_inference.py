@@ -1,7 +1,8 @@
-"""Junction neural-network inference: load jax cohort rows and write predictions to 0D JSON."""
+"""Neural-network inference: load jax cohort rows and write R/S/L predictions into 0D JSON."""
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -12,14 +13,14 @@ from util.neural_network.nn_model import predict
 from util.neural_network.nn_util import dill_load
 
 
-def forward_junction_jax_pickle_path(
+def forward_jax_pickle_path(
     data_root: str,
     set_name: str,
     run_config_suffix: str,
     geometry_variant: str,
     num_geos: int = 1,
 ) -> str:
-    """Path to per-forward-pass junction jax pickle (default: single geometry, set_type=forward)."""
+    """Path to per-forward-pass jax pickle (default: single geometry, set_type=forward)."""
     return os.path.join(
         data_root,
         "jax_arrays",
@@ -31,21 +32,24 @@ def forward_junction_jax_pickle_path(
     )
 
 
-def _resolve_junction_model_paths(model_dir: str, set_name: str) -> List[str]:
-    model_base_name = f"rri_{set_name}_pred"
+def _resolve_model_paths(model_dir: str, set_name: str, *, vessel: bool = False) -> List[str]:
+    suffix = "vessel_pred" if vessel else "pred"
+    model_base_name = f"rri_{set_name}_{suffix}"
     return [
         os.path.join(model_dir, f"{model_base_name}_{i}_model")
         for i in range(3)
     ]
 
 
-def run_junction_nn_predict(
+def run_nn_predict(
     X: np.ndarray,
     model_dir: str,
     set_name: str,
+    *,
+    vessel: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Run three junction NN heads; return (R, stenosis, L) prediction arrays."""
-    model_paths = _resolve_junction_model_paths(model_dir, set_name)
+    """Run three NN heads (R, stenosis, L); return prediction arrays."""
+    model_paths = _resolve_model_paths(model_dir, set_name, vessel=vessel)
     for model_path in model_paths:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model not found: {model_path}")
@@ -68,7 +72,7 @@ def run_junction_nn_predict(
     return np.array(raw_predictions[0]), np.array(raw_predictions[1]), np.array(raw_predictions[2])
 
 
-def apply_junction_nn_predictions(
+def apply_junction_predictions(
     nn_config: Dict[str, Any],
     *,
     X: np.ndarray,
@@ -164,7 +168,7 @@ def apply_junction_nn_predictions(
         junc["junction_values"]["L"] = L_values
 
 
-def run_junction_nn_inference(
+def run_junction_inference(
     *,
     jax_data_dict: Dict[str, Any],
     nn_config: Dict[str, Any],
@@ -174,7 +178,7 @@ def run_junction_nn_inference(
     junction_type: str,
     quadratic_resistor: bool = False,
 ) -> None:
-    """Load rows from jax dict, predict, and apply predictions to ``nn_config``."""
+    """Load junction rows from jax dict, predict, and apply predictions to ``nn_config``."""
     from util.data_processing.data_dict_from_csvs import load_junction_rows_from_jax_dict
 
     X, junction_names, outlet_primary_names, outlet_vessel_ids, feature_names = (
@@ -189,11 +193,11 @@ def run_junction_nn_inference(
     print(f"  Selected {len(feature_names)} features (matching training data): {feature_names}")
     print(f"  Neural network input dimensions: {X.shape} (rows={X.shape[0]}, features={X.shape[1]})")
 
-    pred_R, pred_S, pred_L = run_junction_nn_predict(X, model_dir, set_name)
+    pred_R, pred_S, pred_L = run_nn_predict(X, model_dir, set_name, vessel=False)
     if not quadratic_resistor:
         pred_S = np.zeros_like(pred_R)
 
-    apply_junction_nn_predictions(
+    apply_junction_predictions(
         nn_config,
         X=X,
         junction_names=junction_names,
@@ -204,3 +208,141 @@ def run_junction_nn_inference(
         pred_L=pred_L,
         junction_type=junction_type,
     )
+
+
+def validate_vessel_trial_geometry_variant(
+    model_dir: Optional[str],
+    geometry_variant: str,
+) -> None:
+    """Ensure CV trial model dir matches the requested geometry variant."""
+    model_dir_basename = os.path.basename(model_dir or "")
+    if "_trial_" not in model_dir_basename:
+        return
+    trial_model_variant = model_dir_basename.split("_trial_")[0]
+    if geometry_variant != trial_model_variant:
+        raise ValueError(
+            f"Vessel NN trial model dir is for {trial_model_variant!r}, "
+            f"but geometry_variant is {geometry_variant!r}"
+        )
+
+
+def resolve_vessel_model_dir(
+    *,
+    set_name: str,
+    geometry_variant: str,
+    model_dir: Optional[str] = None,
+) -> str:
+    """Resolve vessel model checkpoint directory (CV trial dirs use ``_vessel_trial_`` suffix)."""
+    if model_dir and "_trial_" in os.path.basename(model_dir):
+        return os.path.join(
+            os.path.dirname(model_dir),
+            os.path.basename(model_dir).replace("_trial_", "_vessel_trial_", 1),
+        )
+    return os.path.join("results", "models", set_name, f"{geometry_variant}_vessel")
+
+
+def load_vessel_feature_matrix(
+    geometric_input_path: str,
+    *,
+    verbose: bool = False,
+) -> Tuple[np.ndarray, List[int]]:
+    """Load and filter vessel geometric features for NN inference."""
+    from util.data_processing.data_dict_from_csvs import (
+        _clamp_tortuosity,
+        filter_features_from_array,
+        get_default_include_features_vessel,
+    )
+    from util.data_processing.inputs_from_0d_config import load_vessel_geometric_features
+
+    vessel_X, vessel_feature_names, vessel_ids, _vessel_names = load_vessel_geometric_features(
+        geometric_input_path, verbose=verbose
+    )
+    if len(vessel_X) == 0:
+        raise ValueError(f"No non-connector vessels for vessel NN ({geometric_input_path})")
+
+    vessel_X, vessel_feature_names = filter_features_from_array(
+        vessel_X,
+        vessel_feature_names,
+        include_features=get_default_include_features_vessel(),
+    )
+    _clamp_tortuosity(vessel_X, vessel_feature_names)
+    return np.array(vessel_X, dtype=np.float64), vessel_ids
+
+
+def apply_vessel_predictions(
+    config: Dict[str, Any],
+    *,
+    vessel_ids: List[int],
+    pred_R: np.ndarray,
+    pred_S: np.ndarray,
+    pred_L: np.ndarray,
+) -> None:
+    """Write predicted R/S/L into non-connector vessels (mutates ``config`` in place)."""
+    vessel_id_to_row = {vessel_id: i for i, vessel_id in enumerate(vessel_ids)}
+    for vessel in config.get("vessels", []):
+        vessel_name = (vessel.get("vessel_name") or "").lower()
+        if "connector" in vessel_name:
+            continue
+        vessel_id = vessel.get("vessel_id")
+        row = vessel_id_to_row.get(vessel_id)
+        if row is None:
+            continue
+        z = dict(vessel.get("zero_d_element_values") or {})
+        z["R_poiseuille"] = float(pred_R[row])
+        z["stenosis_coefficient"] = float(pred_S[row])
+        z["L"] = float(pred_L[row])
+        vessel["zero_d_element_values"] = z
+
+
+def run_vessel_inference(
+    *,
+    junction_nn_config: Dict[str, Any],
+    variant_geometric_input: str,
+    set_name: str,
+    geometry_variant: str,
+    model_dir: Optional[str] = None,
+    quadratic_resistor: bool = False,
+    verbose: bool = False,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Predict vessel R/S/L and return (junction+vessel config, vessel-only config).
+
+    ``junction_nn_config`` is copied for the junction+vessel output; vessel-only
+    config is built from ``variant_geometric_input`` (geometric junctions).
+    """
+    validate_vessel_trial_geometry_variant(model_dir, geometry_variant)
+
+    vessel_X, vessel_ids = load_vessel_feature_matrix(
+        variant_geometric_input, verbose=verbose
+    )
+    vessel_model_dir = resolve_vessel_model_dir(
+        set_name=set_name,
+        geometry_variant=geometry_variant,
+        model_dir=model_dir,
+    )
+    pred_R, pred_S, pred_L = run_nn_predict(
+        vessel_X, vessel_model_dir, set_name, vessel=True
+    )
+    if not quadratic_resistor:
+        pred_S = np.zeros_like(pred_R)
+
+    junction_and_vessel_config = json.loads(json.dumps(junction_nn_config))
+    apply_vessel_predictions(
+        junction_and_vessel_config,
+        vessel_ids=vessel_ids,
+        pred_R=pred_R,
+        pred_S=pred_S,
+        pred_L=pred_L,
+    )
+
+    with open(variant_geometric_input, "r") as f:
+        vessel_only_config = json.load(f)
+    apply_vessel_predictions(
+        vessel_only_config,
+        vessel_ids=vessel_ids,
+        pred_R=pred_R,
+        pred_S=pred_S,
+        pred_L=pred_L,
+    )
+
+    return junction_and_vessel_config, vessel_only_config

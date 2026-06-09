@@ -37,7 +37,7 @@ import glob
 import os
 import re
 import sys
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:

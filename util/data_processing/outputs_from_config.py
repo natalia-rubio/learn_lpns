@@ -12,7 +12,7 @@ Each column is a scalar "lumped parameter" derived from `junction_values`.
 """
 
 import json
-from typing import Any, Dict, List, Tuple, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 

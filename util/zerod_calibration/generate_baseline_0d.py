@@ -1,11 +1,13 @@
-import os
 import json
-import numpy as np
+import os
 import subprocess
-import tempfile
 
-from util.zerod_calibration.oned_to_zerod import find_inlet_outlet_caps_from_centerline
-from util.zerod_calibration.oned_to_zerod import find_inlet_outlet_caps
+import numpy as np
+
+from util.zerod_calibration.oned_to_zerod import (
+    find_inlet_outlet_caps,
+    find_inlet_outlet_caps_from_centerline,
+)
 
 # Constants
 RHO = 1.06  # Blood density (g/cm^3)
@@ -45,15 +47,15 @@ def update_simulation_parameters(geo_dir, json_path, inlet_cap_name, capacitance
                 elif len(t_array) == 1:
                     # Single time point - use default
                     zerod_input['simulation_parameters']['cardiac_cycle_period'] = 1.0
-                    print(f"  Warning: Only one time point in BC, using default cardiac_cycle_period = 1.0 s")
+                    print("  Warning: Only one time point in BC, using default cardiac_cycle_period = 1.0 s")
             else:
                 # No BC time array - use default
                 zerod_input['simulation_parameters']['cardiac_cycle_period'] = 1.0
-                print(f"  Warning: No BC time array found, using default cardiac_cycle_period = 1.0 s")
+                print("  Warning: No BC time array found, using default cardiac_cycle_period = 1.0 s")
         else:
             # No boundary conditions - use default
             zerod_input['simulation_parameters']['cardiac_cycle_period'] = 1.0
-            print(f"  Warning: No boundary conditions found, using default cardiac_cycle_period = 1.0 s")
+            print("  Warning: No boundary conditions found, using default cardiac_cycle_period = 1.0 s")
     
     # Set all capacitance (C) values to 10^-10
     capacitance_value = 1e-10#1e-10
@@ -71,7 +73,7 @@ def update_simulation_parameters(geo_dir, json_path, inlet_cap_name, capacitance
     with open(json_path, 'w') as f:
         json.dump(zerod_input, f, indent=4)
     
-    print(f"  Updated geometric input with simulation parameters")
+    print("  Updated geometric input with simulation parameters")
     print(f"  Saved to: {json_path}")
     return
 
@@ -94,10 +96,8 @@ def create_geometric_zerod_input_rom(geo_dir, centerline_path, output_path,
         zerod_input: Dictionary with 0D input data
         vessel_bc_map: Mapping from vessels to BCs (simplified)
     """
-    import subprocess
-    import tempfile
     
-    print(f"Using SimVascular ROM workflow to generate 0D input")
+    print("Using SimVascular ROM workflow to generate 0D input")
     
     # Find inlet and outlet caps
     # If geo_dir doesn't exist or doesn't have mesh files, use centerline-based approach
@@ -169,7 +169,7 @@ def create_geometric_zerod_input_rom(geo_dir, centerline_path, output_path,
     outlet_caps_base_str = '[' + ', '.join([f"'{cap}'" for cap in outlet_caps_base]) + ']'
     
     # Extract outlet resistances from XML file (if available)
-    print(f"\nExtracting outlet resistances from XML file...")
+    print("\nExtracting outlet resistances from XML file...")
     print(f"  Looking for outlet caps: {outlet_caps}")
     # Create mapping from base names (without .vtp) to full names (with .vtp)
     # XML BC names don't include .vtp extension
@@ -262,7 +262,7 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
                 "install SimVascular in a standard location."
             )
     
-    print(f"Running SimVascular ROM workflow...")
+    print("Running SimVascular ROM workflow...")
     print(f"  Script: {rom_script}")
     print(f"  SimVascular: {simvascular_path}")
     
@@ -271,7 +271,7 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
     result = subprocess.run(cmd, capture_output=True, text=True)
     
     if result.returncode != 0:
-        print(f"Error running SimVascular ROM workflow:")
+        print("Error running SimVascular ROM workflow:")
         print(f"STDOUT: {result.stdout}")
         print(f"STDERR: {result.stderr}")
         raise RuntimeError(f"SimVascular ROM workflow failed with return code {result.returncode}")
@@ -304,12 +304,12 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
             inlet_vessels = junc.get('inlet_vessels', [])
             if len(inlet_vessels) > 1:
                 print(f"  Warning: Junction {junc.get('junction_name')} has {len(inlet_vessels)} inlets.")
-                print(f"    BloodVessel junction only supports 1 inlet. Keeping first inlet only.")
+                print("    BloodVessel junction only supports 1 inlet. Keeping first inlet only.")
                 # Keep only the first inlet
                 junc['inlet_vessels'] = [inlet_vessels[0]]
     
     # Remove unused resistance BCs (BCs that are not referenced by any vessel)
-    print(f"\n  Removing unused resistance BCs...")
+    print("\n  Removing unused resistance BCs...")
     if 'boundary_conditions' in zerod_input:
         # Find all resistance BC names that are actually used by vessels
         used_resistance_bcs = set()
@@ -369,7 +369,7 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
         for bc in zerod_input['boundary_conditions']:
             bc_name = bc.get('bc_name', '')
             vessel_bc_map[bc_name] = {
-                "name": f"branch0_seg0",  # Simplified
+                "name": "branch0_seg0",  # Simplified
                 "pressure": "pressure",
                 "flow": "flow"
             }

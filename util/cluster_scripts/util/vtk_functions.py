@@ -5,13 +5,10 @@ plane cuts, connectivity, slice integration, region growing).
 """
 
 import os
-import vtk
-import pdb
+from collections import defaultdict
 
 import numpy as np
-from collections import defaultdict
-from tqdm import tqdm
-
+import vtk
 from vtk.util.numpy_support import numpy_to_vtk as n2v
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 

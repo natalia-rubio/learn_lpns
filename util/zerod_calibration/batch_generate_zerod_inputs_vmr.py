@@ -9,11 +9,11 @@ This script:
 4. Provides a summary at the end
 """
 
-import os
-import sys
-import subprocess
-import json
 import argparse
+import json
+import os
+import subprocess
+import sys
 from datetime import datetime
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

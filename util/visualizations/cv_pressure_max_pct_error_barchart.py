@@ -23,14 +23,15 @@ import os
 import statistics
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats as scipy_stats
 
-from util.visualizations.plot_location_comparison import get_line_style
 from util.visualizations.cv_pressure_errors_to_latex import MODALITY_DISPLAY, VAL_GEOMETRY_DISPLAY
 from util.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
+from util.visualizations.plot_location_comparison import get_line_style
 from util.zerod_calibration.modality_paths import (
     DEFAULT_MODALITY_ORDER,
     read_cv_metric_from_row,

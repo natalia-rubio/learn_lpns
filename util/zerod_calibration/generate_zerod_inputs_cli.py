@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import List, Optional
+from typing import List
 
 from util.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,

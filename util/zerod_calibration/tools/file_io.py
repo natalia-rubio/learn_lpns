@@ -1,11 +1,13 @@
-import os
-import json
 import csv
 import glob
-import numpy as np
+import json
+import os
 import xml.etree.ElementTree as ET
+
+import numpy as np
 import vtk
 from vtk.util.numpy_support import vtk_to_numpy as v2n
+
 from util.zerod_calibration.generate_zerod_inputs_cli import DEFAULT_JUNCTION_TYPES
 
 # Reference 0D solver JSONs per geometry (VMR cohort layout).
@@ -277,7 +279,7 @@ def get_time_period(set_name, geo_name):
                         time_step_size = float(time_step_size_elem.text)
                         time_period = num_time_steps * time_step_size
                         return time_period
-            except Exception as e:
+            except Exception:
                 pass
     
     return None

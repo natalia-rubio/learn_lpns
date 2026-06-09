@@ -1,10 +1,10 @@
-import os
-import json
 import copy
+import json
+import os
 import subprocess
 
-import numpy as np
 import pandas as pd
+
 
 def run_forward_simulation(input_json_path, output_csv_path):
     """
@@ -66,7 +66,7 @@ def run_forward_simulation(input_json_path, output_csv_path):
             abs_output_dir = os.path.abspath(os.path.dirname(output_csv_path_str)) if os.path.dirname(output_csv_path_str) else os.path.abspath('.')
             abs_output_csv = os.path.abspath(output_csv_path_str)
             
-            print(f"  Attempting simulation with svzerodsolver executable...")
+            print("  Attempting simulation with svzerodsolver executable...")
             print(f"    Executable: {svzerodsolver_path}")
             print(f"    Input: {abs_input_path}")
             print(f"    Output: {output_csv_path_str}")
@@ -138,7 +138,7 @@ def run_forward_simulation(input_json_path, output_csv_path):
             return None
         except Exception as e:
             print(f"  ✗ svzerodsolver simulation failed: {e}")
-            print(f"  Creating all-zeros solution as fallback...")
+            print("  Creating all-zeros solution as fallback...")
             
             # Create all-zeros solution
             try:

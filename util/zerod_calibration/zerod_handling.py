@@ -1,5 +1,6 @@
 import copy
 
+
 def modify_junction_types(config, junction_type):
     """
     Modify junction types in a config based on the number of outlets.

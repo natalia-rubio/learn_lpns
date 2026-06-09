@@ -37,7 +37,8 @@ import numpy as np
 
 try:
     import vtk
-    from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy as v2n
+    from vtk.util.numpy_support import numpy_to_vtk
+    from vtk.util.numpy_support import vtk_to_numpy as v2n
 except ImportError as e:
     raise SystemExit("VTK is required: pip install vtk") from e
 

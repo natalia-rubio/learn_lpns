@@ -4,10 +4,11 @@ Script to compare geometric vs calibrated 0D element values using violin plots.
 Shows distributions of resistance, inductance, capacitance, and stenosis coefficient.
 """
 
-import os
-import sys
 import argparse
 import json
+import os
+import sys
+
 import numpy as np
 
 # Try to import matplotlib with compatibility handling
@@ -39,6 +40,7 @@ try:
     
     try:
         import matplotlib.pyplot as plt
+
         from util.visualizations.matplotlib_tex import configure_matplotlib_latex
 
         configure_matplotlib_latex(plt)
@@ -404,19 +406,19 @@ def main():
             geometric_junction_values[element_type] = [0.0] * num_outlets
             print(f"  Note: Geometric {element_type} junction values missing, assuming {num_outlets} zeros")
     
-    print(f"  Geometric vessel values:")
+    print("  Geometric vessel values:")
     for element_type, values in geometric_vessel_values.items():
         print(f"    {element_type}: {len(values)} vessels")
     
-    print(f"  Geometric junction values:")
+    print("  Geometric junction values:")
     for element_type, values in geometric_junction_values.items():
         print(f"    {element_type}: {len(values)} junction outlets")
     
-    print(f"  Calibrated vessel values:")
+    print("  Calibrated vessel values:")
     for element_type, values in calibrated_vessel_values.items():
         print(f"    {element_type}: {len(values)} vessels")
     
-    print(f"  Calibrated junction values:")
+    print("  Calibrated junction values:")
     for element_type, values in calibrated_junction_values.items():
         print(f"    {element_type}: {len(values)} junction outlets")
     
@@ -433,7 +435,7 @@ def main():
         print(f"\n✓ Successfully created comparison plot: {output_path}")
         sys.exit(0)
     else:
-        print(f"\n✗ Failed to create plot")
+        print("\n✗ Failed to create plot")
         sys.exit(1)
 
 

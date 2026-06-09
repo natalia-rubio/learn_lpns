@@ -4,15 +4,13 @@ Used by get_bc_integrals.py.
 """
 
 import os
+from collections import defaultdict
+
 import meshio
 import numpy as np
-import pdb
-
-from collections import defaultdict
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 
-from util.vtk_functions import read_geo, get_all_arrays, cell_connectivity
-
+from util.vtk_functions import cell_connectivity, get_all_arrays, read_geo
 
 
 def split(array):

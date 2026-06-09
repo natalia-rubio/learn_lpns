@@ -1,13 +1,15 @@
-import os
-import json
-import numpy as np
 import csv
-from util.zerod_calibration.tools.file_io import read_zerod_csv
+import json
+import os
+
+import numpy as np
+
 from util.zerod_calibration.modality_paths import (
     modality_key_from_table_header,
     modality_table_header,
     sort_modalities,
 )
+from util.zerod_calibration.tools.file_io import read_zerod_csv
 
 try:
     from scipy.interpolate import interp1d
@@ -466,7 +468,7 @@ def _compute_modality_mse(csv_path, obs_3d, zoom_start_idx, zoom_end_idx,
     """Compute per-observation MSE for one 0D results CSV."""
     results_0d, times_0d = read_zerod_csv(csv_path)
     if not results_0d or not times_0d:
-        print(f"    ✗ No data found in CSV file")
+        print("    ✗ No data found in CSV file")
         return None, zoom_start_idx, zoom_end_idx, zoom_window_calculated
 
     print(f"    Found {len(results_0d)} vessels, {len(times_0d)} time points")

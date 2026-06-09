@@ -19,6 +19,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from util.data_processing.data_dict_from_csvs import get_default_include_features
 from util.data_processing.generate_split_indices import (
     build_geometry_index_map,
     build_split_dict,
@@ -28,14 +29,17 @@ from util.data_processing.generate_split_indices import (
     resolve_flat_indices,
     resolve_geometry_row_ranges_from_jax_dict,
 )
-from util.data_processing.data_dict_from_csvs import get_default_include_features
 from util.tools.basic import load_dict, save_dict
-from util.zerod_calibration.forward_mse import calculate_mse_between_3d_and_0d, parse_mse_comparison_csv
+from util.zerod_calibration.batch_generate_zerod_inputs_vmr import check_geometry_complete
 from util.zerod_calibration.cv_metrics import (
     accumulate_trial_metrics,
     read_cv_summary_rows,
     trial_metrics_to_row,
     write_all_cv_summary_csvs,
+)
+from util.zerod_calibration.forward_mse import (
+    calculate_mse_between_3d_and_0d,
+    parse_mse_comparison_csv,
 )
 from util.zerod_calibration.generate_zerod_inputs_cli import (
     DEFAULT_JUNCTION_TYPES,
@@ -48,7 +52,6 @@ from util.zerod_calibration.run_config_canonical import (
     resolve_run_config_suffix,
     run_config_suffix_to_flags,
 )
-from util.zerod_calibration.batch_generate_zerod_inputs_vmr import check_geometry_complete
 from util.zerod_calibration.tools.file_io import (
     STANDARD_0D_SUBDIR,
     get_paths,
@@ -811,7 +814,7 @@ def run_cross_validation(
     write_all_cv_summary_csvs(summary_path, out_dir, geometry_variant, all_trial_results)
 
     print(f"\nWrote CV summary to {summary_path}")
-    print(f"  Also wrote: pressure_mse, flow_mse, max_error, pressure_max_error, flow_max_error, max_rel_error, pressure_max_rel_error, flow_max_rel_error")
+    print("  Also wrote: pressure_mse, flow_mse, max_error, pressure_max_error, flow_max_error, max_rel_error, pressure_max_rel_error, flow_max_rel_error")
     if not skip_barchart and data_paths_suffix:
         _generate_cv_barcharts(
             set_name,

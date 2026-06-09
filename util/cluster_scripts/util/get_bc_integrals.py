@@ -4,16 +4,13 @@ used by projection scripts to discover result array names on 3D solutions.
 """
 
 import os
-import vtk
-import argparse
-import pdb
 
 import numpy as np
-
+import vtk
 from vtk.util.numpy_support import numpy_to_vtk as n2v
 from vtk.util.numpy_support import vtk_to_numpy as v2n
 
-from util.vtk_functions import Integration, read_geo, write_geo, threshold, calculator, cut_plane
+from util.vtk_functions import Integration, calculator, read_geo, threshold, write_geo
 from util.vtk_to_xdmf import split
 
 

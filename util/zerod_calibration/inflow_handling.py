@@ -1,9 +1,8 @@
-import os
 import json
+import os
+
 import numpy as np
 from scipy.interpolate import interp1d
-from util.zerod_calibration.tools.file_io import read_centerline_vtp
-from util.zerod_calibration.tools.file_io import parse_simulation_xml
 
 
 def update_geometric_input_with_calibration_bc(geometric_input_path, calibration_input_path):
@@ -15,7 +14,7 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
         geometric_input_path: Path to geometric input JSON
         calibration_input_path: Path to calibration input JSON
     """
-    print(f"\nUpdating geometric input with inflow BC from calibration input...")
+    print("\nUpdating geometric input with inflow BC from calibration input...")
     
     if not os.path.exists(calibration_input_path):
         print(f"  Warning: Calibration input not found at {calibration_input_path}")
@@ -29,7 +28,7 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
     if '_full_bc_for_forward_sim' in calib_data:
         # Use full time frame for forward simulations
         calib_inflow_bc = calib_data['_full_bc_for_forward_sim'].copy()
-        print(f"  Using full time frame from calibration input (for forward simulations)")
+        print("  Using full time frame from calibration input (for forward simulations)")
     else:
         # Fallback: extract from boundary conditions (this would be second half)
         calib_inflow_bc = None
@@ -38,9 +37,9 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
                 calib_inflow_bc = bc.get('bc_values', {})
                 break
         if not calib_inflow_bc:
-            print(f"  Warning: Could not find INFLOW BC in calibration input")
+            print("  Warning: Could not find INFLOW BC in calibration input")
             return False
-        print(f"  Warning: Full BC not found, using calibration BC (may be second half)")
+        print("  Warning: Full BC not found, using calibration BC (may be second half)")
     
     # Read geometric input
     with open(geometric_input_path, 'r') as f:
@@ -56,7 +55,7 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
         if bc.get('bc_name') == 'INFLOW':
             bc['bc_values'] = refined_bc.copy()
             geo_updated = True
-            print(f"  Updated geometric input INFLOW BC (refined for forward simulation):")
+            print("  Updated geometric input INFLOW BC (refined for forward simulation):")
             print(f"    Original number of time points: {len(calib_inflow_bc.get('t', []))}")
             print(f"    Refined number of time points: {n_pts_inflow}")
             if refined_bc.get('t'):
@@ -90,7 +89,7 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
         print(f"  Saved updated geometric input to: {geometric_input_path}")
         return True
     else:
-        print(f"  Warning: Could not find INFLOW BC in geometric input to update")
+        print("  Warning: Could not find INFLOW BC in geometric input to update")
         return False
 
 def update_outlet_bcs_in_file(file_path, outlet_params, file_type="calibration input"):

@@ -5,20 +5,26 @@ arrays onto the centerline VTP. Import and call extract_results(fpath_1d, fpath_
 """
 
 import sys
+
 sys.path.append("/home/users/nrubio/SV_scripts")
 #from util.tools.basic import *
 
-import vtk
-import os
-import numpy as np
-import copy
-from vtk.util.numpy_support import vtk_to_numpy as v2n
-from tqdm import tqdm
-
-from util.get_bc_integrals import get_res_names
-import util.junction_proc
-from util.vtk_functions import read_geo, write_geo, calculator, cut_plane, connectivity, get_points_cells, clean, Integration
 import pickle
+
+import numpy as np
+import vtk
+from tqdm import tqdm
+from util.get_bc_integrals import get_res_names
+from util.vtk_functions import (
+    Integration,
+    calculator,
+    connectivity,
+    cut_plane,
+    read_geo,
+    write_geo,
+)
+from vtk.util.numpy_support import vtk_to_numpy as v2n
+
 #from sklearn.linear_model import LinearRegression
 
 def save_dict(di_, filename_):

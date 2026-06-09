@@ -1,7 +1,7 @@
-import jax.numpy as jnp
-from jax import jit, vmap, random
-import numpy as np
 import dill
+import jax.numpy as jnp
+import numpy as np
+from jax import random, vmap
 
 np.random.seed(0)
 

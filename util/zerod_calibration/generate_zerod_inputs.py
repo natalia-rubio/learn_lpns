@@ -9,38 +9,36 @@ This script creates:
 Based on the workflow in richter2024-paper-tools.
 """
 
-import os
-import sys
-import subprocess
-import json
-import csv
-import numpy as np
 import argparse
+import json
+import os
+import subprocess
+import sys
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from util.visualizations.run_zerod_comparison_plots import run_zerod_comparison_plots
+from util.zerod_calibration.bc_fitting import *
+from util.zerod_calibration.bifurcation_splitting import *
+from util.zerod_calibration.calibration import *
+from util.zerod_calibration.centerline_path_extraction import *
+from util.zerod_calibration.forward_mse import calculate_mse_between_3d_and_0d
+from util.zerod_calibration.forward_simulation import *
+from util.zerod_calibration.generate_baseline_0d import *
 from util.zerod_calibration.generate_zerod_inputs_cli import (
     DEFAULT_JUNCTION_TYPES,
     add_generate_zerod_inputs_arguments,
     prepare_generate_zerod_namespace,
 )
-from util.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
-from util.zerod_calibration.oned_to_zerod import *
-from util.zerod_calibration.forward_mse import calculate_mse_between_3d_and_0d
-from util.zerod_calibration.modality_paths import modality_csv_paths, nn_forward_sim_specs
-from util.visualizations.run_zerod_comparison_plots import run_zerod_comparison_plots
-from util.zerod_calibration.bifurcation_splitting import *
-from util.zerod_calibration.tools.file_io import *
-from util.zerod_calibration.bc_fitting import *
-from util.zerod_calibration.inflow_handling import *
-from util.zerod_calibration.zerod_handling import *
-from util.zerod_calibration.calibration import *
-from util.zerod_calibration.forward_simulation import *
 from util.zerod_calibration.geometric_params import *
-from util.zerod_calibration.centerline_path_extraction import *
-from util.zerod_calibration.generate_baseline_0d import *
+from util.zerod_calibration.inflow_handling import *
+from util.zerod_calibration.modality_paths import modality_csv_paths, nn_forward_sim_specs
+from util.zerod_calibration.oned_to_zerod import *
+from util.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
+from util.zerod_calibration.tools.file_io import *
+from util.zerod_calibration.zerod_handling import *
 
 JUNCTION_TYPE = DEFAULT_JUNCTION_TYPES[0]
 
@@ -173,7 +171,7 @@ def main():
                 # Get geometry directory (may not exist for VMR files)
                 if not os.path.exists(geo_dir):
                     print(f"  Warning: Geometry directory not found: {geo_dir}")
-                    print(f"  Will use centerline-based workflow (for VMR files)")
+                    print("  Will use centerline-based workflow (for VMR files)")
                     geo_dir = None
                 
                 zerod_input, vessel_bc_map = create_geometric_zerod_input_rom(
@@ -185,13 +183,13 @@ def main():
                 )
                 generated_files.append(geometric_input_path)
             
-            print(f"\n  Adding centerline parameters to geometric input...")
+            print("\n  Adding centerline parameters to geometric input...")
             geometric_centerline_input_path = geometric_input_path.replace('geometric_input', 'geometric_centerline_input')
             process_geometric_input(centerline_path, geometric_input_path, geometric_centerline_input_path)
             print(f"  Centerline parameters added to geometric input saved to: {geometric_centerline_input_path}")
 
             # Generate bifurcations-only version of the geometric input
-            print(f"\n  Creating bifurcations-only geometric input...")
+            print("\n  Creating bifurcations-only geometric input...")
             split_junctions_from_files(geometric_centerline_input_path, centerline_path, bifurcations_geometric_input_path)
             generated_files.append(bifurcations_geometric_input_path)
             print(f"  Bifurcations-only geometric input saved to: {bifurcations_geometric_input_path}")
@@ -199,7 +197,7 @@ def main():
             # Generate entrance length-adjusted bifurcations version (if bifurcations file exists)
             bifurcations_EL_geometric_input_path = geometry_variants['bifurcations_EL']['geometric_input']
 
-            print(f"\n  Creating entrance length-adjusted bifurcations geometric input...")
+            print("\n  Creating entrance length-adjusted bifurcations geometric input...")
             adjust_junction_boundaries_by_entrance_length_from_files(
                 bifurcations_geometric_input_path, 
                 centerline_path, 
@@ -302,7 +300,7 @@ def main():
 
             # --- Create calibration inputs per geometry variant ---
             for geo_variant_name, geo_variant_paths in geometry_variants.items():
-                print(f"\n" + "-"*50)
+                print("\n" + "-"*50)
                 print(f"Processing {geo_variant_name.upper()} geometry variant")
                 print("-"*50)
 
@@ -342,7 +340,7 @@ def main():
                         raise Exception(f"Failed to create calibration input for {geo_variant_name}: {e}")
                 
                 # Create calibration input variants for each junction type
-                print(f"\n  Creating calibration input variants for each junction type...")
+                print("\n  Creating calibration input variants for each junction type...")
                 try:
                     with open(variant_calibration_input, 'r') as f:
                         base_calibration_config = json.load(f)
@@ -436,9 +434,9 @@ def main():
         ]
         if verbose:
             run_data_processing_cmd.append('--verbose')
-        from util.zerod_calibration.junction_nn_inference import forward_junction_jax_pickle_path
+        from util.zerod_calibration.nn_inference import forward_jax_pickle_path
 
-        forward_jax_path = forward_junction_jax_pickle_path(
+        forward_jax_path = forward_jax_pickle_path(
             "data",
             args.set_name,
             run_config_suffix,
@@ -472,8 +470,8 @@ def main():
         skip_nn_inference = getattr(args, "skip_nn_inference", False)
         if skip_nn_inference:
             print(
-                f"\n  ⊘ Skipping NN inference (Steps 3.7/3.8); "
-                f"--skip_steps includes nn_inference"
+                "\n  ⊘ Skipping NN inference (Steps 3.7/3.8); "
+                "--skip_steps includes nn_inference"
             )
         else:
             # Step 3.7: Junction NN inference (loads forward jax pickle from Step 3.5)
@@ -483,9 +481,7 @@ def main():
                 print(f"\n    Running neural network inference for {args.geometry_variant}/{JUNCTION_TYPE}...")
                 try:
                     from util.tools.basic import load_dict
-                    from util.zerod_calibration.junction_nn_inference import (
-                        run_junction_nn_inference,
-                    )
+                    from util.zerod_calibration.nn_inference import run_junction_inference
 
                     jax_path = forward_jax_path
                     if not os.path.exists(jax_path):
@@ -506,7 +502,7 @@ def main():
                     else:
                         model_dir = os.path.join("results", "models", args.set_name, args.geometry_variant)
 
-                    run_junction_nn_inference(
+                    run_junction_inference(
                         jax_data_dict=jax_data_dict,
                         nn_config=nn_config,
                         set_name=args.set_name,
@@ -528,24 +524,7 @@ def main():
 
             # Step 3.8 (optional): Vessel NN inference: predict vessel R/S/L and write NN_JunctionAndVessel config
             if getattr(args, 'NN_vessel', False):
-                from util.data_processing.inputs_from_0d_config import load_vessel_geometric_features
-                from util.data_processing.data_dict_from_csvs import (
-                    _clamp_tortuosity,
-                    filter_features_from_array,
-                    get_default_include_features_vessel,
-                )
-                from util.neural_network.nn_model import predict as nn_predict
-                from util.neural_network.nn_util import dill_load
-                import jax.numpy as jnp
-
-                model_dir_basename = os.path.basename(getattr(args, 'model_dir', '') or '')
-                if '_trial_' in model_dir_basename:
-                    trial_model_variant = model_dir_basename.split('_trial_')[0]
-                    if args.geometry_variant != trial_model_variant:
-                        raise ValueError(
-                            f"Vessel NN trial model dir is for {trial_model_variant!r}, "
-                            f"but --geometry_variant is {args.geometry_variant!r}"
-                        )
+                from util.zerod_calibration.nn_inference import run_vessel_inference
 
                 if not os.path.exists(nn_output_path):
                     raise FileNotFoundError(f"NN junction config not found: {nn_output_path}")
@@ -556,79 +535,20 @@ def main():
                     print(f"\n    Running vessel NN inference for {args.geometry_variant}...")
                     try:
                         with open(nn_output_path, 'r') as f:
-                            junction_and_vessel_config = json.load(f)
-                        vessel_X, vessel_feature_names, vessel_ids, vessel_names = load_vessel_geometric_features(
-                            variant_geometric_input, verbose=args.verbose
+                            junction_nn_config = json.load(f)
+                        junction_and_vessel_config, vessel_only_config = run_vessel_inference(
+                            junction_nn_config=junction_nn_config,
+                            variant_geometric_input=variant_geometric_input,
+                            set_name=args.set_name,
+                            geometry_variant=args.geometry_variant,
+                            model_dir=getattr(args, 'model_dir', None),
+                            quadratic_resistor=getattr(args, "quadratic_resistor", False),
+                            verbose=args.verbose,
                         )
-                        if len(vessel_X) == 0:
-                            raise ValueError(
-                                f"No non-connector vessels for vessel NN ({args.geometry_variant})"
-                            )
-                        vessel_X, vessel_feature_names = filter_features_from_array(
-                            vessel_X, vessel_feature_names,
-                            include_features=get_default_include_features_vessel(),
-                        )
-                        _clamp_tortuosity(vessel_X, vessel_feature_names)
-                        if getattr(args, 'model_dir', None) and '_trial_' in os.path.basename(args.model_dir):
-                            vessel_model_dir = os.path.join(
-                                os.path.dirname(args.model_dir),
-                                os.path.basename(args.model_dir).replace('_trial_', '_vessel_trial_', 1),
-                            )
-                        else:
-                            vessel_model_dir = os.path.join(
-                                'results', 'models', args.set_name, f'{args.geometry_variant}_vessel')
-                        vessel_X_jax = jnp.array(np.array(vessel_X, dtype=np.float64), dtype=jnp.float32)
-                        model_paths = [
-                            os.path.join(vessel_model_dir, f"rri_{args.set_name}_vessel_pred_{i}_model")
-                            for i in range(3)
-                        ]
-                        for mp in model_paths:
-                            if not os.path.exists(mp):
-                                raise FileNotFoundError(f"Vessel model not found: {mp}")
-                        vessel_raw_predictions = []
-                        for i, mp in enumerate(model_paths):
-                            model = dill_load(mp)
-                            vessel_use_leaky = getattr(model, "use_leaky_relu", False)
-                            pred = nn_predict(vessel_X_jax, model.weights, vessel_use_leaky)
-                            vessel_raw_predictions.append(np.array(pred).flatten())
-                        vessel_pred_R = np.array(vessel_raw_predictions[0])
-                        vessel_pred_S = np.array(vessel_raw_predictions[1])
-                        vessel_pred_L = np.array(vessel_raw_predictions[2])
-                        if not getattr(args, "quadratic_resistor", False):
-                            vessel_pred_S = np.zeros_like(vessel_pred_R)
-                        vessel_id_to_row = {vessel_id: i for i, vessel_id in enumerate(vessel_ids)}
-                        for vessel in junction_and_vessel_config.get('vessels', []):
-                            vessel_name = (vessel.get('vessel_name') or '').lower()
-                            if 'connector' in vessel_name:
-                                continue
-                            vessel_id = vessel.get('vessel_id')
-                            row = vessel_id_to_row.get(vessel_id)
-                            if row is None:
-                                continue
-                            z = dict(vessel.get('zero_d_element_values') or {})
-                            z['R_poiseuille'] = float(vessel_pred_R[row])
-                            z['stenosis_coefficient'] = float(vessel_pred_S[row])
-                            z['L'] = float(vessel_pred_L[row])
-                            vessel['zero_d_element_values'] = z
                         with open(nn_junction_and_vessel_path, 'w') as f:
                             json.dump(junction_and_vessel_config, f, indent=4)
                         generated_files.append(nn_junction_and_vessel_path)
                         print(f"      ✓ Vessel NN predictions applied and saved to {nn_junction_and_vessel_path}")
-                        with open(variant_geometric_input, 'r') as f:
-                            vessel_only_config = json.load(f)
-                        for vessel in vessel_only_config.get('vessels', []):
-                            vessel_name = (vessel.get('vessel_name') or '').lower()
-                            if 'connector' in vessel_name:
-                                continue
-                            vessel_id = vessel.get('vessel_id')
-                            row = vessel_id_to_row.get(vessel_id)
-                            if row is None:
-                                continue
-                            if 'zero_d_element_values' not in vessel:
-                                vessel['zero_d_element_values'] = {}
-                            vessel['zero_d_element_values']['R_poiseuille'] = float(vessel_pred_R[row])
-                            vessel['zero_d_element_values']['stenosis_coefficient'] = float(vessel_pred_S[row])
-                            vessel['zero_d_element_values']['L'] = float(vessel_pred_L[row])
                         with open(nn_vessel_only_path, 'w') as f:
                             json.dump(vessel_only_config, f, indent=4)
                         generated_files.append(nn_vessel_only_path)

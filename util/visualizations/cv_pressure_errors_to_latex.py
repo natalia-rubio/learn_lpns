@@ -23,7 +23,6 @@ from util.zerod_calibration.modality_paths import (
     read_cv_metric_from_row,
 )
 
-
 # Modality keys (column order in CSV/code)
 MODALITY_KEYS = list(DEFAULT_MODALITY_ORDER)
 

@@ -4,17 +4,18 @@ geometry, identify junction locations/offsets, and process reduced 1D solution d
 """
 
 import os
-import sys
-import vtk
-import numpy as np
-from vtk.util.numpy_support import vtk_to_numpy as v2n
 import pdb
-import random
-import copy
-from scipy import interpolate
 import pickle
-from util.vtk_functions import *
+import sys
+
+import numpy as np
+import vtk
+from scipy import interpolate
+from vtk.util.numpy_support import vtk_to_numpy as v2n
+
 from util.get_bc_integrals import *
+from util.vtk_functions import *
+
 #from util.junction_extraction_util.get_avg_sol import *
 
 np.seterr(all='raise')

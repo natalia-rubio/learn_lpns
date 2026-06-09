@@ -3,9 +3,9 @@ Ad-hoc script to render 3D VTU solution frames with PyVista and assemble a movie
 Standalone visualization; not imported by other cluster_scripts modules.
 """
 
-import pyvista as pv
-import os
+
 import moviepy.video.io.ImageSequenceClip
+import pyvista as pv
 
 image_files = []
 #mesh = pv.read("/home/nrubio/Desktop/steady_state_junction_state.pvsm")

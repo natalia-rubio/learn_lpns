@@ -8,14 +8,21 @@ Usage: python unsteady_tree_centerline_proj.py <tree_name> <num_procs>
 """
 
 import os
+import pickle
 import sys
+
 import vtk
 from tqdm import tqdm
 from util.get_bc_integrals import get_res_names
-from util.vtk_functions import read_geo, write_geo, calculator, cut_plane, connectivity, get_points_cells, clean, Integration, collect_arrays
+from util.vtk_functions import (
+    Integration,
+    calculator,
+    connectivity,
+    cut_plane,
+    read_geo,
+    write_geo,
+)
 from vtk.util.numpy_support import vtk_to_numpy as v2n
-from vtk.util.numpy_support import numpy_to_vtk as n2v
-import pickle
 
 
 def save_dict(di_, filename_):

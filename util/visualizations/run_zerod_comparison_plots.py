@@ -3,18 +3,18 @@
 import os
 import traceback
 
-from util.zerod_calibration.modality_paths import (
-    modality_csv_paths,
-    modality_json_paths,
-    split_location_plot_csv_paths,
-)
-from util.zerod_calibration.tools.file_io import get_time_period
 from util.visualizations.plot_location_comparison import (
     build_vessel_name_mapping,
     get_all_locations_from_calibration_input,
     plot_location_comparison,
 )
 from util.visualizations.plot_zero_d_parameter_bars import plot_zero_d_parameter_bars
+from util.zerod_calibration.modality_paths import (
+    modality_csv_paths,
+    modality_json_paths,
+    split_location_plot_csv_paths,
+)
+from util.zerod_calibration.tools.file_io import get_time_period
 
 
 def run_location_comparison_plots(

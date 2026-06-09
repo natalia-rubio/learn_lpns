@@ -12,10 +12,9 @@ Usage:
   python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults --mode junction
   python util/visualizations/plot_feature_vs_lumped_params.py VMR_rigid_aorta_adults --geometry_variant bifurcations --output_dir results/plots/feature_vs_params
 """
+import argparse
 import os
 import re
-import argparse
-import glob
 import sys
 
 import matplotlib.pyplot as plt

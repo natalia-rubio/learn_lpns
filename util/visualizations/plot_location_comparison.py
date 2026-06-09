@@ -10,18 +10,19 @@ Location format: "source:target" where:
   - "branch5_seg0:RESISTANCE_0" - vessel to outlet BC (terminal outlet)
 """
 
+import argparse
+import csv
 import glob
+import json
 import os
 import sys
-import argparse
-import json
-import csv
-import numpy as np
 import warnings
 
+import numpy as np
+
 from util.visualizations.cv_pressure_errors_to_latex import (
-    format_modality_display_for_legend,
     MODALITY_DISPLAY,
+    format_modality_display_for_legend,
 )
 from util.visualizations.matplotlib_tex import configure_matplotlib_latex, latex_is_available
 from util.zerod_calibration.tools.file_io import read_zerod_csv

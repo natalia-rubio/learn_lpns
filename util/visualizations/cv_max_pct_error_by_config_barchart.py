@@ -21,15 +21,15 @@ import os
 import warnings
 
 import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
 
 from util.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
 from util.zerod_calibration.modality_paths import read_cv_metric_from_row
-
 
 # Display name for each run config (config subfolder name -> label on y-axis).
 # Value can be a string (single line) or a list/tuple of strings (multiple lines, joined by newline).

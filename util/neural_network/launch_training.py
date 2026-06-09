@@ -10,6 +10,10 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from util.data_processing.generate_split_indices import (
+    load_split_for_training,
+    resolve_flat_indices,
+)
 from util.neural_network.nn_model import (
     L_OUTPUT_COLUMN,
     R_OUTPUT_COLUMN,
@@ -18,7 +22,6 @@ from util.neural_network.nn_model import (
 )
 from util.neural_network.train_nn import train_nn
 from util.tools.basic import load_dict
-from util.data_processing.generate_split_indices import load_split_for_training, resolve_flat_indices
 from util.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
     run_config_suffix_to_flags,
@@ -244,7 +247,7 @@ def launch_training(network_params, optimizer_params, training_params):
         train_nn(model, training_params)
 
 
-if __name__ == "__main__":
+def main():
     import argparse
     parser = argparse.ArgumentParser(description="Launch NN training")
     parser.add_argument("set_name", help="Set name (e.g., VMR)")
@@ -390,3 +393,7 @@ if __name__ == "__main__":
                            "decay_rate": 0.95}
 
         launch_training(network_params, optimizer_params, training_params)
+
+
+if __name__ == "__main__":
+    main()

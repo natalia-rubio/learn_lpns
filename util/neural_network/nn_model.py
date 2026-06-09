@@ -1,11 +1,11 @@
 import os
 
 import jax.numpy as jnp
-from jax import grad, jit
 import optax
+from jax import grad, jit
 
+from util.neural_network.nn_util import batched_forward_pass, get_L2, init_weights
 from util.tools.basic import load_dict
-from util.neural_network.nn_util import get_L2, init_weights, batched_forward_pass
 
 # Column indices in output_rri (each trained by a separate single-output network).
 R_OUTPUT_COLUMN = 0

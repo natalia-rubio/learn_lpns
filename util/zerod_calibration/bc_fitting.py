@@ -1,11 +1,11 @@
 # imports
 
-import os
 import json
-import csv
+import os
 import warnings
-import numpy as np
 from math import isfinite
+
+import numpy as np
 
 BC_CHANGE_RATIO_THRESHOLD = 5.0
 BC_CHANGE_ABS_THRESHOLD = 1.0

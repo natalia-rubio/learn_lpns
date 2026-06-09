@@ -4,15 +4,12 @@ checks, cap detection, and parameter loading. Legacy; not used by current projec
 """
 
 import os
-import sys
-import numpy as np
-import time
-import copy
 import pickle
-import subprocess
-import time
-import copy
+
+import numpy as np
+
 from util.junction_proc import *
+
 
 def set_up_sim_directories(anatomy, set_type, geo_name, flow_name, num_procs):
     print("Starting run_simulation function.")

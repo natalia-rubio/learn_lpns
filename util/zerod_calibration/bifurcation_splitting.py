@@ -1,11 +1,11 @@
-import re
-import numpy as np
 import copy
 import json
-import csv
-from util.zerod_calibration.tools.file_io import read_centerline_vtp
-from util.zerod_calibration.centerline_path_extraction import get_path_length_from_gid_list
+import re
 
+import numpy as np
+
+from util.zerod_calibration.centerline_path_extraction import get_path_length_from_gid_list
+from util.zerod_calibration.tools.file_io import read_centerline_vtp
 
 
 def split_junctions(geometric_input, centerline_data):
@@ -421,7 +421,7 @@ def split_junctions(geometric_input, centerline_data):
         outlet_cl_paths = geo_params.get('outlet_centerline_paths', {})
 
         if outlet_cl_paths:
-            print(f"    Using pre-computed centerline paths for path lengths")
+            print("    Using pre-computed centerline paths for path lengths")
             for outlet_id in outlet_vessels:
                 ov = vessel_by_id.get(outlet_id)
                 if ov is None:
@@ -442,7 +442,7 @@ def split_junctions(geometric_input, centerline_data):
             # in_junction_path_lengths = compute_in_junction_path_lengths(inlet_branch_id, outlet_branch_ids, junction_bif_id)
 
         if in_junction_path_lengths:
-            print(f"    In-junction path lengths:")
+            print("    In-junction path lengths:")
             for branch_id, path_len in sorted(in_junction_path_lengths.items(), key=lambda x: -x[1]):
                 vessel_name = next((v['vessel_name'] for v in vessels if get_branch_id(v['vessel_name']) == branch_id), f"branch{branch_id}")
                 print(f"      {vessel_name}: {path_len:.4f}")
@@ -740,7 +740,7 @@ def split_junctions_from_files(geometric_input_path, centerline_path, output_pat
     Returns:
         Modified geometric input dictionary
     """
-    print(f"\nSplitting multi-outlet junctions...")
+    print("\nSplitting multi-outlet junctions...")
     print(f"  Geometric input: {geometric_input_path}")
     print(f"  Centerline: {centerline_path}")
     
@@ -826,7 +826,7 @@ def adjust_junction_boundaries_by_entrance_length_from_files(geometric_input_pat
         Modified geometric input dictionary
     """
     if not verbose:
-        print(f"\nAdjusting junction boundaries by entrance length...")
+        print("\nAdjusting junction boundaries by entrance length...")
         print(f"  Geometric input: {geometric_input_path}")
         print(f"  Centerline: {centerline_path}")
     
@@ -900,7 +900,7 @@ def rename_observations_for_bifurcations(original_observations, bifurcated_geome
                 vessel_to_inlet_junction[outlet_vessel['vessel_name']] = junc['junction_name']
 
     # Rename keys in y/dy
-    print(f"  Renaming observation keys to match bifurcated junction names...")
+    print("  Renaming observation keys to match bifurcated junction names...")
     renamed_y_dict = {}
     renamed_dy_dict = {}
 
@@ -1477,7 +1477,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     if next_vessel_outlet_bc is not None:
                         if verbose:
                             print(f"      → Next vessel {next_vessel_name} has outlet boundary condition: {next_vessel_outlet_bc}")
-                            print(f"      → Stopping chain extension and transferring BC to merged vessel")
+                            print("      → Stopping chain extension and transferring BC to merged vessel")
                         
                         # Merge the next vessel into the merged vessel
                         next_inlet_idx, next_outlet_idx = find_vessel_centerline_points(next_vessel_name)
@@ -1578,7 +1578,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                         # If the remainder length is zero or negligible, convert to connector (same as single-vessel path)
                                         if new_merged_length <= length_epsilon:
                                             if verbose:
-                                                print(f"      → New merged vessel length is ~0, converting to connector (fully absorbed into junction)")
+                                                print("      → New merged vessel length is ~0, converting to connector (fully absorbed into junction)")
                                             old_name = merged_vessel.get('vessel_name', '')
                                             connector_name = old_name if 'connector' in old_name.lower() else f"{old_name}_connectorEL"
                                             merged_vessel['vessel_name'] = connector_name
@@ -1624,7 +1624,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                 # If we couldn't find a suitable centerline point, fall through and
                                 # let step 4a convert to a connector.
                                 if verbose and not extension_successful:
-                                    print(f"      → Could not find suitable centerline point to shorten merged vessel to EL, will fall back to connector conversion")
+                                    print("      → Could not find suitable centerline point to shorten merged vessel to EL, will fall back to connector conversion")
                             else:
                                 # Merged length is still less than EL, but we hit a BC so we stop
                                 # This will trigger step 4a (convert to connector)
@@ -1826,7 +1826,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 # This handles cases where chain extension stopped due to multi-outlet junction, boundary condition, etc.
                 if vessels_merged:
                     if verbose:
-                        print(f"      → Vessels were merged but didn't reach EL, converting merged vessel to connector")
+                        print("      → Vessels were merged but didn't reach EL, converting merged vessel to connector")
                     
                     # Convert the merged vessel to a connector
                     old_name = merged_vessel.get('vessel_name', '')
@@ -1860,8 +1860,8 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     set_vessel_node_ids(merged_vessel, merged_outlet_idx, merged_outlet_idx)
                     
                     if verbose:
-                        print(f"      → Set merged vessel length to 0.0 cm")
-                        print(f"      → Set parameters: R=0, C=1e-10, L=0 (minimal resistance)")
+                        print("      → Set merged vessel length to 0.0 cm")
+                        print("      → Set parameters: R=0, C=1e-10, L=0 (minimal resistance)")
                     
                     print(f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
                           f"into {connector_name} but didn't reach EL={EL:.4f}, converted to connector")
@@ -1872,7 +1872,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 # Default case: Vessel is shorter than EL and doesn't connect to single-outlet junction
                 # Rename to connector and set length to zero
                 if verbose:
-                    print(f"      → Converting vessel to connector (standard case)")
+                    print("      → Converting vessel to connector (standard case)")
                 
                 print(f"  Junction {junction_name}: Outlet vessel {outlet_vessel_name} (length={outlet_vessel_length:.4f}) "
                       f"is shorter than EL={EL:.4f}, converting to connector vessel")
@@ -1909,8 +1909,8 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 
                 if verbose:
                     print(f"      → Set length: {outlet_vessel_length:.6f} → 0.0 cm")
-                    print(f"      → Set parameters: R=0, C=1e-10, L=0 (minimal resistance)")
-                    print(f"      → No rewiring needed - connections remain unchanged")
+                    print("      → Set parameters: R=0, C=1e-10, L=0 (minimal resistance)")
+                    print("      → No rewiring needed - connections remain unchanged")
                 
                 # Track that we converted this vessel (for summary)
                 # Note: We keep the vessel (just renamed and modified), so don't add to vessels_to_remove
@@ -1975,7 +1975,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # convert to connectorEL (same as "vessel shorter than EL" case) so downstream code treats it as a connector.
                     if new_vessel_length <= length_epsilon:
                         if verbose:
-                            print(f"      → New vessel length is ~0, converting to connector (fully absorbed into junction)")
+                            print("      → New vessel length is ~0, converting to connector (fully absorbed into junction)")
                         old_name = outlet_vessel.get('vessel_name', '')
                         connector_name = old_name if 'connector' in old_name.lower() else f"{old_name}_connectorEL"
                         outlet_vessel['vessel_name'] = connector_name
@@ -2020,8 +2020,8 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # This means target_path > outlet_vessel_path_end
                     if verbose:
                         print(f"      → Warning: EL={EL:.6f} extends beyond vessel end (path={outlet_vessel_path_end:.6f})")
-                        print(f"      → This should not happen if vessel length >= EL")
-                        print(f"      → Treating as full vessel inclusion")
+                        print("      → This should not happen if vessel length >= EL")
+                        print("      → Treating as full vessel inclusion")
                     
                     print(f"  Warning: EL={EL:.4f} extends beyond vessel {outlet_vessel_name} "
                           f"(length={outlet_vessel_length:.4f}), treating as full vessel inclusion")

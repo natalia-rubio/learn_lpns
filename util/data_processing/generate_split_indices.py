@@ -10,7 +10,7 @@ import argparse
 import glob
 import os
 import sys
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 

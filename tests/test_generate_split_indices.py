@@ -10,7 +10,6 @@ from util.data_processing.generate_split_indices import (
     resolve_flat_indices,
 )
 
-
 GEOMETRIES = ["0075_1001", "0076_1001", "0094_0001", "0095_0001", "0105_0001"]
 
 

@@ -1,14 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "learn-lpns"
 version = "0.1.0"
 description = "Train and deploy neural networks for cardiovascular lumped-parameter models"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.26,<3",
+    "pandas>=2.0,<3",
+    "scipy>=1.11,<2",
+    "matplotlib>=3.7,<4",
+    "vtk>=9.2,<10",
+    "optax>=0.2,<1",
+    "dill>=0.3.8,<1",
+    "seaborn>=0.13,<1",
+]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+learn-lpns-cv = "util.zerod_calibration.run_cross_validation:main"
+learn-lpns-batch-zerod = "util.zerod_calibration.batch_generate_zerod_inputs_vmr:main"
+learn-lpns-data-processing = "util.data_processing.run_data_processing:main"
+learn-lpns-train = "util.neural_network.launch_training:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["util*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

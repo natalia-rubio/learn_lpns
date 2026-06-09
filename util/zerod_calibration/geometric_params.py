@@ -24,9 +24,11 @@ For each junction we currently store:
 """
 
 import json
-import numpy as np
-from util.zerod_calibration.tools.file_io import read_centerline_vtp
 import re
+
+import numpy as np
+
+from util.zerod_calibration.tools.file_io import read_centerline_vtp
 
 
 def get_angle_diff(vec1, vec2):

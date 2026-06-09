@@ -1,7 +1,9 @@
-import os
 import json
+import os
+
 import numpy as np
-from util.zerod_calibration.tools.file_io import timestep_from_1D, convert_numpy_to_list
+
+from util.zerod_calibration.tools.file_io import convert_numpy_to_list, timestep_from_1D
 
 # Default L2 penalties when not set-specific (R_poiseuille, stenosis_coefficient)
 DEFAULT_L2_R = 10**5
@@ -169,7 +171,7 @@ def run_calibration(calibration_input_path, output_path):
     """
     import subprocess
     
-    print(f"Running calibration...")
+    print("Running calibration...")
     
     # Read calibration input
     with open(calibration_input_path, 'r') as f:
@@ -184,7 +186,7 @@ def run_calibration(calibration_input_path, output_path):
     abs_input_path = os.path.abspath(calibration_input_path)
     abs_output_path = os.path.abspath(output_path)
     
-    print(f"  Attempting calibration with svzerodcalibrator executable...")
+    print("  Attempting calibration with svzerodcalibrator executable...")
     print(f"    Executable: {calibrator_exe}")
     print(f"    Input: {abs_input_path}")
     print(f"    Output: {abs_output_path}")
@@ -198,7 +200,7 @@ def run_calibration(calibration_input_path, output_path):
             check=True
         )
         #import pdb; pdb.set_trace()
-        print(f"  ✓ Calibration completed with svzerodcalibrator")
+        print("  ✓ Calibration completed with svzerodcalibrator")
         if result.stdout:
             print(f"  STDOUT: {result.stdout}")
         

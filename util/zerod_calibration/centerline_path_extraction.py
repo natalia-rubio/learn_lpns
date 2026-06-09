@@ -22,7 +22,7 @@ Algorithm for each outlet:
 
 import json
 import os
-import sys
+
 import numpy as np
 
 from util.zerod_calibration.tools.file_io import read_centerline_vtp

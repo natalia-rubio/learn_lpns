@@ -22,11 +22,11 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from util.data_processing.run_data_processing import discover_geometries_with_csvs
 from util.data_processing.data_dict_from_csvs import (
     build_data_dict_from_csvs,
     feature_histograms_dir,
 )
+from util.data_processing.run_data_processing import discover_geometries_with_csvs
 
 
 def main():

@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import csv
 import os
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import jax.numpy as jnp
+import numpy as np
 
 # Try to import matplotlib for histogram generation
 try:
