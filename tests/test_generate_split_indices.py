@@ -2,7 +2,7 @@
 
 import pytest
 
-from util.data_processing.generate_split_indices import (
+from learn_lpns.data_processing.generate_split_indices import (
     build_geometry_index_map,
     build_split_dict,
     generate_geometry_split,

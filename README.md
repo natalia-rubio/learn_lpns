@@ -3,7 +3,7 @@
 This repository contains functionality to train and deploy neural networks that predict lumped parameters (e.g. resistances, inductances) for 0D "electric circuit" models of cardiovascular flows.  The neural networks predict lumped parameters from the vascular geometry and are trained on high-fidelity 3D data.  This work is described in greater detail in this [paper](https://arxiv.org/abs/2604.01549).  A second, more lightweight repo, [learnedZeroD](https://github.com/natalia-rubio/learnedZeroD), provides functionality to convert a standard 0D model of a vasculature into the more accurate learned representation using pre-trained neural networks.
 
 
-![Cross-validation pressure errors by modality](figures/github_figures.png)
+![Cross-validation pressure errors by modality](assets/github_figures.png)
 
 ## Requirements
 
@@ -61,10 +61,10 @@ pytest -v    # unit tests, no C++ solver required
 
 | Path | Purpose |
 | ---- | ------- |
-| `util/zerod_calibration/` | 0D pipeline: preprocessing, calibration, forward sim, CV, run-config |
-| `util/neural_network/` | JAX/Optax models and training |
-| `util/data_processing/` | ML tables, jax arrays, train/val splits |
-| `util/visualizations/` | CV metrics, diagnostics, comparison plots |
+| `learn_lpns/zerod_calibration/` | 0D pipeline: preprocessing, calibration, forward sim, CV, run-config |
+| `learn_lpns/neural_network/` | JAX/Optax models and training |
+| `learn_lpns/data_processing/` | ML tables, jax arrays, train/val splits |
+| `learn_lpns/visualizations/` | CV metrics, diagnostics, comparison plots |
 | `data/` | Bundled sample inputs + generated datasets (see [data/README.md](data/README.md)) |
 | `results/` | Models, CV summaries, plots (gitignored) |
 | `tests/` | Unit tests (no solver required) |
@@ -73,7 +73,7 @@ pytest -v    # unit tests, no C++ solver required
 
 - Editable install with dev tools: `pip install -e ".[dev]"`
 - Run unit tests (no C++ solver): `pytest -v`
-- Lint source and tests: `ruff check util tests`
+- Lint source and tests: `ruff check learn_lpns tests`
 - CI: GitHub Actions runs `ruff check` and `pytest` on Python 3.10 and 3.12 for every push/PR
 
 ## Console entry points

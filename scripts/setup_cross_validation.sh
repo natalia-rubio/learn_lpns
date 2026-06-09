@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Clone/build dependencies for util/zerod_calibration/run_cross_validation.py:
+# Clone/build dependencies for learn_lpns/zerod_calibration/run_cross_validation.py:
 #   - learn_lpns (this repo + bundled sample data under data/)
 #   - svZeroDPlus fork (svzerodsolver + svzerodcalibrator)
 #   - Python venv with JAX and pipeline packages

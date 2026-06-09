@@ -27,14 +27,14 @@ dev = [
 ]
 
 [project.scripts]
-learn-lpns-cv = "util.zerod_calibration.run_cross_validation:main"
-learn-lpns-batch-zerod = "util.zerod_calibration.batch_generate_zerod_inputs_vmr:main"
-learn-lpns-data-processing = "util.data_processing.run_data_processing:main"
-learn-lpns-train = "util.neural_network.launch_training:main"
+learn-lpns-cv = "learn_lpns.zerod_calibration.run_cross_validation:main"
+learn-lpns-batch-zerod = "learn_lpns.zerod_calibration.batch_generate_zerod_inputs_vmr:main"
+learn-lpns-data-processing = "learn_lpns.data_processing.run_data_processing:main"
+learn-lpns-train = "learn_lpns.neural_network.launch_training:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["util*"]
+include = ["learn_lpns*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -49,15 +49,15 @@ target-version = "py310"
 select = ["E", "F", "I"]
 
 [tool.ruff.lint.per-file-ignores]
-# Script entry points insert REPO_ROOT on sys.path before util imports.
-"util/**/run_cross_validation.py" = ["E402"]
-"util/**/generate_zerod_inputs.py" = ["E402"]
-"util/**/batch_generate_zerod_inputs_vmr.py" = ["E402"]
-"util/**/launch_training.py" = ["E402"]
-"util/**/run_data_processing.py" = ["E402"]
-"util/**/generate_split_indices.py" = ["E402"]
-"util/**/regenerate_feature_histograms.py" = ["E402"]
-"util/**/report_jax_test_split_counts.py" = ["E402"]
-"util/**/plot_zero_d_params.py" = ["E402"]
+# Script entry points insert REPO_ROOT on sys.path before learn_lpns imports.
+"learn_lpns/**/run_cross_validation.py" = ["E402"]
+"learn_lpns/**/generate_zerod_inputs.py" = ["E402"]
+"learn_lpns/**/batch_generate_zerod_inputs_vmr.py" = ["E402"]
+"learn_lpns/**/launch_training.py" = ["E402"]
+"learn_lpns/**/run_data_processing.py" = ["E402"]
+"learn_lpns/**/generate_split_indices.py" = ["E402"]
+"learn_lpns/**/regenerate_feature_histograms.py" = ["E402"]
+"learn_lpns/**/report_jax_test_split_counts.py" = ["E402"]
+"learn_lpns/**/plot_zero_d_params.py" = ["E402"]
 # Legacy cluster scripts: semicolons and long HPC paths.
-"util/cluster_scripts/**" = ["E501", "E701", "E702"]
+"learn_lpns/cluster_scripts/**" = ["E501", "E701", "E702"]

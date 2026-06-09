@@ -20,7 +20,7 @@ Projected solutions live under `data/oneD/VMR/`; the code resolves that path aut
 Example:
 
 ```bash
-python -m util.zerod_calibration.batch_generate_zerod_inputs_vmr \
+python -m learn_lpns.zerod_calibration.batch_generate_zerod_inputs_vmr \
   --set_name VMR_aortas \
   --run_config gen_loss \
   --geometries 0076_1001

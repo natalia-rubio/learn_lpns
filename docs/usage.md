@@ -24,7 +24,7 @@ Physics and training variants are selected with a single `--run_config` flag on 
 
 ### Tokens
 
-See `util/zerod_calibration/run_config_canonical.py`.
+See `learn_lpns/zerod_calibration/run_config_canonical.py`.
 
 | Token | Effect |
 | ----- | ------ |
@@ -151,7 +151,7 @@ Bifurcation **generation** is stored in the jax pickle (not an NN input) and use
 
 ## MSE modalities
 
-Display names for console tables, CSV headers, and LaTeX exports: `util/zerod_calibration/modality_paths.py`.
+Display names for console tables, CSV headers, and LaTeX exports: `learn_lpns/zerod_calibration/modality_paths.py`.
 
 | Modality key | Display name |
 | ------------ | ------------ |
@@ -174,7 +174,7 @@ learn-lpns-data-processing \
 
 ## Visualizations
 
-Reporting scripts under `util/visualizations/` (run as modules from repo root):
+Reporting scripts under `learn_lpns/visualizations/` (run as modules from repo root):
 
 | Script | Purpose |
 | ------ | ------- |
@@ -193,7 +193,7 @@ Most accept `--run_config`, `--set_name`, and `--geometry_variant`. See each mod
 
 | Command | Script |
 | ------- | ------ |
-| `learn-lpns-cv` | `util/zerod_calibration/run_cross_validation.py` |
-| `learn-lpns-batch-zerod` | `util/zerod_calibration/batch_generate_zerod_inputs_vmr.py` |
-| `learn-lpns-data-processing` | `util/data_processing/run_data_processing.py` |
-| `learn-lpns-train` | `util/neural_network/launch_training.py` |
+| `learn-lpns-cv` | `learn_lpns/zerod_calibration/run_cross_validation.py` |
+| `learn-lpns-batch-zerod` | `learn_lpns/zerod_calibration/batch_generate_zerod_inputs_vmr.py` |
+| `learn-lpns-data-processing` | `learn_lpns/data_processing/run_data_processing.py` |
+| `learn-lpns-train` | `learn_lpns/neural_network/launch_training.py` |

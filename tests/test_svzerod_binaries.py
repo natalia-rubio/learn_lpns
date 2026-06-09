@@ -4,7 +4,7 @@ import stat
 
 import pytest
 
-from util.zerod_calibration.tools import svzerod_binaries
+from learn_lpns.zerod_calibration.tools import svzerod_binaries
 
 
 def test_svzerod_install_dir_uses_env(monkeypatch, tmp_path):

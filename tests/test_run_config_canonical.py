@@ -2,7 +2,7 @@
 
 import pytest
 
-from util.zerod_calibration.run_config_canonical import (
+from learn_lpns.zerod_calibration.run_config_canonical import (
     RUN_CONFIG_TOKENS,
     canonical_run_config_for_data_paths,
     compose_run_config_suffix,

@@ -1,6 +1,6 @@
 """Tests for modality display names and forward-simulation path resolution."""
 
-from util.zerod_calibration.modality_paths import (
+from learn_lpns.zerod_calibration.modality_paths import (
     modality_csv_paths,
     modality_key_from_table_header,
     modality_table_header,
