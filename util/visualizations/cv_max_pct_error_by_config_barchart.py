@@ -27,6 +27,8 @@ import matplotlib.patches as mpatches
 import numpy as np
 from scipy import stats
 
+from util.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
+
 
 # Display name for each run config (config subfolder name -> label on y-axis).
 # Value can be a string (single line) or a list/tuple of strings (multiple lines, joined by newline).
@@ -355,9 +357,7 @@ def main():
     values = np.array([r["values"] for r in rows], dtype=float)
     ci_half_widths = np.array([r["ci_half"] for r in rows], dtype=float)
 
-    # LaTeX formatting for text
-    plt.rcParams["text.usetex"] = True
-    plt.rcParams["font.family"] = "serif"
+    use_latex = configure_matplotlib_latex(plt)
     plt.rcParams.update(
         {
             "font.size": PLOT_FONT_SIZE,
@@ -438,7 +438,13 @@ def main():
     y_lim_hi = max(y_maxs) + 0.15 * row_pitch
     ax.set_ylim(y_lim_lo, y_lim_hi)
 
-    ax.set_xlabel(r"Max. Inlet Pressure Error over Cardiac Cycle (MPE) (\%)", fontsize=PLOT_FONT_SIZE)
+    ax.set_xlabel(
+        plot_label(
+            r"Max. Inlet Pressure Error over Cardiac Cycle (MPE) (\%)",
+            use_latex=use_latex,
+        ),
+        fontsize=PLOT_FONT_SIZE,
+    )
     x_max = args.xmax
     ax.set_xlim(0, x_max if x_max is not None else None)
     # ax.set_title(

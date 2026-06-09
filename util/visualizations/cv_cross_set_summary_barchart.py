@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from util.visualizations.plot_location_comparison import get_line_style
+from util.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
 
 
 SET_NAMES_DEFAULT = [
@@ -299,8 +300,7 @@ def main():
             + "\n".join(missing)
         )
 
-    plt.rcParams["text.usetex"] = True
-    plt.rcParams["font.family"] = "serif"
+    use_latex = configure_matplotlib_latex(plt)
 
     x = np.arange(len(valid_sets))
     n_mod = len(MODALITY_ORDER)
@@ -367,7 +367,7 @@ def main():
 
     ax.set_xticks(x)
     ax.set_xticklabels([_format_set_label(s) for s in valid_sets], fontsize=18)
-    ax.set_ylabel(mcfg["ylabel"], fontsize=18)
+    ax.set_ylabel(plot_label(mcfg["ylabel"], use_latex=use_latex), fontsize=18)
     #ax.set_xlabel("Set Name", fontsize=16)
     ax.tick_params(axis="y", labelsize=18)
     ax.grid(axis="y", alpha=0.3)

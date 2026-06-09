@@ -461,14 +461,9 @@ def _plot_histograms(diffs, output_path, nbins=25, dpi=150):
     if not HAS_MPL:
         raise RuntimeError("matplotlib is required")
 
-    try:
-        plt.rcParams["text.usetex"] = True
-        plt.rcParams["font.family"] = "serif"
-        plt.rcParams["font.serif"] = ["Computer Modern Roman", "DejaVu Serif"]
-        plt.rcParams["mathtext.fontset"] = "cm"
-    except Exception:
-        plt.rcParams["text.usetex"] = False
-        plt.rcParams["font.family"] = "serif"
+    from util.visualizations.matplotlib_tex import configure_matplotlib_latex
+
+    configure_matplotlib_latex(plt)
 
     fig, axes = plt.subplots(2, 2, figsize=(6, 4))
     labels = [

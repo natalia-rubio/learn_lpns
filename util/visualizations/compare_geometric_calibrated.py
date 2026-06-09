@@ -39,26 +39,10 @@ try:
     
     try:
         import matplotlib.pyplot as plt
-        # Configure LaTeX rendering with Computer Modern font
-        try:
-            plt.rcParams['text.usetex'] = True
-            # Test if LaTeX is available
-            test_fig, test_ax = plt.subplots(figsize=(1, 1))
-            test_ax.text(0.5, 0.5, r'Test $\alpha$')
-            plt.close(test_fig)
-            # If successful, configure LaTeX settings
-            plt.rcParams['font.family'] = 'serif'
-            plt.rcParams['font.serif'] = ['Computer Modern Roman', 'DejaVu Serif']
-            plt.rcParams['mathtext.fontset'] = 'cm'
-            LATEX_AVAILABLE = True
-        except Exception:
-            # LaTeX not available, use mathtext with Computer Modern
-            plt.rcParams['text.usetex'] = False
-            plt.rcParams['font.family'] = 'serif'
-            plt.rcParams['font.serif'] = ['Computer Modern Roman', 'DejaVu Serif']
-            plt.rcParams['mathtext.fontset'] = 'cm'
-            LATEX_AVAILABLE = False
-        
+        from util.visualizations.matplotlib_tex import configure_matplotlib_latex
+
+        configure_matplotlib_latex(plt)
+
         plt.rcParams['axes.labelsize'] = 32
         plt.rcParams['axes.titlesize'] = 36
         plt.rcParams['xtick.labelsize'] = 28

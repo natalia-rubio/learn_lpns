@@ -4,14 +4,13 @@ This repository contains functionality to train and deploy neural networks that 
 
 ** Documentation + production readiness in progress **
 
-<img src="figures/github_figures.png" alt="Comparison of 3D finite element and 0D electric circuit models of blood flow" width="85%">
+
 
 ## Requirements
 
 - **Python** 3.10 or newer
 - **Python packages** (see Setup): core scientific stack plus **JAX**, **Optax**, and **dill** for training; **VTK** (`vtk` on PyPI) for geometric processing; **SciPy**,**matplotlib**, **pandas**.
-- **`svzerodsolver`** and **`svzerodcalibrator`** binaries (`SVZEROD_INSTALL_DIR` or `PATH`).  These applications are both supported by the repo [svZeroDSolver](https://github.com/SimVascular/svZeroDSolver).  Currently, this workflow is only compatible with [my fork](https://github.com/natalia-rubio/svZeroDPlus/tree/J-J_wiring) on branch **`J-J_wiring`** (built by `scripts/setup_cross_validation.sh`).
-
+- `**svzerodsolver`** and `**svzerodcalibrator**` binaries (`SVZEROD_INSTALL_DIR` or `PATH`).  These applications are both supported by the repo [svZeroDSolver](https://github.com/SimVascular/svZeroDSolver).  Currently, this workflow is only compatible with [my fork](https://github.com/natalia-rubio/svZeroDPlus/tree/J-J_wiring) on branch `**J-J_wiring**` (built by `scripts/setup_cross_validation.sh`).
 
 ## Setup
 
@@ -26,12 +25,15 @@ PYTHON=$(brew --prefix python@3.12)/bin/python3.12 ./scripts/setup_cross_validat
 source scripts/cv_env.sh
 ```
 
-Manual setup:
+**Manual setup** (if you already cloned the repo and prefer to manage Python yourself):
+
+Prerequisites for the solver build: `git`, `cmake`, and a C++ compiler (macOS: `xcode-select --install`; `brew install cmake`).
 
 ```bash
 git clone <YOUR_FORK_OR_REMOTE_URL> learn_lpns
 cd learn_lpns
 
+# Python 3.10+ required (macOS: brew install python@3.12)
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
@@ -40,6 +42,10 @@ pip install --upgrade pip
 pip install -U "jax[cpu]"
 pip install -r requirements.txt
 
+# Clone/build svZeroDPlus fork (sibling ../svZeroDPlus/Release) — required for calibration/forward sim
+./scripts/setup_cross_validation.sh --skip-clone --skip-python
+source scripts/cv_env.sh
+
 # Run modules from repo root, e.g.:
 python -m util.zerod_calibration.batch_generate_zerod_inputs_vmr --help
 python util/zerod_calibration/run_cross_validation.py --help
@@ -47,9 +53,9 @@ python util/zerod_calibration/run_cross_validation.py --help
 
 **Notes**
 
-- **`requirements.txt`** lists packages other than JAX; install **`jax[cpu]`** or a CUDA variant before `-r requirements.txt` so jax/jaxlib stay matched.
-- Set **`SVZEROD_INSTALL_DIR`** to the directory containing `svzerodsolver` and `svzerodcalibrator` (default: sibling `../svZeroDPlus/Release`). `scripts/setup_cross_validation.sh` writes `scripts/cv_env.sh` with this export.
-
+- `requirements.txt` lists packages other than JAX; install `jax[cpu]` or a CUDA variant before `-r requirements.txt` so jax/jaxlib stay matched.
+- `setup_cross_validation.sh` clones [svZeroDPlus](https://github.com/natalia-rubio/svZeroDPlus) branch `J-J_wiring` into `../svZeroDPlus` and builds `svzerodsolver` + `svzerodcalibrator`. Use `--skip-python` if you already created `.venv`; use `--skip-clone` if you only want to rebuild the solver.
+- `scripts/cv_env.sh` exports `SVZEROD_INSTALL_DIR` (default: `../svZeroDPlus/Release`). Source it in each shell, or set `SVZEROD_INSTALL_DIR` / add the binaries to `PATH` yourself.
 
 ## Functionality
 
@@ -64,24 +70,26 @@ $k$-fold cross-validation of this workflow is implemented, where $k$ different t
 
 ## Repository layout
 
-| Path | Purpose |
-|------|---------|
+
+| Path                      | Purpose                                                                                                                                                                                                                                                                     |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `util/zerod_calibration/` | Core 0D pipeline: geometry pre-processing (split junctions with 3+ outlets into bifurcations, adjust junction-vessel boundaries based on a pseudo entrance length), calibration, forward simulation, CV orchestration (`run_cross_validation.py`), and run-config handling. |
-| `util/neural_network/` | JAX/Optax model definitions, utilities, and training loop. Trains three single-output networks (R, S, L) via `launch_training.py`. |
-| `util/data_processing/` | Builds ML-ready tables and JAX arrays from generated 0D outputs; creates split indices and helper summaries. |
-| `util/visualizations/` | Plotting and reporting scripts for CV metrics, calibration diagnostics, and geometry/result inspection. |
-| `util/cluster_scripts/` | Cluster helpers for centerline projection, VTU processing, and large-scale data generation workflows. |
-| `util/tools/` | Shared lightweight utilities used across modules (e.g., dictionary save/load wrappers). |
-| `data/` | Bundled sample inputs plus generated working datasets (`zeroD`, `ml_inputs`, `jax_arrays`, `split_indices`). Only seed inputs are tracked in Git; see `data/README.md`. |
-| `results/` | Model artifacts and evaluation outputs (`results/models/...`, `results/cross_validation/...`). |
-| `requirements.txt` | Python dependency list (install JAX separately first to match your platform/CUDA stack). |
-| `README.template.md` | Project documentation template and onboarding notes for local setup/workflow. |
+| `util/neural_network/`    | JAX/Optax model definitions, utilities, and training loop. Trains three single-output networks (R, S, L) via `launch_training.py`.                                                                                                                                          |
+| `util/data_processing/`   | Builds ML-ready tables and JAX arrays from generated 0D outputs; creates split indices and helper summaries.                                                                                                                                                                |
+| `util/visualizations/`    | Plotting and reporting scripts for CV metrics, calibration diagnostics, and geometry/result inspection.                                                                                                                                                                     |
+| `util/cluster_scripts/`   | Cluster helpers for centerline projection, VTU processing, and large-scale data generation workflows.                                                                                                                                                                       |
+| `util/tools/`             | Shared lightweight utilities used across modules (e.g., dictionary save/load wrappers).                                                                                                                                                                                     |
+| `data/`                   | Bundled sample inputs plus generated working datasets (`zeroD`, `ml_inputs`, `jax_arrays`, `split_indices`). Only seed inputs are tracked in Git; see `data/README.md`.                                                                                                     |
+| `results/`                | Model artifacts and evaluation outputs (`results/models/...`, `results/cross_validation/...`).                                                                                                                                                                              |
+| `requirements.txt`        | Python dependency list (install JAX separately first to match your platform/CUDA stack).                                                                                                                                                                                    |
+| `README.template.md`      | Project documentation template and onboarding notes for local setup/workflow.                                                                                                                                                                                               |
+
 
 ## Usage
 
 Run from the **repository root** so imports and `--data_root data` resolve as expected.
 
-A **sample VMR cohort** (`VMR_aortas`, 5 geometries) is included under `data/`; see [`data/README.md`](data/README.md). Use `--set_name VMR_aortas` for quick-start commands below.
+A **sample VMR cohort** (`VMR_aortas`, 5 geometries) is included under `data/`; see `[data/README.md](data/README.md)`. Use `--set_name VMR_aortas` for quick-start commands below.
 
 ### Quick start (cross-validation)
 
@@ -99,17 +107,19 @@ All arguments are keyword flags (e.g. `--set_name`, `--geometry_variant`, `--num
 
 ### Run config (`--run_config`)
 
-Physics and training variants are selected with a single **`--run_config`** flag on the zerod CLIs, CV, batch, data processing, and NN training. Tokens are **underscore-separated** and **order-independent**; they resolve to a **canonical path suffix** under `data/` and `results/`.
+Physics and training variants are selected with a single `**--run_config**` flag on the zerod CLIs, CV, batch, data processing, and NN training. Tokens are **underscore-separated** and **order-independent**; they resolve to a **canonical path suffix** under `data/` and `results/`.
 
 **Tokens** (see `util/zerod_calibration/run_config_canonical.py`):
 
-| Token | Effect |
-|-------|--------|
-| *(none)* | **`base`** — RI junction model, symmetric NN loss, no generation-weighted training |
-| `quadratic_resistor` | RRI junction model (R + stenosis + L); **off by default** |
-| `penalty_on` | Enable L2 calibration penalties (requires `quadratic_resistor`) |
-| `asymmetric_loss` | Asymmetric NN loss (per-coefficient overestimate weights) |
-| `gen_loss` | Generation-weighted NN training loss (`weight = scale / 2^generation`) |
+
+| Token                | Effect                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| *(none)*             | `**base`** — RI junction model, symmetric NN loss, no generation-weighted training |
+| `quadratic_resistor` | RRI junction model (R + stenosis + L); **off by default**                          |
+| `penalty_on`         | Enable L2 calibration penalties (requires `quadratic_resistor`)                    |
+| `asymmetric_loss`    | Asymmetric NN loss (per-coefficient overestimate weights)                          |
+| `gen_loss`           | Generation-weighted NN training loss (`weight = scale / 2^generation`)             |
+
 
 **Alias:** `generation_weighted_loss` parses as `gen_loss` (on-disk suffix remains `_gen_loss`).
 
@@ -135,11 +145,13 @@ base
 
 **Migration from older folder names** (re-process or rename data trees; old names are not accepted as passthrough):
 
-| Old layout | New equivalent |
-|------------|----------------|
-| `stenosis_off_*_gen_loss` | `gen_loss` |
-| Default RRI with penalties | `quadratic_resistor_penalty_on_gen_loss` |
-| `penalty_off_quadratic_resistor_*` | `quadratic_resistor_gen_loss` |
+
+| Old layout                         | New equivalent                           |
+| ---------------------------------- | ---------------------------------------- |
+| `stenosis_off_*_gen_loss`          | `gen_loss`                               |
+| Default RRI with penalties         | `quadratic_resistor_penalty_on_gen_loss` |
+| `penalty_off_quadratic_resistor_`* | `quadratic_resistor_gen_loss`            |
+
 
 On-disk layout (when run-config is set):
 
@@ -168,20 +180,22 @@ python -m util.zerod_calibration.batch_generate_zerod_inputs_vmr \
   --geometries 0076_1001
 ```
 
-**`--skip_steps`** — skip pipeline stages without separate flags. Tokens (order-independent): `base_generation`, `observation`, `calibration`, `forward`, `nn_inference`, `mse`, `plots`. Example: `base_generation_observation_calibration` or `calibration_forward`.
+`**--skip_steps**` — skip pipeline stages without separate flags. Tokens (order-independent): `base_generation`, `observation`, `calibration`, `forward`, `nn_inference`, `mse`, `plots`. Example: `base_generation_observation_calibration` or `calibration_forward`.
 
 Other useful flags: `--no_redo` (skip recreating files that already exist), `--NN_only`, `--NN_vessel`, `--skip_existing` (skip geometries that already have full outputs including NN forward results).
 
 ### k-fold cross-validation (`run_cross_validation.py`)
 
-Each trial randomly splits geometries into train vs validation sets, trains the junction NN (and vessel NN unless disabled), deploys with `generate_zerod_inputs.py --NN_only` on validation geometries, and aggregates MSE from each geometry’s `mse_comparison.csv`. When CV finishes, **`cv_pressure_max_pct_error_barchart`** runs automatically (all three pressure metrics) unless you pass **`--skip_barchart`**.
+Each trial randomly splits geometries into train vs validation sets, trains the junction NN (and vessel NN unless disabled), deploys with `generate_zerod_inputs.py --NN_only` on validation geometries, and aggregates MSE from each geometry’s `mse_comparison.csv`. When CV finishes, `**cv_pressure_max_pct_error_barchart**` runs automatically (all three pressure metrics) unless you pass `**--skip_barchart**`.
 
 **What CV regenerates**
 
-| Stage | When | What runs |
-|-------|------|-----------|
-| **Bootstrap** (start) | Only if prerequisites are missing | `batch_generate_zerod_inputs_vmr` + `run_data_processing` |
-| **Per trial** | Always (val geometries) | `generate_zerod_inputs --NN_only` (NN inference, forward sim, MSE, plots) |
+
+| Stage                 | When                              | What runs                                                                 |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------------- |
+| **Bootstrap** (start) | Only if prerequisites are missing | `batch_generate_zerod_inputs_vmr` + `run_data_processing`                 |
+| **Per trial**         | Always (val geometries)           | `generate_zerod_inputs --NN_only` (NN inference, forward sim, MSE, plots) |
+
 
 Bootstrap runs only when **any** of the following is true for the run-config:
 
@@ -191,11 +205,11 @@ Bootstrap runs only when **any** of the following is true for the run-config:
 
 When bootstrap runs, batch processes **only the missing geometries**, not the whole cohort. Data processing uses all geometries if jax must be rebuilt, otherwise only the batch subset.
 
-- **`--no_redo`**: passed to bootstrap batch only; skips recreating zeroD files that already exist. Does not affect per-trial NN deploy (deploy does not pass `--no_redo`, so NN forward outputs are refreshed each trial).
-- **`--skip_training_if_exists`**: skip training for a trial if model checkpoints already exist.
-- **`--trial N`**: re-run only trial `N` (0-based); merges into existing summary CSV.
-- **`--metrics_only`**: rebuild summary CSVs from existing per-geometry MSE files (no train/deploy); still runs barcharts unless `--skip_barchart`.
-- **`--plots_only`**: regenerate location comparison plots from existing zeroD data.
+- `**--no_redo`**: passed to bootstrap batch only; skips recreating zeroD files that already exist. Does not affect per-trial NN deploy (deploy does not pass `--no_redo`, so NN forward outputs are refreshed each trial).
+- `**--skip_training_if_exists**`: skip training for a trial if model checkpoints already exist.
+- `**--trial N**`: re-run only trial `N` (0-based); merges into existing summary CSV.
+- `**--metrics_only**`: rebuild summary CSVs from existing per-geometry MSE files (no train/deploy); still runs barcharts unless `--skip_barchart`.
+- `**--plots_only**`: regenerate location comparison plots from existing zeroD data.
 
 **Outputs:** per-trial models under `results/models/<set_name>/<run_config>/…_trial_<k>/`, split pickles under `data/split_indices/…`, summary CSVs under `results/cross_validation/<set_name>/<run_config>/` (including pressure/flow MSE and max-error variants), and barchart PDFs in the same directory (e.g. `bifurcations_EL_max_pct_error.pdf`).
 
@@ -216,16 +230,18 @@ Positional args: `set_name`, `num_geos`, optional `geometry_variant` (default `a
 
 Useful flags:
 
-| Flag | Purpose |
-|------|---------|
-| `--run_config` | Path suffix for `jax_arrays` and `split_indices` (default: `gen_loss`); `_gen_loss` in the suffix also enables generation-weighted loss |
-| `--asymmetric_loss` | Per-coefficient asymmetric overestimate weights (also derived from run-config suffix) |
-| `--generation_weighted_loss` | Explicitly enable generation-weighted loss |
-| `--generation_weighted_loss_scale` | Overall multiplier for generation weights (default: 1.0) |
-| `--vessel` | Train vessel NNs (separate jax arrays and `_vessel` model suffix) |
-| `--leaky_relu` | Leaky ReLU activations |
-| `--quiet_epochs` | Suppress per-epoch loss logging (verbose by default) |
-| `--split_path` / `--model_dir` | Override split pickle or output directory (CV sets `--model_dir` per trial) |
+
+| Flag                               | Purpose                                                                                                                                 |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `--run_config`                     | Path suffix for `jax_arrays` and `split_indices` (default: `gen_loss`); `_gen_loss` in the suffix also enables generation-weighted loss |
+| `--asymmetric_loss`                | Per-coefficient asymmetric overestimate weights (also derived from run-config suffix)                                                   |
+| `--generation_weighted_loss`       | Explicitly enable generation-weighted loss                                                                                              |
+| `--generation_weighted_loss_scale` | Overall multiplier for generation weights (default: 1.0)                                                                                |
+| `--vessel`                         | Train vessel NNs (separate jax arrays and `_vessel` model suffix)                                                                       |
+| `--leaky_relu`                     | Leaky ReLU activations                                                                                                                  |
+| `--quiet_epochs`                   | Suppress per-epoch loss logging (verbose by default)                                                                                    |
+| `--split_path` / `--model_dir`     | Override split pickle or output directory (CV sets `--model_dir` per trial)                                                             |
+
 
 Bifurcation **generation** is stored in the jax pickle (not as an NN input feature) and used only when generation-weighted loss is enabled.
 
@@ -233,13 +249,15 @@ Bifurcation **generation** is stored in the jax pickle (not as an NN input featu
 
 Forward-simulation and CV summaries compare several **modalities** (0D model variants). Display names for console tables, CSV headers, and LaTeX exports are centralized in `util/zerod_calibration/modality_paths.py`:
 
-| Modality key | Display name |
-|--------------|--------------|
-| `geometric` | Standard |
-| `BloodVesselJunction` | Calibrated |
-| `BloodVesselJunction_NN` | Learned Junctions |
-| `NN_vessel` | Learned Vessels |
+
+| Modality key                            | Display name                  |
+| --------------------------------------- | ----------------------------- |
+| `geometric`                             | Standard                      |
+| `BloodVesselJunction`                   | Calibrated                    |
+| `BloodVesselJunction_NN`                | Learned Junctions             |
+| `NN_vessel`                             | Learned Vessels               |
 | `BloodVesselJunction_NN_plus_Vessel_NN` | Learned Junctions and Vessels |
+
 
 ### Data processing
 
@@ -258,24 +276,24 @@ Feature histograms and related paths follow the same `set_name / run_config / ge
 
 Reporting scripts under `util/visualizations/` (run as modules from repo root):
 
-| Script | Purpose |
-|--------|---------|
-| `cv_cross_set_summary_barchart` | Grouped bar chart comparing CV metrics across cohorts (e.g. Aortic, Pulmonary) |
-| `cv_max_pct_error_by_config_barchart` | Horizontal bar chart of max pressure error by run-config |
-| `cv_pressure_max_pct_error_barchart` | Per-trial CV bar chart with modality comparison |
-| `cv_pressure_errors_to_latex` | CV pressure metrics → LaTeX table |
-| `cv_geometric_vs_calibrated_histograms` | Histograms of geometric vs calibrated parameter errors |
-| `plot_location_comparison` | Pressure/flow vs time at observation locations |
-| `plot_zero_d_parameter_bars` | Bar charts of 0D parameters by modality |
-| `run_zerod_comparison_plots` | Wrapper for common comparison plot workflows |
+
+| Script                                  | Purpose                                                                        |
+| --------------------------------------- | ------------------------------------------------------------------------------ |
+| `cv_cross_set_summary_barchart`         | Grouped bar chart comparing CV metrics across cohorts (e.g. Aortic, Pulmonary) |
+| `cv_max_pct_error_by_config_barchart`   | Horizontal bar chart of max pressure error by run-config                       |
+| `cv_pressure_max_pct_error_barchart`    | Per-trial CV bar chart with modality comparison                                |
+| `cv_pressure_errors_to_latex`           | CV pressure metrics → LaTeX table                                              |
+| `cv_geometric_vs_calibrated_histograms` | Histograms of geometric vs calibrated parameter errors                         |
+| `plot_location_comparison`              | Pressure/flow vs time at observation locations                                 |
+| `plot_zero_d_parameter_bars`            | Bar charts of 0D parameters by modality                                        |
+| `run_zerod_comparison_plots`            | Wrapper for common comparison plot workflows                                   |
+
 
 Most accept `--run_config`, `--set_name`, and `--geometry_variant` (underscore keyword flags). See each module’s `--help` for defaults.
-
 
 ## Data
 
 The `data/` directory is organized by `set_name` (the cohort of vascular geometries use for training and testing, e.g. VMR_abdo - abdominal aortas from the Vascular Model Repository), `geometry_id` (each geometry in the cohort), and (optionally) `run_config` suffix.
-
 
 - `zeroD/`: per-geometry simulation workspace and outputs (generated geometric inputs, calibrated configs, forward-simulation result CSVs, downsampled CSVs, and MSE comparison files). VMR cohorts use `data/zeroD/<set_name>/standard-0d/` for reference solver input JSONs; centerlines for VMR live under `data/oneD/VMR/<geo_id>/unsteady_soln.vtp`.
 - `oneD/`: per-geometry 3D solutions projected onto 1D centerlines by integration over vessel cross-sections.  Used to calibrate the 0D model to find the ground truth lumped parameter values.  (Needs to be provided by user.  Sample script to project a 3D solution onto centerline in `util/cluster_scripts`.)

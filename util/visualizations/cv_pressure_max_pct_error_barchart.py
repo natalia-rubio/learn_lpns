@@ -30,6 +30,7 @@ from scipy import stats as scipy_stats
 
 from util.visualizations.plot_location_comparison import get_line_style
 from util.visualizations.cv_pressure_errors_to_latex import MODALITY_DISPLAY, VAL_GEOMETRY_DISPLAY
+from util.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
 from util.zerod_calibration.modality_paths import DEFAULT_MODALITY_ORDER
 from util.zerod_calibration.run_config_canonical import (
     discover_run_config_suffixes,
@@ -157,8 +158,7 @@ def generate_bar_chart(metric_key, out_dir, geometry_variant, output_path=None, 
     width = 0.8 / n_mods
     offsets = np.linspace(-0.4 + width / 2, 0.4 - width / 2, n_mods)
 
-    plt.rcParams["text.usetex"] = True
-    plt.rcParams["font.family"] = "serif"
+    use_latex = configure_matplotlib_latex(plt)
 
     fig, ax = plt.subplots(figsize=(max(8, n_groups * 1.2), 5))
     for i, mod in enumerate(MODALITY_KEYS):
@@ -195,8 +195,8 @@ def generate_bar_chart(metric_key, out_dir, geometry_variant, output_path=None, 
             error_kw={"color": "black", "linewidth": 0.8},
         )
 
-    ax.set_ylabel(mcfg["ylabel"], fontsize=12)
-    ax.set_xlabel(r"Cross Validation\ Trial", fontsize=12)
+    ax.set_ylabel(plot_label(mcfg["ylabel"], use_latex=use_latex), fontsize=12)
+    ax.set_xlabel(plot_label(r"Cross Validation\ Trial", use_latex=use_latex), fontsize=12)
     ax.set_xticks(x)
     ax.set_xticklabels(x_labels, fontsize=10.5, ha="center")
     ax.tick_params(axis="y", labelsize=10)

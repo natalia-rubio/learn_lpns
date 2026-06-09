@@ -5,6 +5,8 @@ import os
 
 import numpy as np
 
+from util.visualizations.matplotlib_tex import configure_matplotlib_latex
+
 _STYLE_MAP = {
     'geometric': {"color": "green", "label": "0D Poiseuille"},
     'NORMAL_JUNCTION': {"color": "red", "label": "0D $\\Delta P = 0$ Junction (Calibrated)"},
@@ -177,12 +179,7 @@ def plot_zero_d_parameter_bars(modality_json_paths, output_dir=None, output_name
         n_mod = len(modalities)
         width = 0.7 / n_mod if n_mod > 0 else 0.2
 
-        try:
-            plt.rcParams['text.usetex'] = True
-        except Exception:
-            plt.rcParams['text.usetex'] = False
-        plt.rcParams['font.family'] = 'serif'
-        plt.rcParams['mathtext.fontset'] = 'cm'
+        configure_matplotlib_latex(plt)
         plt.rcParams['axes.labelsize'] = 14
         plt.rcParams['axes.titlesize'] = 16
         plt.rcParams['legend.fontsize'] = 12

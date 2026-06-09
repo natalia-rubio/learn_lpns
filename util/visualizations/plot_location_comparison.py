@@ -23,6 +23,7 @@ from util.visualizations.cv_pressure_errors_to_latex import (
     format_modality_display_for_legend,
     MODALITY_DISPLAY,
 )
+from util.visualizations.matplotlib_tex import configure_matplotlib_latex, latex_is_available
 from util.zerod_calibration.tools.file_io import read_zerod_csv
 
 # Suppress matplotlib warnings about redundant linestyle
@@ -38,26 +39,8 @@ try:
     matplotlib.use('Agg')  # Use non-interactive backend
     import matplotlib.pyplot as plt
     
-    # Configure LaTeX rendering with Computer Modern font
-    try:
-        plt.rcParams['text.usetex'] = True
-        # Test if LaTeX is available
-        test_fig, test_ax = plt.subplots(figsize=(1, 1))
-        test_ax.text(0.5, 0.5, r'Test $\alpha$')
-        plt.close(test_fig)
-        # If successful, configure LaTeX settings
-        plt.rcParams['font.family'] = 'serif'
-        plt.rcParams['font.serif'] = ['Computer Modern Roman', 'DejaVu Serif']
-        plt.rcParams['mathtext.fontset'] = 'cm'
-        LATEX_AVAILABLE = True
-    except Exception:
-        # LaTeX not available, use mathtext with Computer Modern
-        plt.rcParams['text.usetex'] = False
-        plt.rcParams['font.family'] = 'serif'
-        plt.rcParams['font.serif'] = ['Computer Modern Roman', 'DejaVu Serif']
-        plt.rcParams['mathtext.fontset'] = 'cm'
-        LATEX_AVAILABLE = False
-    
+    configure_matplotlib_latex(plt)
+
     # Set font sizes
     plt.rcParams['axes.labelsize'] = 28
     plt.rcParams['axes.titlesize'] = 32
@@ -1002,7 +985,9 @@ def plot_location_comparison(calibration_input_path, geometric_csv_path, calibra
         pct = rel_pct_by_plot_key.get(plot_key)
         if pct is None or not np.isfinite(pct):
             return base_label
-        return f"{base_label}\nMPE: {pct:.1f}\%%"
+        if latex_is_available():
+            return f"{base_label}\nMPE: {pct:.1f}\%%"
+        return f"{base_label}\nMPE: {pct:.1f}%"
 
     def plot_pressure_data(ax, times_data, pressures_3d_data, geometric_data_dict, 
                           calibrated_data_dict, set_ylim_from_3d=False):
