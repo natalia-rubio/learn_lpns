@@ -1,0 +1,6 @@
+# Bundled VMR sample data (notebook + CV). Store binaries in Git LFS.
+# After clone: git lfs pull   (or ./scripts/setup_git_lfs.sh)
+
+data/oneD/VMR/**/*.vtp filter=lfs diff=lfs merge=lfs -text
+data/zeroD/VMR_aortas/standard-0d/*.json filter=lfs diff=lfs merge=lfs -text
+data/zeroD/VMR_aortas/gen_loss/*/bifurcations_EL_calibrated_output_BloodVesselJunction.json filter=lfs diff=lfs merge=lfs -text
