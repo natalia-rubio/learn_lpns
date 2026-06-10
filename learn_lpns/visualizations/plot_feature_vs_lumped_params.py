@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from learn_lpns.tools.paths import repo_root
+
 # -----------------------------------------------------------------------------
 # Vessel: column names from vessel_geometric_features.csv and vessel_lumped_parameters.csv.
 # -----------------------------------------------------------------------------
@@ -63,10 +65,6 @@ LUMPED_PARAMS_JUNCTION = [
     "L_outlet0",
     "L_outlet1",
 ]
-
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 
 def _sanitize_filename(s):
@@ -204,10 +202,11 @@ def main():
     )
     args = parser.parse_args()
 
-    ml_inputs_root = os.path.join(REPO_ROOT, args.data_root, "ml_inputs")
+    root = str(repo_root())
+    ml_inputs_root = os.path.join(root, args.data_root, "ml_inputs")
     if args.output_dir is None:
         args.output_dir = os.path.join(
-            REPO_ROOT,
+            root,
             "results",
             "plots",
             "feature_vs_lumped_params",

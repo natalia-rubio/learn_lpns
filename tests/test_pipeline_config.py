@@ -128,9 +128,8 @@ def test_load_pipeline_config_set_name_layer(tmp_path, monkeypatch):
 
     monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
     monkeypatch.setattr(
-        "learn_lpns.config.load._REPO_ROOT",
-        tmp_path,
-        raising=False,
+        "learn_lpns.config.load.repo_root",
+        lambda: tmp_path,
     )
     cfg = load_pipeline_config(set_name="VMR_custom")
     assert cfg.calibration.l2_penalties_for_set("VMR_custom") == (pytest.approx(42), pytest.approx(99))

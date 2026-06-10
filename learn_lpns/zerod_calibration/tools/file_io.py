@@ -148,7 +148,7 @@ def read_zerod_csv(csv_path):
     if not os.path.exists(csv_path):
         return results, sorted(times)
 
-    with open(csv_path, "r") as f:
+    with open(csv_path) as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames
         if fieldnames is None:
@@ -185,7 +185,7 @@ def load_from_json(json_path):
     """
     Load JSON file from path.
     """
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         print(f"  Loading JSON file from: {json_path}")
         geometric_input = json.load(f)
     return geometric_input
@@ -492,7 +492,7 @@ def get_vmr_geometries(
     for json_file in sorted(glob.glob(os.path.join(standard_0d_dir_path, "*.json"))):
         geo_name = os.path.basename(json_file).replace(".json", "")
         try:
-            with open(json_file, "r") as f:
+            with open(json_file) as f:
                 json.load(f)
             geo_names.append(geo_name)
         except Exception as e:

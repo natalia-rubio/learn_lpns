@@ -98,7 +98,7 @@ def _trial_cell(tid, val_geo):
     else:
         lines_tex = [_latex_escape(str(display))]
     trial_line = f"Trial {tid}"
-    content = " \\\\ ".join([trial_line] + ["Validation Geometry:"] + lines_tex)
+    content = " \\\\ ".join([trial_line, "Validation Geometry:", *lines_tex])
     return rf"\multirow{{3}}{{*}}{{\shortstack[l]{{{content}}}}}"
 
 
@@ -110,7 +110,7 @@ PREFIX_MSE = "PressureMSE_"
 def load_csv_column(path, prefix, modality):
     """Load one metric column from a CV summary CSV. Returns list of values (one per trial)."""
     out = []
-    with open(path, "r", newline="") as f:
+    with open(path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             trial_id = row.get("trial_id", "").strip()
@@ -178,7 +178,7 @@ def main():
 
     # Trial IDs and validation geometry names from first file
     trial_rows = []  # list of (trial_id, val_geometries)
-    with open(path_rel, "r", newline="") as f:
+    with open(path_rel, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             tid = row.get("trial_id", "").strip()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -32,7 +32,7 @@ def forward_jax_pickle_path(
     )
 
 
-def _resolve_model_paths(model_dir: str, set_name: str, *, vessel: bool = False) -> List[str]:
+def _resolve_model_paths(model_dir: str, set_name: str, *, vessel: bool = False) -> list[str]:
     suffix = "vessel_pred" if vessel else "pred"
     model_base_name = f"rri_{set_name}_{suffix}"
     return [os.path.join(model_dir, f"{model_base_name}_{i}_model") for i in range(3)]
@@ -44,7 +44,7 @@ def run_nn_predict(
     set_name: str,
     *,
     vessel: bool = False,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run three NN heads (R, stenosis, L); return prediction arrays."""
     model_paths = _resolve_model_paths(model_dir, set_name, vessel=vessel)
     for model_path in model_paths:
@@ -67,12 +67,12 @@ def run_nn_predict(
 
 
 def apply_junction_predictions(
-    nn_config: Dict[str, Any],
+    nn_config: dict[str, Any],
     *,
     X: np.ndarray,
-    junction_names: List[str],
-    outlet_primary_names: List[str],
-    outlet_vessel_ids: List[int],
+    junction_names: list[str],
+    outlet_primary_names: list[str],
+    outlet_vessel_ids: list[int],
     pred_R: np.ndarray,
     pred_S: np.ndarray,
     pred_L: np.ndarray,
@@ -84,9 +84,9 @@ def apply_junction_predictions(
             f"Prediction array size mismatch: input has {len(X)} rows, but predictions have {len(pred_R)} values."
         )
 
-    primary_outlet_to_row: Dict[Tuple[str, str], int] = {}
-    junction_name_to_row_indices: Dict[str, List[int]] = {}
-    for row_idx, (junc_name, pout_name) in enumerate(zip(junction_names, outlet_primary_names)):
+    primary_outlet_to_row: dict[tuple[str, str], int] = {}
+    junction_name_to_row_indices: dict[str, list[int]] = {}
+    for row_idx, (junc_name, pout_name) in enumerate(zip(junction_names, outlet_primary_names, strict=False)):
         primary_outlet_to_row[(junc_name, pout_name)] = row_idx
         junction_name_to_row_indices.setdefault(junc_name, []).append(row_idx)
 
@@ -126,7 +126,7 @@ def apply_junction_predictions(
         S_values = [0.0] * len(junc_outlet_vessel_ids)
         L_values = [0.0] * len(junc_outlet_vessel_ids)
 
-        for file_idx, (vid, vname) in enumerate(zip(junc_outlet_vessel_ids, outlet_vessel_names)):
+        for file_idx, (vid, vname) in enumerate(zip(junc_outlet_vessel_ids, outlet_vessel_names, strict=False)):
             if "connector" in vname and "connectorEL" not in vname:
                 print(f"        {junc_name}: outlet[{file_idx}] {vname} (id={vid}) -> connector, set to 0")
                 continue
@@ -163,10 +163,10 @@ def apply_junction_predictions(
 
 def run_junction_inference(
     *,
-    jax_data_dict: Dict[str, Any],
-    nn_config: Dict[str, Any],
+    jax_data_dict: dict[str, Any],
+    nn_config: dict[str, Any],
     set_name: str,
-    geo_name: Optional[str],
+    geo_name: str | None,
     model_dir: str,
     junction_type: str,
     quadratic_resistor: bool = False,
@@ -204,7 +204,7 @@ def run_junction_inference(
 
 
 def validate_vessel_trial_geometry_variant(
-    model_dir: Optional[str],
+    model_dir: str | None,
     geometry_variant: str,
 ) -> None:
     """Ensure CV trial model dir matches the requested geometry variant."""
@@ -222,7 +222,7 @@ def resolve_vessel_model_dir(
     *,
     set_name: str,
     geometry_variant: str,
-    model_dir: Optional[str] = None,
+    model_dir: str | None = None,
 ) -> str:
     """Resolve vessel model checkpoint directory (CV trial dirs use ``_vessel_trial_`` suffix)."""
     if model_dir and "_trial_" in os.path.basename(model_dir):
@@ -237,7 +237,7 @@ def load_vessel_feature_matrix(
     geometric_input_path: str,
     *,
     verbose: bool = False,
-) -> Tuple[np.ndarray, List[int]]:
+) -> tuple[np.ndarray, list[int]]:
     """Load and filter vessel geometric features for NN inference."""
     from learn_lpns.data_processing.data_dict_from_csvs import (
         _clamp_tortuosity,
@@ -262,9 +262,9 @@ def load_vessel_feature_matrix(
 
 
 def apply_vessel_predictions(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     *,
-    vessel_ids: List[int],
+    vessel_ids: list[int],
     pred_R: np.ndarray,
     pred_S: np.ndarray,
     pred_L: np.ndarray,
@@ -288,14 +288,14 @@ def apply_vessel_predictions(
 
 def run_vessel_inference(
     *,
-    junction_nn_config: Dict[str, Any],
+    junction_nn_config: dict[str, Any],
     variant_geometric_input: str,
     set_name: str,
     geometry_variant: str,
-    model_dir: Optional[str] = None,
+    model_dir: str | None = None,
     quadratic_resistor: bool = False,
     verbose: bool = False,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Predict vessel R/S/L and return (junction+vessel config, vessel-only config).
 
@@ -323,7 +323,7 @@ def run_vessel_inference(
         pred_L=pred_L,
     )
 
-    with open(variant_geometric_input, "r") as f:
+    with open(variant_geometric_input) as f:
         vessel_only_config = json.load(f)
     apply_vessel_predictions(
         vessel_only_config,

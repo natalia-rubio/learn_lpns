@@ -53,7 +53,7 @@ def plot_zero_d_parameter_bars(
             modality_data[mod] = None
             continue
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 modality_data[mod] = json.load(f)
         except Exception as e:
             if verbose:
@@ -156,7 +156,7 @@ def plot_zero_d_parameter_bars(
                     jname, out_idx = junction_outlet_map[name]
                     arr = jmap.get(jname, {}).get(p_key) if jname in jmap else None
                     try:
-                        if isinstance(arr, (list, tuple)) and len(arr) > out_idx:
+                        if isinstance(arr, list | tuple) and len(arr) > out_idx:
                             values.append(float(arr[out_idx]))
                         elif jname in jmap:
                             values.append(np.nan)

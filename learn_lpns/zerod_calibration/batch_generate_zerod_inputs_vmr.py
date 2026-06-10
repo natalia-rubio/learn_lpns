@@ -16,9 +16,7 @@ import subprocess
 import sys
 from datetime import datetime
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, REPO_ROOT)
-
+from learn_lpns.tools.paths import repo_root
 from learn_lpns.zerod_calibration.generate_zerod_inputs_cli import (
     DEFAULT_JUNCTION_TYPES,
     add_batch_arguments,
@@ -37,7 +35,7 @@ def load_previous_log(log_file_path):
         return None
 
     try:
-        with open(log_file_path, "r") as f:
+        with open(log_file_path) as f:
             log_data = json.load(f)
 
         failed_geos = [item["geometry"] for item in log_data.get("failed", []) if not item.get("timed_out", False)]
@@ -63,9 +61,9 @@ def check_geometry_complete(
 ):
     """Check if a geometry already has required output files under the run-config path."""
     if run_config_suffix:
-        base_dir = os.path.join(REPO_ROOT, "data", "zeroD", set_name, run_config_suffix, geo_name)
+        base_dir = os.path.join(str(repo_root()), "data", "zeroD", set_name, run_config_suffix, geo_name)
     else:
-        base_dir = os.path.join(REPO_ROOT, "data", "zeroD", set_name, geo_name)
+        base_dir = os.path.join(str(repo_root()), "data", "zeroD", set_name, geo_name)
 
     for jtype in junction_types:
         calibrated_output = os.path.join(base_dir, f"bifurcations_calibrated_output_{jtype}.json")
@@ -103,7 +101,7 @@ def run_generate_zerod_inputs(set_name, geo_name, args, verbose=False, timeout_s
         if verbose:
             print(f"  Running: {' '.join(cmd)}")
 
-        result = subprocess.run(cmd, cwd=REPO_ROOT, text=True, timeout=timeout_seconds)
+        result = subprocess.run(cmd, cwd=repo_root(), text=True, timeout=timeout_seconds)
 
         if result.returncode == 0:
             generated_files = None
@@ -157,14 +155,14 @@ Examples:
         print(f"Processing {len(geo_names)} specified geometries")
     else:
         print("Discovering VMR geometries...")
-        geo_names = get_vmr_geometries(standard_0d_dir(os.path.join(REPO_ROOT, "data"), set_name))
+        geo_names = get_vmr_geometries(standard_0d_dir(os.path.join(str(repo_root()), "data"), set_name))
         print(f"Found {len(geo_names)} VMR geometries")
 
     if args.only_failed or args.only_timed_out or args.only_successful:
         if not args.log_file:
             parser.error("--only_failed, --only_timed_out, and --only_successful require --log_file")
 
-        log_path = os.path.join(REPO_ROOT, args.log_file)
+        log_path = os.path.join(str(repo_root()), args.log_file)
         previous_log = load_previous_log(log_path)
 
         if previous_log is None:
@@ -177,7 +175,7 @@ Examples:
             target_geos = previous_log["timed_out"]
             print(f"\nFiltering to {len(target_geos)} timed-out geometries from log file")
         else:
-            with open(log_path, "r") as f:
+            with open(log_path) as f:
                 log_data = json.load(f)
             target_geos = log_data.get("success", [])
             print(f"\nFiltering to {len(target_geos)} successful geometries from log file")
@@ -288,7 +286,7 @@ Examples:
     print(f"  Timed out: {results['timed_out_count']}")
 
     if args.log_file:
-        log_path = os.path.join(REPO_ROOT, args.log_file)
+        log_path = os.path.join(str(repo_root()), args.log_file)
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
         with open(log_path, "w") as f:
             json.dump(results, f, indent=2)

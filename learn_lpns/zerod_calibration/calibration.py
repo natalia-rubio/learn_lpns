@@ -37,7 +37,7 @@ def create_calibration_input(
         set_name: Optional set name (e.g. VMR_abdo) used to look up set-specific L2 penalties
     """
     print(f"Reading geometric input from: {geometric_input_path}")
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         inp = json.load(f)
 
     # Compute BC times directly from 1D solution timesteps (no refinement/interpolation)
@@ -161,7 +161,7 @@ def run_calibration(calibration_input_path, output_path):
     print("Running calibration...")
 
     # Read calibration input
-    with open(calibration_input_path, "r") as f:
+    with open(calibration_input_path) as f:
         json.load(f)
 
     from learn_lpns.zerod_calibration.tools.svzerod_binaries import svzerod_binary
@@ -196,16 +196,16 @@ def run_calibration(calibration_input_path, output_path):
             error_msg += f"\nSTDOUT: {e.stdout}"
         if e.stderr:
             error_msg += f"\nSTDERR: {e.stderr}"
-        raise RuntimeError(error_msg)
-    except FileNotFoundError:
-        raise RuntimeError(f"svzerodcalibrator executable not found at: {calibrator_exe}")
+        raise RuntimeError(error_msg) from e
+    except FileNotFoundError as e:
+        raise RuntimeError(f"svzerodcalibrator executable not found at: {calibrator_exe}") from e
 
     # Read the calibrated output
     try:
-        with open(abs_output_path, "r") as f:
+        with open(abs_output_path) as f:
             cali = json.load(f)
     except Exception as e:
-        raise RuntimeError(f"Failed to read calibrated output from {abs_output_path}: {e}")
+        raise RuntimeError(f"Failed to read calibrated output from {abs_output_path}: {e}") from e
 
     # Post-process calibrated output to ensure compatibility with svzerodsolver
     for junc in cali.get("junctions", []):

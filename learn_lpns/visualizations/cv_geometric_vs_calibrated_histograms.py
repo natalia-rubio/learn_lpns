@@ -52,7 +52,7 @@ def _extract_element_values(json_path):
     Names: vessel_name per sample; junctions use junction_name, with outlet key
     (junction_name:outlet_key) when values are per-outlet lists aligned with outlet_vessel_ids.
     """
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         data = json.load(f)
     vessels = data.get("vessels", [])
     junctions = data.get("junctions", [])
@@ -89,7 +89,7 @@ def _extract_element_values(json_path):
             vals = jv[key]
             if isinstance(vals, list):
                 if outlet_keys and len(outlet_keys) == len(vals):
-                    for ok, x in zip(outlet_keys, vals):
+                    for ok, x in zip(outlet_keys, vals, strict=False):
                         container.append(float(x))
                         name_container.append(f"{jname}:{ok}")
                 else:
@@ -123,7 +123,7 @@ def _get_validation_geometries(set_name, run_config, geometry_variant, results_r
     if not os.path.exists(summary_path):
         raise FileNotFoundError(f"CV summary not found: {summary_path}. Run cross-validation first.")
     val_geos = []
-    with open(summary_path, "r", newline="") as f:
+    with open(summary_path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             tid = (row.get("trial_id") or "").strip()

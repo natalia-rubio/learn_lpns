@@ -31,7 +31,7 @@ import json
 import os
 import sys
 from collections import deque
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -45,7 +45,7 @@ except ImportError as e:
 from learn_lpns.zerod_calibration.tools.file_io import read_centerline_vtp
 
 
-def find_centerline_file(set_name: str, geo_name: str, data_dir: str = "data") -> Optional[str]:
+def find_centerline_file(set_name: str, geo_name: str, data_dir: str = "data") -> str | None:
     """
     Find centerline VTP under data/oneD or data/threeD for a geometry.
 
@@ -74,7 +74,7 @@ def find_centerline_file(set_name: str, geo_name: str, data_dir: str = "data") -
     return None
 
 
-def _centerline_search_paths(set_name: str, geo_name: str, data_dir: str = "data") -> List[str]:
+def _centerline_search_paths(set_name: str, geo_name: str, data_dir: str = "data") -> list[str]:
     """Return candidate centerline paths (for error messages)."""
     paths = [
         os.path.join(data_dir, "oneD", set_name, geo_name, "unsteady_soln.vtp"),
@@ -97,10 +97,10 @@ def _centerline_search_paths(set_name: str, geo_name: str, data_dir: str = "data
 def infer_paths_from_set_run_geo(
     set_name: str,
     geo_name: str,
-    run_config: Optional[str] = None,
+    run_config: str | None = None,
     data_dir: str = "data",
-    output_path: Optional[str] = None,
-) -> Tuple[str, str, str]:
+    output_path: str | None = None,
+) -> tuple[str, str, str]:
     """
     Infer paths to EL geometric JSON, centerline VTP, and output VTP.
 
@@ -141,13 +141,13 @@ def _is_connector_vessel(vessel_name: str) -> bool:
     return "connector" in (vessel_name or "").lower()
 
 
-def _find_gid_index(gid_arr: np.ndarray, gid: int) -> Optional[int]:
+def _find_gid_index(gid_arr: np.ndarray, gid: int) -> int | None:
     matches = np.where(gid_arr == gid)[0]
     return int(matches[0]) if len(matches) > 0 else None
 
 
-def _build_adjacency(n_points: int, cells: Sequence[Sequence[int]]) -> List[List[int]]:
-    adj: List[List[int]] = [[] for _ in range(n_points)]
+def _build_adjacency(n_points: int, cells: Sequence[Sequence[int]]) -> list[list[int]]:
+    adj: list[list[int]] = [[] for _ in range(n_points)]
     for edge in cells:
         if len(edge) != 2:
             continue
@@ -158,10 +158,10 @@ def _build_adjacency(n_points: int, cells: Sequence[Sequence[int]]) -> List[List
     return adj
 
 
-def _bfs_path(adj: Sequence[Sequence[int]], start: int, goal: int) -> Optional[List[int]]:
+def _bfs_path(adj: Sequence[Sequence[int]], start: int, goal: int) -> list[int] | None:
     if start == goal:
         return [start]
-    parent: Dict[int, Optional[int]] = {start: None}
+    parent: dict[int, int | None] = {start: None}
     q: deque[int] = deque([start])
     while q:
         u = q.popleft()
@@ -170,8 +170,8 @@ def _bfs_path(adj: Sequence[Sequence[int]], start: int, goal: int) -> Optional[L
                 parent[v] = u
                 q.append(v)
                 if v == goal:
-                    path: List[int] = []
-                    cur: Optional[int] = goal
+                    path: list[int] = []
+                    cur: int | None = goal
                     while cur is not None:
                         path.append(cur)
                         cur = parent[cur]
@@ -184,7 +184,7 @@ def _path_along_branch(
     path_arr: np.ndarray,
     idx_a: int,
     idx_b: int,
-) -> Optional[np.ndarray]:
+) -> np.ndarray | None:
     """All point indices on the same BranchId with Path between the two endpoints (inclusive)."""
     ba = int(branch_id_arr[idx_a])
     bb = int(branch_id_arr[idx_b])
@@ -206,7 +206,7 @@ def _path_between_points(
     idx_in: int,
     idx_out: int,
     adj: Sequence[Sequence[int]],
-) -> Optional[List[int]]:
+) -> list[int] | None:
     """Unique path between two centerline vertices (tree graph or single-branch fallback)."""
     cells = centerline_arrays.get("Cells") or []
     if len(cells) > 0:
@@ -227,13 +227,13 @@ def _path_between_points(
     return [int(x) for x in seg]
 
 
-def _junction_outlet_gids(junc: dict) -> List[Tuple[str, int]]:
+def _junction_outlet_gids(junc: dict) -> list[tuple[str, int]]:
     """(vessel_name, gid) for each outlet with a valid GID."""
     cn = junc.get("centerline_node_ids") or {}
     outlets = cn.get("outlets")
     if not outlets:
         return []
-    out: List[Tuple[str, int]] = []
+    out: list[tuple[str, int]] = []
     if isinstance(outlets, dict):
         for name, gid in outlets.items():
             if gid is None:
@@ -245,7 +245,7 @@ def _junction_outlet_gids(junc: dict) -> List[Tuple[str, int]]:
 def _assign_el_labels(
     centerline_arrays: dict,
     geometric_input: dict,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Returns (branch_id_el, bifurcation_id_el) int32 arrays, length n_points.
 
@@ -263,7 +263,7 @@ def _assign_el_labels(
     vessels = geometric_input.get("vessels") or []
     junctions = geometric_input.get("junctions") or []
 
-    junction_point_to_jidx: Dict[int, int] = {}
+    junction_point_to_jidx: dict[int, int] = {}
 
     # --- Junction regions (non-NORMAL only; bif_region_idx sequential among those) ---
     bif_region_idx = 0
@@ -291,7 +291,7 @@ def _assign_el_labels(
                     junction_point_to_jidx[pt] = bif_region_idx
         bif_region_idx += 1
 
-    junction_indices: Set[int] = set(junction_point_to_jidx.keys())
+    junction_indices: set[int] = set(junction_point_to_jidx.keys())
 
     # --- Vessel branches: non-connector only; junction wins at overlaps ---
     for v in vessels:
@@ -323,13 +323,13 @@ def _assign_el_labels(
     return branch_el, bif_el
 
 
-def _numpy_to_vtk_int32(name: str, arr: np.ndarray) -> "vtk.vtkIntArray":
+def _numpy_to_vtk_int32(name: str, arr: np.ndarray) -> vtk.vtkIntArray:
     vtk_arr = numpy_to_vtk(arr.astype(np.int32), deep=True)
     vtk_arr.SetName(name)
     return vtk_arr
 
 
-def _remove_array_if_present(pd: "vtk.vtkPointData", name: str) -> None:
+def _remove_array_if_present(pd: vtk.vtkPointData, name: str) -> None:
     if pd.HasArray(name):
         pd.RemoveArray(name)
 
@@ -339,7 +339,7 @@ def export_el_labeled_centerline_vtp(
     centerline_path: str,
     output_path: str,
 ) -> str:
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         geometric_input = json.load(f)
 
     centerline_arrays, poly = read_centerline_vtp(centerline_path)

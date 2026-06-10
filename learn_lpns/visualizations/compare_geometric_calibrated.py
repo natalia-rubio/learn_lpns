@@ -102,7 +102,7 @@ def extract_element_values(json_path, label):
     Returns:
         Tuple of (vessel_values, junction_values) dictionaries
     """
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         data = json.load(f)
 
     vessels = data.get("vessels", [])
@@ -241,7 +241,7 @@ def create_violin_plots(
 
             # Color the violins based on label, not position
             colors = [color_map[label] for label in labels_list]
-            for pc, color in zip(parts["bodies"], colors):
+            for pc, color in zip(parts["bodies"], colors, strict=False):
                 pc.set_facecolor(color)
                 pc.set_alpha(0.7)
 
@@ -328,7 +328,7 @@ def create_violin_plots(
 
             # Color the violins based on label, not position
             colors = [color_map[label] for label in labels_list]
-            for pc, color in zip(parts["bodies"], colors):
+            for pc, color in zip(parts["bodies"], colors, strict=False):
                 pc.set_facecolor(color)
                 pc.set_alpha(0.7)
 

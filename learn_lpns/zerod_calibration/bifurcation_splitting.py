@@ -508,11 +508,16 @@ def split_junctions(geometric_input, centerline_data):
             print(f"    Warning: Could not determine main outlet, using {main_vessel['vessel_name']} as main outlet")
 
         # Sort side outlets by their in-junction path length (shortest first = branches off first)
-        def get_in_junction_path_length(outlet_id):
-            outlet_branch_id = outlet_id_to_branch.get(outlet_id)
+        def get_in_junction_path_length(
+            outlet_id,
+            *,
+            _outlet_id_to_branch=outlet_id_to_branch,
+            _in_junction_path_lengths=in_junction_path_lengths,
+        ):
+            outlet_branch_id = _outlet_id_to_branch.get(outlet_id)
             if outlet_branch_id is None:
                 return float("inf")
-            return in_junction_path_lengths.get(outlet_branch_id, float("inf"))
+            return _in_junction_path_lengths.get(outlet_branch_id, float("inf"))
 
         side_outlets.sort(key=get_in_junction_path_length)
 
@@ -523,9 +528,7 @@ def split_junctions(geometric_input, centerline_data):
                 in_junction_path_lengths.get(outlet_branch_id, float("inf")) if outlet_branch_id else float("inf")
             )
             side_name = outlet_vessel["vessel_name"] if outlet_vessel else outlet_id
-            print(
-                f"    Side outlet {i + 1}: {side_name} (in-junction path length: {path_len:.4f})"
-            )
+            print(f"    Side outlet {i + 1}: {side_name} (in-junction path length: {path_len:.4f})")
 
         # Create cascading bifurcations
         # Each bifurcation has:
@@ -748,7 +751,7 @@ def split_junctions(geometric_input, centerline_data):
 
     # Update vessel references in junctions to match new IDs
     {v["vessel_name"]: v["vessel_id"] for v in result["vessels"]}
-    for junc in result["junctions"]:
+    for _junc in result["junctions"]:
         # Convert vessel IDs if needed (they might reference by old ID)
         # Since we kept original vessels and only added new ones, this should be OK
         pass
@@ -776,7 +779,7 @@ def split_junctions_from_files(geometric_input_path, centerline_path, output_pat
     print(f"  Centerline: {centerline_path}")
 
     # Load geometric input
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         geometric_input = json.load(f)
 
     # Load centerline
@@ -864,7 +867,7 @@ def adjust_junction_boundaries_by_entrance_length_from_files(
         print(f"  Centerline: {centerline_path}")
 
     # Load geometric input
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         geometric_input = json.load(f)
 
     # Load centerline
@@ -1543,7 +1546,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                 else merged_vessel_name.split("_")[0]
                             )
                             seg_parts = []
-                            for name in merged_vessel_names + [next_vessel_name]:
+                            for name in [*merged_vessel_names, next_vessel_name]:
                                 if "_seg" in name:
                                     seg_parts.append(name.split("_seg")[-1])
                             merged_vessel_name = f"{base_name}_seg{'_'.join(seg_parts)}"
@@ -1585,8 +1588,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                             # Remove next vessel and junction
                             if next_vessel in vessels:
                                 vessels.remove(next_vessel)
-                            if next_vessel_id in vessel_by_id:
-                                del vessel_by_id[next_vessel_id]
+                            vessel_by_id.pop(next_vessel_id, None)
                             vessels_to_remove.append(next_vessel_id)
 
                             if downstream_junction in junctions:
@@ -1762,7 +1764,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                         else merged_vessel_name.split("_")[0]
                     )
                     seg_parts = []
-                    for name in merged_vessel_names + [next_vessel_name]:
+                    for name in [*merged_vessel_names, next_vessel_name]:
                         if "_seg" in name:
                             seg_parts.append(name.split("_seg")[-1])
                     merged_vessel_name = f"{base_name}_seg{'_'.join(seg_parts)}"
@@ -1824,8 +1826,7 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # This prevents it from being found again in future iterations
                     if next_vessel in vessels:
                         vessels.remove(next_vessel)
-                    if next_vessel_id in vessel_by_id:
-                        del vessel_by_id[next_vessel_id]
+                    vessel_by_id.pop(next_vessel_id, None)
                     vessels_to_remove.append(next_vessel_id)
 
                     # Remove downstream junction immediately and update connections

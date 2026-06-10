@@ -126,7 +126,7 @@ PLOT_FONT_SIZE = 18
 
 def _display_name_to_label(display_spec):
     """Convert CONFIG_DISPLAY_NAME entry to a single string; list/tuple -> newline-separated."""
-    if isinstance(display_spec, (list, tuple)):
+    if isinstance(display_spec, list | tuple):
         return "\n".join(str(line) for line in display_spec)
     return str(display_spec)
 
@@ -173,7 +173,7 @@ def _load_mean_std_n(path, modality=MODALITY_COLUMN):
     mean_frac = float("nan")
     std_frac = float("nan")
     n = 0
-    with open(path, "r", newline="") as f:
+    with open(path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             tid = row.get("trial_id", "").strip()
@@ -464,7 +464,7 @@ def main():
             error_kw={"color": "black", "linewidth": 1},
             label=_format_set_label(set_names[s]),
         )
-        for rect, vv, cih in zip(bars, v_col[valid], ci_col[valid]):
+        for rect, vv, cih in zip(bars, v_col[valid], ci_col[valid], strict=False):
             ci_plot = 0.0 if _isnan(cih) else cih
             bar_value_ci.append((rect, vv, ci_plot))
 

@@ -15,10 +15,6 @@ import os
 import subprocess
 import sys
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
 from learn_lpns.config import get_pipeline_config
 from learn_lpns.visualizations.run_zerod_comparison_plots import run_zerod_comparison_plots
 from learn_lpns.zerod_calibration.bc_fitting import (
@@ -79,7 +75,7 @@ def _assert_multi_outlet_junctions_type(nn_config, junction_type):
 
 def _convert_bifurcations_junctions(config_path):
     """Convert multi-outlet NORMAL_JUNCTIONs to BloodVesselJunction using geometric_params."""
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         cfg = json.load(f)
     convert_el_normal_junctions_to_blood_vessel_junction(cfg)
     with open(config_path, "w") as f:
@@ -198,7 +194,7 @@ def main():
                     print("  Will use centerline-based workflow (for VMR files)")
                     geo_dir = None
 
-                zerod_input, vessel_bc_map = create_geometric_zerod_input_rom(
+                zerod_input, _vessel_bc_map = create_geometric_zerod_input_rom(
                     geo_dir,
                     centerline_path,
                     geometric_input_path,
@@ -262,7 +258,7 @@ def main():
         # Check if all calibration inputs already exist (if --no_redo is set)
         all_calibration_inputs_exist = True
         if args.no_redo:
-            for geo_variant_name, geo_variant_paths in geometry_variants.items():
+            for _geo_variant_name, geo_variant_paths in geometry_variants.items():
                 variant_calibration_input = geo_variant_paths["calibration_input"]
                 if not os.path.exists(variant_calibration_input):
                     all_calibration_inputs_exist = False
@@ -370,12 +366,12 @@ def main():
                         # Update geometric input with BC from calibration input
                         update_geometric_input_with_calibration_bc(variant_geometric_input, variant_calibration_input)
                     except Exception as e:
-                        raise Exception(f"Failed to create calibration input for {geo_variant_name}: {e}")
+                        raise Exception(f"Failed to create calibration input for {geo_variant_name}: {e}") from e
 
                 # Create calibration input variants for each junction type
                 print("\n  Creating calibration input variants for each junction type...")
                 try:
-                    with open(variant_calibration_input, "r") as f:
+                    with open(variant_calibration_input) as f:
                         base_calibration_config = json.load(f)
 
                     jtype_input_path = variant_junction_paths[JUNCTION_TYPE]["calibration_input"]
@@ -391,7 +387,9 @@ def main():
                             json.dump(jtype_config, f, indent=4)
                         generated_files.append(jtype_input_path)
                 except Exception as e:
-                    raise Exception(f"Failed to create junction type calibration inputs for {geo_variant_name}: {e}")
+                    raise Exception(
+                        f"Failed to create junction type calibration inputs for {geo_variant_name}: {e}"
+                    ) from e
 
     # Step 3: Run calibration for each junction type
     if not args.skip_calibration:
@@ -528,7 +526,7 @@ def main():
                             f"Run Step 3.5 (run_data_processing) or the full pipeline first."
                         )
 
-                    with open(variant_geometric_input, "r") as f:
+                    with open(variant_geometric_input) as f:
                         nn_config = json.load(f)
                     _assert_multi_outlet_junctions_type(nn_config, JUNCTION_TYPE)
 
@@ -574,7 +572,7 @@ def main():
                 else:
                     print(f"\n    Running vessel NN inference for {args.geometry_variant}...")
                     try:
-                        with open(nn_output_path, "r") as f:
+                        with open(nn_output_path) as f:
                             junction_nn_config = json.load(f)
                         junction_and_vessel_config, vessel_only_config = run_vessel_inference(
                             junction_nn_config=junction_nn_config,

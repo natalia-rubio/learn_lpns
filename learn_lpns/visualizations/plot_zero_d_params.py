@@ -15,12 +15,6 @@ results/param_comparison/<run_config>/<set_name>/<geo_name>/zero_d_parameter_bar
 import argparse
 import glob
 import os
-import sys
-
-# Ensure package imports work relative to repository
-repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if repo_dir not in sys.path:
-    sys.path.insert(0, repo_dir)
 
 from learn_lpns.visualizations.plot_zero_d_parameter_bars import plot_zero_d_parameter_bars
 

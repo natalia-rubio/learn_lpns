@@ -15,7 +15,7 @@ This repository contains functionality to train and deploy neural networks that 
 
 ### Outputs:
 * **`learn-lpns-batch-zerod`**:
-  * Augmented 0D input files: contain extra geometric information and modified junction-vessel discretization (saved in **data/zeroD**) 
+  * Augmented 0D input files: contain extra geometric information and modified junction-vessel discretization (saved in **data/zeroD**)
   * Calibrated 0D input files: contains the optimal (ground truth) resistances and inductances (saved in **data/zeroD**)
   * Tabulated geometry (neural network features) and lumped parameter (neural network target) data, saved in human-readable csvs (**data/ml_inputs**)and pickled dictionaries of jax arrays (**data/jax_arrays**).  Train-validation splits also generated.  (Can be generated independently with `learn-lpns-data-processing`, run `learn-lpns-batch-zerod` first.)
   * Learned 0D input files: contains neural-network predicted resistances and inductances (saved in **data/zeroD**).  Generated only if trained neural networks are available (``learn-lpns-train`` has been run).
@@ -76,6 +76,8 @@ pytest -v    # unit tests, no C++ solver required
 | ----- | -------- |
 | [docs/usage.md](docs/usage.md) | Run config, batch generation, CV, training, visualizations |
 | [docs/architecture.md](docs/architecture.md) | Pipeline diagram, design decisions, tradeoffs |
+| [docs/hardening_checklist.md](docs/hardening_checklist.md) | 1–2 day plan for library-style tooling (pre-commit, format, public API) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, checks, conventional commits, PR checklist |
 | [docs/data_and_results.md](docs/data_and_results.md) | Data layout, sample cohort, output paths |
 | [data/README.md](data/README.md) | Bundled VMR seed inputs |
 
@@ -127,10 +129,13 @@ See [data/README.md](data/README.md) for bundled sample cohort paths.
 
 ## Development
 
-- Editable install with dev tools: `pip install -e ".[dev]"`
-- Run unit tests (no C++ solver): `pytest -v`
-- Lint source and tests: `ruff check learn_lpns tests`
-- CI: GitHub Actions runs `ruff check` and `pytest` on Python 3.10 and 3.12 for every push/PR
+- Editable install with dev tools: `pip install -e ".[dev]"` (required before running CLIs)
+- Optional local hooks: `pre-commit install` (runs ruff lint/format and yaml/toml checks on commit)
+- Run unit tests (no C++ solver): `pytest -m "not integration" -v`
+- Format: `ruff format learn_lpns tests`
+- Lint: `ruff check learn_lpns tests`
+- CI: GitHub Actions runs `ruff format --check`, `ruff check`, and unit tests with coverage on Python 3.10 and 3.12
+- Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Console entry points
 

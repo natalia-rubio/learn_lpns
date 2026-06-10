@@ -109,7 +109,7 @@ def discover_cross_validation_set_names(data_root):
 def load_csv_column(path, prefix, modality):
     """Load one metric column from a CV summary CSV. Returns list of values (one per trial)."""
     out = []
-    with open(path, "r", newline="") as f:
+    with open(path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             trial_id = row.get("trial_id", "").strip()
@@ -134,7 +134,7 @@ def generate_bar_chart(metric_key, out_dir, geometry_variant, output_path=None, 
         raise FileNotFoundError(f"Missing CSV: {csv_path}")
 
     trial_rows = []  # (trial_id, val_geometries)
-    with open(csv_path, "r", newline="") as f:
+    with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             tid = row.get("trial_id", "").strip()
@@ -166,7 +166,7 @@ def generate_bar_chart(metric_key, out_dir, geometry_variant, output_path=None, 
         clean = [v for v in raw_vals if not _isnan(v)]
         mean_val = statistics.mean(clean) if clean else float("nan")
         std_val = statistics.stdev(clean) if len(clean) >= 2 else (0.0 if clean else float("nan"))
-        raw_vals = list(raw_vals) + [mean_val]
+        raw_vals = [*list(raw_vals), mean_val]
         plot_vals = [v * scale if not _isnan(v) else 0 for v in raw_vals]
 
         n_trials = len(clean)
@@ -246,7 +246,7 @@ def main():
         "--metric",
         "-m",
         default="all",
-        choices=["all"] + list(METRIC_CONFIG.keys()),
+        choices=["all", *list(METRIC_CONFIG.keys())],
         help="Which pressure metric to plot (default: all)",
     )
     parser.add_argument(

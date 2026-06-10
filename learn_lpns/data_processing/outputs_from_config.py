@@ -12,7 +12,6 @@ Each column is a scalar "lumped parameter" derived from `junction_values`.
 """
 
 import json
-from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -20,9 +19,9 @@ import numpy as np
 def load_junction_lumped_parameters(
     calibration_output_path: str,
     require_two_outlets: bool = True,
-    junction_names: Optional[List[str]] = None,
+    junction_names: list[str] | None = None,
     verbose: bool = False,
-) -> Tuple[np.ndarray, List[str], List[str], List[str]]:
+) -> tuple[np.ndarray, list[str], list[str], list[str]]:
     """
     Extract a junction-level target matrix from a calibration output JSON.
 
@@ -44,7 +43,7 @@ def load_junction_lumped_parameters(
         out_junction_names: list of junction names corresponding to Y rows
         out_primary_outlet_names: list of primary outlet vessel names per row
     """
-    with open(calibration_output_path, "r") as f:
+    with open(calibration_output_path) as f:
         cfg = json.load(f)
 
     junctions = cfg.get("junctions", [])
@@ -54,10 +53,10 @@ def load_junction_lumped_parameters(
     if not isinstance(vessels, list):
         raise ValueError("Expected 'vessels' to be a list in calibration output.")
 
-    rows: List[List[float]] = []
-    out_junction_names: List[str] = []
-    out_primary_outlet_names: List[str] = []
-    target_names: Optional[List[str]] = None
+    rows: list[list[float]] = []
+    out_junction_names: list[str] = []
+    out_primary_outlet_names: list[str] = []
+    target_names: list[str] | None = None
 
     # Build vessel_id -> vessel_name mapping
     vessel_id_to_name = {}

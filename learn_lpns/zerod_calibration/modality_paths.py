@@ -1,6 +1,10 @@
 """Shared paths for forward-sim CSV/JSON outputs keyed by plot/MSE modality name."""
 
+from __future__ import annotations
+
 import os
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 # Filename suffixes for NN forward-sim configs (paired with JunctionAndVessel / VesselOnly).
 NN_JUNCTION_ONLY_SUFFIX = "JunctionOnly"
@@ -8,7 +12,7 @@ NN_JUNCTION_AND_VESSEL_SUFFIX = "JunctionAndVessel"
 NN_VESSEL_ONLY_SUFFIX = "VesselOnly"
 
 # Human-readable column headers for MSE summary tables and LaTeX exports.
-MODALITY_DISPLAY = {
+MODALITY_DISPLAY: dict[str, str] = {
     "geometric": "Standard",
     "BloodVesselJunction": "Calibrated",
     "BloodVesselJunction_NN": "Learned Junctions",
@@ -16,7 +20,7 @@ MODALITY_DISPLAY = {
     "NN_vessel": "Learned Vessels",
 }
 
-DEFAULT_MODALITY_ORDER = (
+DEFAULT_MODALITY_ORDER: tuple[str, ...] = (
     "geometric",
     "BloodVesselJunction",
     "BloodVesselJunction_NN",
@@ -24,8 +28,24 @@ DEFAULT_MODALITY_ORDER = (
     "NN_vessel",
 )
 
+__all__ = [
+    "DEFAULT_MODALITY_ORDER",
+    "MODALITY_DISPLAY",
+    "NN_JUNCTION_AND_VESSEL_SUFFIX",
+    "NN_JUNCTION_ONLY_SUFFIX",
+    "NN_VESSEL_ONLY_SUFFIX",
+    "modality_csv_paths",
+    "modality_json_paths",
+    "modality_key_from_table_header",
+    "modality_table_header",
+    "nn_forward_sim_specs",
+    "read_cv_metric_from_row",
+    "sort_modalities",
+    "split_location_plot_csv_paths",
+]
 
-def modality_table_header(modality_key):
+
+def modality_table_header(modality_key: str) -> str:
     """Return display label for a modality key (falls back to the key itself)."""
     return MODALITY_DISPLAY.get(modality_key, modality_key)
 
@@ -33,14 +53,14 @@ def modality_table_header(modality_key):
 _DISPLAY_TO_MODALITY = {label: key for key, label in MODALITY_DISPLAY.items()}
 
 
-def modality_key_from_table_header(label):
+def modality_key_from_table_header(label: str) -> str:
     """Map a human-readable table/CSV header back to the internal modality key."""
     if label in MODALITY_DISPLAY:
         return label
     return _DISPLAY_TO_MODALITY.get(label, label)
 
 
-def read_cv_metric_from_row(row, prefix, modality_key):
+def read_cv_metric_from_row(row: Mapping[str, Any], prefix: str, modality_key: str) -> Any:
     """
     Read one metric cell from a CV summary CSV row.
 
@@ -56,13 +76,18 @@ def read_cv_metric_from_row(row, prefix, modality_key):
     return ""
 
 
-def sort_modalities(modality_keys):
+def sort_modalities(modality_keys: Sequence[str]) -> list[str]:
     """Sort modality keys in DEFAULT_MODALITY_ORDER; unknown keys trail alphabetically."""
     order = {k: i for i, k in enumerate(DEFAULT_MODALITY_ORDER)}
     return sorted(modality_keys, key=lambda k: (order.get(k, len(order)), k))
 
 
-def nn_forward_sim_specs(base_dir, geo_variant_name, junction_type, nn_vessel):
+def nn_forward_sim_specs(
+    base_dir: str,
+    geo_variant_name: str,
+    junction_type: str,
+    nn_vessel: bool,
+) -> list[tuple[str, str, str]]:
     """Return (modality_key, sim_input_json, results_csv) for each NN forward sim."""
     specs = [
         (
@@ -96,15 +121,15 @@ def nn_forward_sim_specs(base_dir, geo_variant_name, junction_type, nn_vessel):
 
 
 def modality_csv_paths(
-    geo_variant_paths,
-    base_dir,
-    geo_variant_name,
-    junction_type,
-    nn_vessel,
-    extra_junction_types=(),
-):
+    geo_variant_paths: Mapping[str, Any],
+    base_dir: str,
+    geo_variant_name: str,
+    junction_type: str,
+    nn_vessel: bool,
+    extra_junction_types: Sequence[str] = (),
+) -> dict[str, str]:
     """Modality name -> forward results CSV (for MSE and location comparison plots)."""
-    results = {}
+    results: dict[str, str] = {}
     geometric_results = geo_variant_paths["geometric_results"]
     if os.path.exists(geometric_results):
         results["geometric"] = str(geometric_results)
@@ -129,9 +154,15 @@ def modality_csv_paths(
     return results
 
 
-def modality_json_paths(geo_variant_paths, base_dir, geo_variant_name, junction_type, nn_vessel):
+def modality_json_paths(
+    geo_variant_paths: Mapping[str, Any],
+    base_dir: str,
+    geo_variant_name: str,
+    junction_type: str,
+    nn_vessel: bool,
+) -> dict[str, str]:
     """Modality name -> calibrated/geometric JSON (for zero-D parameter bar charts)."""
-    modality_jsons = {}
+    modality_jsons: dict[str, str] = {}
     geom_json = geo_variant_paths.get("geometric_input")
     if geom_json and os.path.exists(geom_json):
         modality_jsons["geometric"] = str(geom_json)
@@ -150,13 +181,17 @@ def modality_json_paths(geo_variant_paths, base_dir, geo_variant_name, junction_
     return modality_jsons
 
 
-def split_location_plot_csv_paths(all_csv_paths, geo_variant_name, geo_variant_paths):
+def split_location_plot_csv_paths(
+    all_csv_paths: Mapping[str, str],
+    geo_variant_name: str,
+    geo_variant_paths: Mapping[str, Any],
+) -> tuple[str | None, dict[str, str], dict[str, str]]:
     """Split modality CSV dict into plot_location_comparison arguments."""
     geometric_csv_path = geo_variant_paths["geometric_results"]
     if not os.path.exists(geometric_csv_path):
         geometric_csv_path = None
     calibrated_csv_paths = {k: v for k, v in all_csv_paths.items() if k != "geometric"}
-    geometric_csv_paths = {}
+    geometric_csv_paths: dict[str, str] = {}
     if "geometric" in all_csv_paths:
         geometric_csv_paths[geo_variant_name] = all_csv_paths["geometric"]
     return geometric_csv_path, calibrated_csv_paths, geometric_csv_paths

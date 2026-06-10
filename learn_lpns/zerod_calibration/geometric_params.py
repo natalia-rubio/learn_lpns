@@ -90,7 +90,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
     centerline_data, _ = read_centerline_vtp(centerline_soln_path)
     verbose = False
     # Read geometric input to understand vessel/junction structure
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         geometric_input = json.load(f)
 
     vessels = geometric_input.get("vessels", [])
@@ -441,7 +441,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             # Maximum inscribed sphere radius: inlet, outlet, min and max along the vessel segment
             inlet_misr = float(max_inscribed_radius[inlet_point_idx])
             outlet_misr = float(max_inscribed_radius[outlet_point_idx])
-            segment_indices = idx_sorted[inlet_pos: outlet_pos + 1]
+            segment_indices = idx_sorted[inlet_pos : outlet_pos + 1]
             if segment_indices.size > 0:
                 segment_radii = max_inscribed_radius[segment_indices]
                 misr_min = float(np.min(segment_radii))
@@ -1055,9 +1055,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                 print(f"  Warning: {junc_name} has no outlet branch IDs (all outlets may be connectors or invalid)")
                 print(f"    Outlet vessel IDs: {outlet_vessel_ids}")
                 outlet_names = [
-                    vessels[vid].get("vessel_name", "unknown")
-                    for vid in outlet_vessel_ids
-                    if vid < len(vessels)
+                    vessels[vid].get("vessel_name", "unknown") for vid in outlet_vessel_ids if vid < len(vessels)
                 ]
                 print(f"    Outlet vessel names: {outlet_names}")
             outlet_metrics = {}  # Initialize to empty dict when no outlet branch IDs
@@ -1620,7 +1618,7 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
         Modified config dictionary
     """
     print(f"Reading 0D config from: {zerod_config_path}")
-    with open(zerod_config_path, "r") as f:
+    with open(zerod_config_path) as f:
         config = json.load(f)
 
     vessels = config.get("vessels", [])
@@ -1680,7 +1678,7 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
             return default if v is None else v
 
         def _tangent(v):
-            if v is None or not isinstance(v, (list, tuple)) or len(v) != 3:
+            if v is None or not isinstance(v, list | tuple) or len(v) != 3:
                 return [0.0, 0.0, 0.0]
             return list(v)
 

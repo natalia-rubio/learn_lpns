@@ -60,7 +60,7 @@ def extract_observations_from_1d(
     # print the start index
     print(f"  Start index for observations: {start_idx}")
     # Read geometric input to understand vessel/junction structure
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         geometric_input = json.load(f)
 
     vessels = geometric_input.get("vessels", [])
@@ -361,9 +361,7 @@ def extract_observations_from_1d(
                     else:
                         # Create zero observations if extraction failed
                         vname = vessel["vessel_name"]
-                        print(
-                            f"  Warning: Could not extract observations for {vname}:{bc_outlet}, using zeros"
-                        )
+                        print(f"  Warning: Could not extract observations for {vname}:{bc_outlet}, using zeros")
                         raise ValueError(f"Could not extract observations for {vessel['vessel_name']}:{bc_outlet}")
                         # zero_obs = [0.0] * obs_len
                         # observations["y"][f"pressure:{vessel['vessel_name']}:{bc_outlet}"] = zero_obs
@@ -466,7 +464,7 @@ def extract_observations_from_1d_with_node_ids(
 
     print(f"  Start index for observations: {start_idx}")
     # Read geometric input to understand vessel/junction structure
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         geometric_input = json.load(f)
 
     vessels = geometric_input.get("vessels", [])
@@ -824,7 +822,7 @@ def find_inlet_outlet_caps_from_centerline(centerline_path, geometric_input_path
 
     if geometric_input_path and os.path.exists(geometric_input_path):
         # Use geometric input to identify terminal vessels
-        with open(geometric_input_path, "r") as f:
+        with open(geometric_input_path) as f:
             geo_input = json.load(f)
 
         vessels = geo_input.get("vessels", [])
@@ -1073,9 +1071,7 @@ def extract_vessel_segments(centerline_data, centerline_polydata):
 
         # Calculate geometric 0D parameters
         # Poiseuille resistance: R = 8*mu*L / (pi*r^4)
-        R_poiseuille = (
-            8 * physics.mu * segment_length / (np.pi * mean_radius**4) if mean_radius > 0 else 0.0
-        )
+        R_poiseuille = 8 * physics.mu * segment_length / (np.pi * mean_radius**4) if mean_radius > 0 else 0.0
 
         # Capacitance: C = 3*pi*r^3*L / (2*E*h) where E*h is wall stiffness
         # Using typical value: E*h = 1e6 dyn/cm^2 (approximate)
@@ -1137,7 +1133,7 @@ def verify_inlet_flow_matches_bc(input_data, results, inlet_vessel_name="branch0
 
         inlet_flows = []
         result_times = []
-        with open(results, "r") as f:
+        with open(results) as f:
             reader = csv.DictReader(f)
             # Check which column name is used for vessel identifier by reading fieldnames
             fieldnames = reader.fieldnames
@@ -1195,7 +1191,7 @@ def verify_inlet_flow_matches_bc(input_data, results, inlet_vessel_name="branch0
     max_diff_time = None
     tolerance = 1e-3  # Allow small numerical differences
 
-    for i, (result_flow, bc_flow) in enumerate(zip(inlet_flows, bc_flows_interp)):
+    for i, (result_flow, bc_flow) in enumerate(zip(inlet_flows, bc_flows_interp, strict=False)):
         diff = abs(result_flow - bc_flow)
         if diff > max_diff:
             max_diff = diff

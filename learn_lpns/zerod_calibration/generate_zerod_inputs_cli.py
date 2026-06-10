@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import List
 
 from learn_lpns.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
@@ -235,10 +234,10 @@ def namespace_to_generate_zerod_argv(
     *,
     set_name: str,
     geo_name: str,
-) -> List[str]:
+) -> list[str]:
     """Build argv tail for generate_zerod_inputs.py from a prepared namespace."""
     script_path = os.path.join(os.path.dirname(__file__), "generate_zerod_inputs.py")
-    cmd: List[str] = [
+    cmd: list[str] = [
         sys.executable,
         script_path,
         "--set_name",

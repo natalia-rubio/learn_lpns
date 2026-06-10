@@ -16,11 +16,9 @@ import subprocess
 import sys
 
 from learn_lpns.config import get_pipeline_config
+from learn_lpns.tools.paths import repo_root
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-os.chdir(REPO_ROOT)  # ensure cwd is repo root for -m invocations
+os.chdir(repo_root())  # ensure cwd is repo root for -m invocations
 
 # Configs to run: (run_config_suffix, list of run_cross_validation flags)
 # Order is the order of execution; barchart by-config will discover and sort by value.
@@ -136,10 +134,6 @@ def main():
             sys.exit(1)
         configs_with_flags.append((entry_key, run_config_suffix, cfg_geometry_variant, config_map[run_config_suffix]))
 
-    os.path.join(REPO_ROOT, "learn_lpns", "zerod_calibration", "run_cross_validation.py")
-    os.path.join(REPO_ROOT, "learn_lpns", "visualizations", "cv_pressure_max_pct_error_barchart.py")
-    os.path.join(REPO_ROOT, "learn_lpns", "visualizations", "cv_max_pct_error_by_config_barchart.py")
-
     if not args.only_barcharts:
         for entry_key, run_config_suffix, cfg_geometry_variant, cv_flags in configs_with_flags:
             print(f"\n{'=' * 60}")
@@ -164,7 +158,7 @@ def main():
             ]
             if args.skip_per_config_barchart:
                 cmd.append("--skip_barchart")
-            ret = subprocess.run(cmd, cwd=REPO_ROOT)
+            ret = subprocess.run(cmd, cwd=repo_root())
             if ret.returncode != 0:
                 print(
                     f"Cross-validation failed for config {entry_key} (exit {ret.returncode}). Stopping.",
@@ -187,7 +181,7 @@ def main():
                     "--data_root",
                     "results",
                 ]
-                subprocess.run(cmd_barchart, cwd=REPO_ROOT)
+                subprocess.run(cmd_barchart, cwd=repo_root())
 
     print(f"\n{'=' * 60}")
     print("Running by-config comparison barchart...")
@@ -210,7 +204,7 @@ def main():
         "--xmax",
         "40",
     ]
-    ret_by = subprocess.run(cmd_by, cwd=REPO_ROOT)
+    ret_by = subprocess.run(cmd_by, cwd=repo_root())
     if ret_by.returncode != 0:
         print(f"By-config barchart failed (exit {ret_by.returncode}).", file=sys.stderr)
         sys.exit(ret_by.returncode)

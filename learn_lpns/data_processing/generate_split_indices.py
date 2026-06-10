@@ -9,15 +9,9 @@ in junction and vessel stacked arrays. Use ``resolve_flat_indices()`` at trainin
 import argparse
 import glob
 import os
-import sys
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Literal
 
 import numpy as np
-
-# Allow running as a script (python learn_lpns/data_processing/generate_split_indices.py ...)
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 from learn_lpns.config import get_pipeline_config
 from learn_lpns.tools.basic import load_dict, save_dict
@@ -27,7 +21,7 @@ def _ml_inputs_dir(
     ml_inputs_root: str,
     set_name: str,
     geometry_variant: str,
-    run_config_suffix: Optional[str] = None,
+    run_config_suffix: str | None = None,
 ) -> str:
     if run_config_suffix:
         return os.path.join(ml_inputs_root, set_name, run_config_suffix, geometry_variant)
@@ -38,8 +32,8 @@ def list_ml_input_geometries(
     ml_inputs_root: str,
     set_name: str,
     geometry_variant: str,
-    run_config_suffix: Optional[str] = None,
-) -> List[str]:
+    run_config_suffix: str | None = None,
+) -> list[str]:
     """Return sorted geometry folder names under ml_inputs that have geometric_features.csv."""
     ml_inputs_dir = _ml_inputs_dir(ml_inputs_root, set_name, geometry_variant, run_config_suffix)
     if not os.path.exists(ml_inputs_dir):
@@ -58,9 +52,9 @@ def get_geometry_row_ranges(
     ml_inputs_root: str,
     set_name: str,
     geometry_variant: str,
-    geometries: Optional[List[str]] = None,
-    run_config_suffix: Optional[str] = None,
-) -> Tuple[List[Tuple[int, int]], int, List[str]]:
+    geometries: list[str] | None = None,
+    run_config_suffix: str | None = None,
+) -> tuple[list[tuple[int, int]], int, list[str]]:
     """
     Return (row_ranges, total_rows, geometries) for each geometry in order.
     row_ranges[i] = (start, end) so geometry i has row indices [start, end).
@@ -88,8 +82,8 @@ def get_geometry_row_ranges(
 
 
 def resolve_geometry_row_ranges_from_jax_dict(
-    data_dict: Dict[str, Any],
-) -> Tuple[List[Tuple[int, int]], int, List[str]]:
+    data_dict: dict[str, Any],
+) -> tuple[list[tuple[int, int]], int, list[str]]:
     """
     Return ``geometry_row_ranges`` and ``geometry_names_order`` stored in the junction jax pickle.
 
@@ -128,7 +122,7 @@ def generate_split_indices(
     num_pts: int,
     percent_train: float,
     seed: int = 0,
-    geometry_row_ranges: Optional[List[Tuple[int, int]]] = None,
+    geometry_row_ranges: list[tuple[int, int]] | None = None,
 ):
     if not (0.0 < percent_train <= 1.0):
         raise ValueError(f"percent_train must be in (0, 1], got {percent_train}")
@@ -175,15 +169,15 @@ def generate_split_indices(
 
 Modality = Literal["junction", "vessel"]
 SplitName = Literal["train", "val"]
-RangeTuple = Tuple[int, int]
+RangeTuple = tuple[int, int]
 
 
 def build_geometry_index_map(
-    junction_dict: Dict[str, Any],
-    vessel_dict: Dict[str, Any],
-) -> Dict[str, Dict[str, RangeTuple]]:
+    junction_dict: dict[str, Any],
+    vessel_dict: dict[str, Any],
+) -> dict[str, dict[str, RangeTuple]]:
     """Map each geometry name to junction and/or vessel row ranges in stacked jax arrays."""
-    geometry_indices: Dict[str, Dict[str, RangeTuple]] = {}
+    geometry_indices: dict[str, dict[str, RangeTuple]] = {}
     j_ranges = junction_dict.get("geometry_row_ranges") or []
     j_geos = junction_dict.get("geometry_names_order") or []
     for idx, geo in enumerate(j_geos):
@@ -202,8 +196,8 @@ def build_geometry_index_map(
 def generate_geometry_split(
     percent_train: float,
     seed: int,
-    geometry_names: List[str],
-) -> Tuple[List[str], List[str]]:
+    geometry_names: list[str],
+) -> tuple[list[str], list[str]]:
     """Randomly assign whole geometries to train or validation."""
     if not (0.0 < percent_train <= 1.0):
         raise ValueError(f"percent_train must be in (0, 1], got {percent_train}")
@@ -219,13 +213,13 @@ def generate_geometry_split(
 
 
 def build_split_dict(
-    train_geometries: List[str],
-    val_geometries: List[str],
-    geometry_indices: Dict[str, Dict[str, RangeTuple]],
+    train_geometries: list[str],
+    val_geometries: list[str],
+    geometry_indices: dict[str, dict[str, RangeTuple]],
     *,
     num_offsets: int = 1,
     **meta: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Assemble the split pickle dict; validates geometry names exist in geometry_indices."""
     for geo in train_geometries + val_geometries:
         if geo not in geometry_indices:
@@ -240,7 +234,7 @@ def build_split_dict(
     }
 
 
-def require_geometry_indices(split_dict: Dict[str, Any], split_path: str = "") -> None:
+def require_geometry_indices(split_dict: dict[str, Any], split_path: str = "") -> None:
     if "geometry_indices" not in split_dict:
         label = split_path or "split pickle"
         if "train_ind" in split_dict:
@@ -252,7 +246,7 @@ def require_geometry_indices(split_dict: Dict[str, Any], split_path: str = "") -
 
 
 def resolve_flat_indices(
-    split_dict: Dict[str, Any],
+    split_dict: dict[str, Any],
     modality: Modality,
     split: SplitName,
     *,
@@ -262,7 +256,7 @@ def resolve_flat_indices(
     require_geometry_indices(split_dict, split_path)
     geo_list = split_dict["train_geometries"] if split == "train" else split_dict["val_geometries"]
     geometry_indices = split_dict["geometry_indices"]
-    flat: List[int] = []
+    flat: list[int] = []
     for geo in geo_list:
         ranges = geometry_indices.get(geo)
         if not ranges or modality not in ranges:
@@ -272,7 +266,7 @@ def resolve_flat_indices(
     return np.asarray(flat, dtype=int)
 
 
-def load_split_for_training(split_path: str) -> Dict[str, Any]:
+def load_split_for_training(split_path: str) -> dict[str, Any]:
     """Load a split pickle and require the geometry_indices schema."""
     split_dict = load_dict(split_path)
     require_geometry_indices(split_dict, split_path)
@@ -281,8 +275,8 @@ def load_split_for_training(split_path: str) -> Dict[str, Any]:
 
 def write_geometries_txt(
     path: str,
-    train_geometries: List[str],
-    val_geometries: List[str],
+    train_geometries: list[str],
+    val_geometries: list[str],
 ) -> None:
     with open(path, "w") as f:
         f.write("Train geometries:\n")
@@ -343,7 +337,7 @@ def main():
         raise ValueError(f"Expected 'input' in data_dict at {jax_arrays_path}")
     num_pts = int(np.asarray(data_dict["input"]).shape[0])
 
-    row_ranges, total_rows, geometries = resolve_geometry_row_ranges_from_jax_dict(data_dict)
+    row_ranges, _total_rows, geometries = resolve_geometry_row_ranges_from_jax_dict(data_dict)
     if len(row_ranges) != args.num_geos:
         raise ValueError(
             f"Geometry count mismatch: pickle lists {len(row_ranges)} geometries "
@@ -356,7 +350,7 @@ def main():
         os.path.dirname(jax_arrays_path),
         f"jax_arrays_vessel_num_geos_{args.num_geos}.pkl",
     )
-    vessel_dict: Dict[str, Any] = load_dict(vessel_jax_path) if os.path.exists(vessel_jax_path) else {}
+    vessel_dict: dict[str, Any] = load_dict(vessel_jax_path) if os.path.exists(vessel_jax_path) else {}
     geometry_indices = build_geometry_index_map(data_dict, vessel_dict)
     split_dict = build_split_dict(
         train_geometries,

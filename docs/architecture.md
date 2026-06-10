@@ -39,3 +39,28 @@ $k$-fold cross-validation splits geometries into train/validation sets across mu
 - **External C++ solver** — Calibration and forward simulation call `svzerodsolver` / `svzerodcalibrator` (fork on `J-J_wiring`). This keeps physics in a validated solver but adds a build step; unit tests cover pure Python logic only.
 - **JAX for training** — Functional, JIT-compiled training with Optax; JAX must be installed separately to match CPU/GPU platform.
 - **Bundled sample size** — Five geometries demonstrate the full pipeline locally; paper-scale cohorts require user-provided data under the same layout.
+
+## Public API
+
+The package exposes a small stable surface for downstream tools and notebooks. Prefer:
+
+```python
+from learn_lpns import (
+    get_pipeline_config,
+    load_pipeline_config,
+    resolve_run_config_suffix,
+    run_config_suffix_to_flags,
+    modality_table_header,
+    repo_root,
+)
+```
+
+Also available from submodules (see `learn_lpns/__init__.py` and `learn_lpns/config/__init__.py`):
+
+- **Config** — YAML loading, Pydantic models, calibration/solver parameter builders
+- **Run config** — `run_config_canonical.py` token parsing and path suffix composition
+- **Modalities** — `modality_paths.py` CSV column names and forward-sim file paths
+
+CLI modules under `learn_lpns/zerod_calibration/`, `data_processing/`, and `neural_network/` are orchestration scripts, not semver-stable API. Run them via console entry points (`learn-lpns-cv`, etc.) after `pip install -e ".[dev]"`.
+
+Repository root resolution for data paths lives in `learn_lpns.tools.paths.repo_root()` (shared by CLIs and config loading).

@@ -15,10 +15,6 @@ import sys
 
 import numpy as np
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
 from learn_lpns.config import get_pipeline_config
 from learn_lpns.data_processing.data_dict_from_csvs import get_default_include_features
 from learn_lpns.data_processing.generate_split_indices import (
@@ -31,6 +27,7 @@ from learn_lpns.data_processing.generate_split_indices import (
     resolve_geometry_row_ranges_from_jax_dict,
 )
 from learn_lpns.tools.basic import load_dict, save_dict
+from learn_lpns.tools.paths import repo_root
 from learn_lpns.zerod_calibration.batch_generate_zerod_inputs_vmr import check_geometry_complete
 from learn_lpns.zerod_calibration.cv_metrics import (
     accumulate_trial_metrics,
@@ -97,7 +94,7 @@ def _ensure_ml_inputs_and_jax_for_config(
             "--skip_steps",
             "nn_inference",
         ]
-        result = subprocess.run(cmd_batch, cwd=REPO_ROOT, text=True)
+        result = subprocess.run(cmd_batch, cwd=repo_root(), text=True)
         if result.returncode != 0:
             raise RuntimeError(
                 f"batch_generate_zerod_inputs_vmr failed (return code {result.returncode}). "
@@ -122,7 +119,7 @@ def _ensure_ml_inputs_and_jax_for_config(
             "--geometries",
             *all_geometries,
         ]
-        result_dp = subprocess.run(cmd_dp, cwd=REPO_ROOT, text=True)
+        result_dp = subprocess.run(cmd_dp, cwd=repo_root(), text=True)
         if result_dp.returncode != 0:
             raise RuntimeError(
                 f"run_data_processing failed with --run_config {run_config_suffix} "
@@ -355,7 +352,7 @@ def _generate_cv_barcharts(
         "--data_root",
         results_root,
     ]
-    result = subprocess.run(cmd, cwd=REPO_ROOT, text=True)
+    result = subprocess.run(cmd, cwd=repo_root(), text=True)
     if result.returncode != 0:
         print(
             f"Warning: cv_pressure_max_pct_error_barchart failed (exit {result.returncode}). "
@@ -457,7 +454,7 @@ def _run_zerod_inputs_for_cv(
     cmd = namespace_to_generate_zerod_argv(ns, set_name=set_name, geo_name=geo_name)
     label = "Plots" if plots_only else "Deploy"
     print(f"  {label} on {geo_name}: {' '.join(cmd)}")
-    return subprocess.run(cmd, cwd=REPO_ROOT, text=True)
+    return subprocess.run(cmd, cwd=repo_root(), text=True)
 
 
 def run_cv_plots_only(
@@ -468,7 +465,7 @@ def run_cv_plots_only(
     nn_vessel=True,
 ):
     """Re-run Step 6 plots for each validation geometry listed in the existing CV summary."""
-    out_dir, summary_path = _cv_results_paths(set_name, geometry_variant, run_config_suffix)
+    _out_dir, summary_path = _cv_results_paths(set_name, geometry_variant, run_config_suffix)
     summary_rows = read_cv_summary_rows(summary_path)
     if not summary_rows:
         print(f"Existing CV summary not found or empty: {summary_path}")
@@ -597,7 +594,7 @@ def run_cross_validation(
                 train_geometries, val_geometries = generate_geometry_split(percent_train, seed, geometries)
                 if not val_geometries:
                     if attempt == 0:
-                        pct = int(round(percent_train * 100))
+                        pct = round(percent_train * 100)
                         print(
                             f"  Skipping trial {trial}: no validation geometries ({pct}% of {num_geos} rounded to all)"
                         )
@@ -607,8 +604,8 @@ def run_cross_validation(
                     seen_val_sets.add(val_set)
                     break
                 if attempt == max_attempts - 1:
-                    pct_val = int(round((1 - percent_train) * 100))
-                    pct_train = int(round(percent_train * 100))
+                    pct_val = round((1 - percent_train) * 100)
+                    pct_train = round(percent_train * 100)
                     raise RuntimeError(
                         f"Could not get a distinct validation set for trial {trial} after {max_attempts} attempts. "
                         f"Not enough geometries for {num_trials} unique {pct_train}/{pct_val} splits."
@@ -699,7 +696,7 @@ def run_cross_validation(
             if run_config_suffix:
                 cmd_train.extend(["--run_config", run_config_suffix])
             print(f"  Running: {' '.join(cmd_train)}")
-            result_train = subprocess.run(cmd_train, cwd=REPO_ROOT, text=True)
+            result_train = subprocess.run(cmd_train, cwd=repo_root(), text=True)
             if result_train.returncode != 0:
                 print(f"  Training failed with return code {result_train.returncode}")
                 all_trial_results.append(
@@ -738,7 +735,7 @@ def run_cross_validation(
                 if run_config_suffix:
                     cmd_vessel.extend(["--run_config", run_config_suffix])
                 print(f"  Running vessel training: {' '.join(cmd_vessel)}")
-                result_vessel = subprocess.run(cmd_vessel, cwd=REPO_ROOT, text=True)
+                result_vessel = subprocess.run(cmd_vessel, cwd=repo_root(), text=True)
                 if result_vessel.returncode != 0:
                     print(f"  Vessel training failed with return code {result_vessel.returncode}")
                     all_trial_results.append(
@@ -779,7 +776,7 @@ def run_cross_validation(
     # If we re-ran a single trial and summary already exists, merge this result into it
     if trial_index is not None and os.path.exists(summary_path):
         existing_by_trial = {}
-        with open(summary_path, "r", newline="") as f:
+        with open(summary_path, newline="") as f:
             reader = csv.reader(f)
             header = next(reader)
             if header and header[0] == "trial_id":
@@ -925,8 +922,7 @@ def main():
     split_defaults = get_pipeline_config().split
     parser = argparse.ArgumentParser(
         description=(
-            "Run cross-validation: X random 90/10 splits, train and deploy per trial, "
-            "report MSE for all modalities."
+            "Run cross-validation: X random 90/10 splits, train and deploy per trial, report MSE for all modalities."
         )
     )
     parser.add_argument(

@@ -1,10 +1,4 @@
 import os
-import sys
-
-# Allow running as a script: python learn_lpns/neural_network/launch_training.py ...
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 from learn_lpns.config import TrainingConfig, get_pipeline_config
 from learn_lpns.data_processing.generate_split_indices import (

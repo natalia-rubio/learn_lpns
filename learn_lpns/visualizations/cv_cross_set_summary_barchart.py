@@ -75,7 +75,7 @@ MODALITY_LABEL = {
 
 def _multiline_label(display_spec):
     """Convert a label spec (str or sequence of lines) to a newline-separated string."""
-    if isinstance(display_spec, (list, tuple)):
+    if isinstance(display_spec, list | tuple):
         return "\n".join(str(line) for line in display_spec)
     return str(display_spec)
 
@@ -112,7 +112,7 @@ def _isnan(x):
 def _load_trial_values(csv_path, prefix, modality):
     """Return list of trial-level metric values for one modality column."""
     values = []
-    with open(csv_path, "r", newline="") as f:
+    with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             trial_id = (row.get("trial_id") or "").strip()

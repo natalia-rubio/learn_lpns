@@ -29,7 +29,7 @@ def run_forward_simulation(input_json_path, output_csv_path):
     input_json_path_str = str(input_json_path)
     output_csv_path_str = str(output_csv_path)
 
-    with open(input_json_path_str, "r") as f:
+    with open(input_json_path_str) as f:
         input_data = json.load(f)
 
     # Try svzerodsolver executable first
@@ -104,14 +104,14 @@ def run_forward_simulation(input_json_path, output_csv_path):
                 )
                 try:
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=estimated_timeout)
-                except subprocess.TimeoutExpired:
+                except subprocess.TimeoutExpired as e:
                     raise RuntimeError(
                         f"svzerodsolver timed out after {estimated_timeout} seconds. "
                         f"This may indicate:\n"
                         f"  - Simulation parameters are too large (cycles: {num_cycles}, pts/cycle: {num_time_pts})\n"
                         f"  - Numerical instability in the simulation\n"
                         f"  - Consider reducing number_of_cardiac_cycles or number_of_time_pts_per_cardiac_cycle"
-                    )
+                    ) from e
 
                 if result.returncode != 0:
                     error_msg = f"svzerodsolver failed with return code {result.returncode}"
@@ -216,4 +216,4 @@ def run_forward_simulation(input_json_path, output_csv_path):
                 raise RuntimeError(
                     f"svzerodsolver failed and could not create all-zeros solution. "
                     f"Original error: {e}, Secondary error: {e2}"
-                )
+                ) from e2

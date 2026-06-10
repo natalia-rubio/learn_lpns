@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import csv
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -69,7 +69,7 @@ def _feature_name_to_latex(name: str) -> str:
     return rf"\texttt{{{escaped}}}"
 
 
-def get_default_include_features() -> List[str]:
+def get_default_include_features() -> list[str]:
     """
     Default junction NN input column names (primary-outlet feature set).
 
@@ -127,7 +127,7 @@ def get_default_include_features() -> List[str]:
     # ]
 
 
-def get_default_include_outputs() -> List[str]:
+def get_default_include_outputs() -> list[str]:
     """
     Default junction NN output column names (R, stenosis, L for primary outlet).
 
@@ -136,7 +136,7 @@ def get_default_include_outputs() -> List[str]:
     return ["R_poiseuille_outlet0", "stenosis_coefficient_outlet0", "L_outlet0"]
 
 
-def get_default_include_features_vessel() -> List[str]:
+def get_default_include_features_vessel() -> list[str]:
     """
     Default vessel NN input column names.
 
@@ -173,7 +173,7 @@ def get_default_include_features_vessel() -> List[str]:
     ]
 
 
-def get_default_include_outputs_vessel() -> List[str]:
+def get_default_include_outputs_vessel() -> list[str]:
     """
     Default vessel NN output column names (R_poiseuille, stenosis_coefficient, L).
 
@@ -188,9 +188,9 @@ def get_default_include_outputs_vessel() -> List[str]:
 
 def filter_features_from_array(
     X: np.ndarray,
-    feature_names: List[str],
-    include_features: Optional[List[str]] = None,
-) -> Tuple[np.ndarray, List[str]]:
+    feature_names: list[str],
+    include_features: list[str] | None = None,
+) -> tuple[np.ndarray, list[str]]:
     """
     Select and reorder feature columns from a numeric matrix.
 
@@ -214,9 +214,9 @@ def filter_features_from_array(
 
 def filter_outputs_from_array(
     Y: np.ndarray,
-    output_names: List[str],
-    include_outputs: Optional[List[str]] = None,
-) -> Tuple[np.ndarray, List[str]]:
+    output_names: list[str],
+    include_outputs: list[str] | None = None,
+) -> tuple[np.ndarray, list[str]]:
     """
     Select and reorder output columns from a numeric matrix.
 
@@ -258,7 +258,7 @@ def _parse_float_cell(x: str) -> float:
     return val
 
 
-def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
+def _read_csv_matrix(csv_path: str) -> tuple[list[str], np.ndarray]:
     """Load an all-numeric CSV as (header, float matrix).
 
     Calls: :func:`_parse_float_cell`.
@@ -267,7 +267,7 @@ def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
     if not os.path.exists(csv_path):
         raise ValueError(f"CSV not found: {csv_path}")
 
-    with open(csv_path, "r", newline="") as f:
+    with open(csv_path, newline="") as f:
         reader = csv.reader(f)
         header = next(reader, None)
         if header is None:
@@ -293,7 +293,7 @@ def _read_csv_matrix(csv_path: str) -> Tuple[List[str], np.ndarray]:
     return header, X
 
 
-def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[List[str], np.ndarray]:
+def _read_csv_numeric_columns(csv_path: str, column_names: list[str]) -> tuple[list[str], np.ndarray]:
     """Read selected numeric columns from a CSV (full header, subset array).
 
     Calls: :func:`_parse_float_cell`.
@@ -301,7 +301,7 @@ def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[L
     """
     if not os.path.exists(csv_path):
         raise ValueError(f"CSV not found: {csv_path}")
-    with open(csv_path, "r", newline="") as f:
+    with open(csv_path, newline="") as f:
         reader = csv.reader(f)
         header = next(reader, None)
         if header is None:
@@ -312,7 +312,7 @@ def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[L
             if not r:
                 continue
             row_vals = []
-            for col_name, i in zip(column_names, col_indices):
+            for col_name, i in zip(column_names, col_indices, strict=False):
                 if i >= len(r):
                     raise ValueError(f"{csv_path} row {row_idx}: missing value for column '{col_name}'")
                 try:
@@ -327,7 +327,7 @@ def _read_csv_numeric_columns(csv_path: str, column_names: List[str]) -> Tuple[L
 
 def _plot_column_histograms(
     data_array: np.ndarray,
-    column_names: List[str],
+    column_names: list[str],
     output_dir: str,
     set_name: str,
     num_geos: int,
@@ -433,7 +433,7 @@ def _plot_column_histograms(
 
 def plot_feature_histograms(
     input_array: np.ndarray,
-    feature_names: List[str],
+    feature_names: list[str],
     output_dir: str,
     set_name: str,
     num_geos: int,
@@ -454,7 +454,7 @@ def plot_feature_histograms(
 
 def plot_lumped_param_histograms(
     output_array: np.ndarray,
-    output_names: List[str],
+    output_names: list[str],
     output_dir: str,
     set_name: str,
     num_geos: int,
@@ -480,7 +480,7 @@ def feature_histograms_dir(
     set_name: str,
     geometry_variant: str,
     set_type: str = "all",
-    run_config_suffix: Optional[str] = None,
+    run_config_suffix: str | None = None,
     data_root: str = "data",
 ) -> str:
     """
@@ -499,12 +499,12 @@ def feature_histograms_dir(
 
 
 def _require_consistent_column_order(
-    selected: List[str],
-    canonical: Optional[List[str]],
+    selected: list[str],
+    canonical: list[str] | None,
     *,
     kind: str,
     geo: str,
-) -> List[str]:
+) -> list[str]:
     """Return canonical column-name order; error if ``selected`` differs from a prior geometry.
 
     Called by: :func:`build_data_dict_from_csvs`, :func:`build_data_dict_from_vessel_csvs`.
@@ -516,7 +516,7 @@ def _require_consistent_column_order(
     return canonical
 
 
-def _clamp_tortuosity(input_array: np.ndarray, feature_order: Optional[List[str]]) -> None:
+def _clamp_tortuosity(input_array: np.ndarray, feature_order: list[str] | None) -> None:
     """In-place: clamp tortuosity feature columns to be at least 1.0.
 
     Called by: :func:`_finalize_stacked_ml_data`, ``generate_zerod_inputs.py``.
@@ -530,8 +530,8 @@ def _clamp_tortuosity(input_array: np.ndarray, feature_order: Optional[List[str]
 
 def _read_vessel_lumped_parameters_csv(
     csv_path: str,
-    include_outputs: List[str],
-) -> Tuple[np.ndarray, List[str], List[str]]:
+    include_outputs: list[str],
+) -> tuple[np.ndarray, list[str], list[str]]:
     """
     Read ``vessel_lumped_parameters.csv`` (string ``vessel_name`` + numeric R/S/L columns).
 
@@ -542,7 +542,7 @@ def _read_vessel_lumped_parameters_csv(
     """
     if not os.path.exists(csv_path):
         raise ValueError(f"CSV not found: {csv_path}")
-    with open(csv_path, "r", newline="") as f:
+    with open(csv_path, newline="") as f:
         reader = csv.reader(f)
         header = next(reader, None)
         if header is None:
@@ -554,16 +554,16 @@ def _read_vessel_lumped_parameters_csv(
             out_indices = [header.index(c) for c in include_outputs]
         except ValueError as exc:
             raise ValueError(f"Missing required output column in {csv_path}: {exc}") from exc
-        rows_y: List[List[float]] = []
-        vessel_names: List[str] = []
+        rows_y: list[list[float]] = []
+        vessel_names: list[str] = []
         for row_idx, r in enumerate(reader, start=2):
             if not r:
                 continue
             if vn_idx >= len(r) or not str(r[vn_idx]).strip():
                 raise ValueError(f"{csv_path} row {row_idx}: missing vessel_name")
             vessel_names.append(str(r[vn_idx]).strip())
-            row_y: List[float] = []
-            for col_name, i in zip(include_outputs, out_indices):
+            row_y: list[float] = []
+            for col_name, i in zip(include_outputs, out_indices, strict=False):
                 if i >= len(r):
                     raise ValueError(f"{csv_path} row {row_idx}: missing value for column '{col_name}'")
                 try:
@@ -597,8 +597,8 @@ def _maybe_plot_histograms(
     *,
     input_array: np.ndarray,
     output_array: np.ndarray,
-    feature_order: List[str],
-    output_order: List[str],
+    feature_order: list[str],
+    output_order: list[str],
     set_name: str,
     num_geos: int,
     histogram_output_dir: str,
@@ -630,7 +630,7 @@ def _maybe_plot_histograms(
 def _compute_dataset_stats(
     input_array: np.ndarray,
     output_array: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute mean/std/min/max stats for stacked input and output arrays.
 
     Called by: :func:`_finalize_stacked_ml_data`.
@@ -653,10 +653,10 @@ def _write_data_summary_csv(
     *,
     input_array: np.ndarray,
     output_array: np.ndarray,
-    feature_order: List[str],
-    output_order: List[str],
-    row_geo_names: List[str],
-    row_instance_names: List[str],
+    feature_order: list[str],
+    output_order: list[str],
+    row_geo_names: list[str],
+    row_instance_names: list[str],
     summary_path: str,
 ) -> None:
     """Write per-column summary statistics CSV with min/max row provenance.
@@ -712,28 +712,28 @@ def _finalize_stacked_ml_data(
     input_array: np.ndarray,
     output_array: np.ndarray,
     generation_array: np.ndarray,
-    feature_order: List[str],
-    output_order: List[str],
-    geometries: List[str],
-    geometry_row_ranges: List[Tuple[int, int]],
-    row_geo_names: List[str],
-    row_instance_names: List[str],
+    feature_order: list[str],
+    output_order: list[str],
+    geometries: list[str],
+    geometry_row_ranges: list[tuple[int, int]],
+    row_geo_names: list[str],
+    row_instance_names: list[str],
     set_name: str,
     geometry_variant: str,
     input_nan_msg: str,
     output_nan_msg: str,
     summary_filename: str,
     plot_histograms: bool = False,
-    histogram_output_dir: Optional[str] = None,
+    histogram_output_dir: str | None = None,
     lumped_param_label: str = "junction",
-    cohort_set_name: Optional[str] = None,
-    run_config_suffix: Optional[str] = None,
+    cohort_set_name: str | None = None,
+    run_config_suffix: str | None = None,
     set_type: str = "all",
     data_root: str = "data",
-    row_junction_names: Optional[List[str]] = None,
-    row_primary_outlet_names: Optional[List[str]] = None,
-    outlet_vessel_ids: Optional[List[int]] = None,
-) -> Dict[str, Any]:
+    row_junction_names: list[str] | None = None,
+    row_primary_outlet_names: list[str] | None = None,
+    outlet_vessel_ids: list[int] | None = None,
+) -> dict[str, Any]:
     """Shared post-stack pipeline: clamp, validate, optional plots, summary CSV, JAX dict.
 
     Calls: :func:`_clamp_tortuosity`, :func:`_validate_no_nans`, :func:`_maybe_plot_histograms`,
@@ -797,7 +797,7 @@ def _finalize_stacked_ml_data(
                 f"input rows={n_rows}"
             )
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "input": jnp.asarray(input_array),
         OUTPUT_RRI_KEY: jnp.asarray(output_array),
         "generation": jnp.asarray(generation_array, dtype=jnp.float32),
@@ -820,17 +820,17 @@ def _finalize_stacked_ml_data(
 
 def build_data_dict_from_csvs(
     set_name: str,
-    geometries: List[str],
+    geometries: list[str],
     ml_inputs_root: str = "data/ml_inputs",
     require_same_rows: bool = True,
     plot_histograms: bool = False,
-    histogram_output_dir: Optional[str] = None,
+    histogram_output_dir: str | None = None,
     geometry_variant: str = "bifurcations",
-    cohort_set_name: Optional[str] = None,
-    run_config_suffix: Optional[str] = None,
+    cohort_set_name: str | None = None,
+    run_config_suffix: str | None = None,
     set_type: str = "all",
     data_root: str = "data",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Concatenate junction CSVs across geometries and build a JAX ``data_dict``.
 
@@ -846,21 +846,21 @@ def build_data_dict_from_csvs(
     if not geometries:
         raise ValueError("geometries must be non-empty")
 
-    all_inputs: List[np.ndarray] = []
-    all_outputs: List[np.ndarray] = []
-    all_generation: List[np.ndarray] = []
-    geometry_row_ranges: List[Tuple[int, int]] = []
+    all_inputs: list[np.ndarray] = []
+    all_outputs: list[np.ndarray] = []
+    all_generation: list[np.ndarray] = []
+    geometry_row_ranges: list[tuple[int, int]] = []
     row_offset = 0
-    row_geo_names: List[str] = []
-    row_instance_names: List[str] = []
-    row_junction_names: List[str] = []
-    row_primary_outlet_names: List[str] = []
-    all_outlet_vessel_ids: List[int] = []
+    row_geo_names: list[str] = []
+    row_instance_names: list[str] = []
+    row_junction_names: list[str] = []
+    row_primary_outlet_names: list[str] = []
+    all_outlet_vessel_ids: list[int] = []
 
     include_features = get_default_include_features()
     include_outputs = get_default_include_outputs()
-    feature_order: Optional[List[str]] = None
-    output_order: Optional[List[str]] = None
+    feature_order: list[str] | None = None
+    output_order: list[str] | None = None
 
     for geo in geometries:
         features_csv_path = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "geometric_features.csv")
@@ -891,9 +891,9 @@ def build_data_dict_from_csvs(
         meta_csv = os.path.join(ml_inputs_root, set_name, geometry_variant, geo, "geometric_features_meta.csv")
         if not os.path.exists(meta_csv):
             raise FileNotFoundError(f"Missing geometric_features_meta.csv: {meta_csv}. Run data processing first.")
-        geo_junction_names: List[str] = []
-        geo_primary_outlets: List[str] = []
-        with open(meta_csv, "r", newline="") as fm:
+        geo_junction_names: list[str] = []
+        geo_primary_outlets: list[str] = []
+        with open(meta_csv, newline="") as fm:
             reader = csv.reader(fm)
             next(reader, None)
             for r in reader:
@@ -974,17 +974,17 @@ def build_data_dict_from_csvs(
 
 def build_data_dict_from_vessel_csvs(
     set_name: str,
-    geometries: List[str],
+    geometries: list[str],
     ml_inputs_root: str = "data/ml_inputs",
     require_same_rows: bool = True,
     plot_histograms: bool = False,
-    histogram_output_dir: Optional[str] = None,
+    histogram_output_dir: str | None = None,
     geometry_variant: str = "bifurcations",
-    cohort_set_name: Optional[str] = None,
-    run_config_suffix: Optional[str] = None,
+    cohort_set_name: str | None = None,
+    run_config_suffix: str | None = None,
     set_type: str = "all",
     data_root: str = "data",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Concatenate vessel CSVs across geometries and build a JAX ``data_dict``.
 
@@ -1001,15 +1001,15 @@ def build_data_dict_from_vessel_csvs(
 
     include_features = get_default_include_features_vessel()
     include_outputs = get_default_include_outputs_vessel()
-    all_inputs: List[np.ndarray] = []
-    all_outputs: List[np.ndarray] = []
-    all_generation: List[np.ndarray] = []
-    geometry_row_ranges: List[Tuple[int, int]] = []
+    all_inputs: list[np.ndarray] = []
+    all_outputs: list[np.ndarray] = []
+    all_generation: list[np.ndarray] = []
+    geometry_row_ranges: list[tuple[int, int]] = []
     row_offset = 0
-    row_geo_names: List[str] = []
-    row_instance_names: List[str] = []
-    feature_order: Optional[List[str]] = None
-    output_order: Optional[List[str]] = None
+    row_geo_names: list[str] = []
+    row_instance_names: list[str] = []
+    feature_order: list[str] | None = None
+    output_order: list[str] | None = None
 
     for geo in geometries:
         features_csv_path = os.path.join(
@@ -1093,9 +1093,9 @@ def build_data_dict_from_vessel_csvs(
 
 
 def load_junction_rows_from_jax_dict(
-    data_dict: Dict[str, Any],
-    geo_name: Optional[str] = None,
-) -> Tuple[np.ndarray, List[str], List[str], List[int], List[str]]:
+    data_dict: dict[str, Any],
+    geo_name: str | None = None,
+) -> tuple[np.ndarray, list[str], list[str], list[int], list[str]]:
     """
     Load junction NN inputs and per-row metadata from a junction jax pickle.
 
@@ -1150,17 +1150,17 @@ def load_junction_rows_from_jax_dict(
 
 
 __all__ = [
+    "_read_csv_matrix",
     "build_data_dict_from_csvs",
     "build_data_dict_from_vessel_csvs",
     "feature_histograms_dir",
+    "filter_features_from_array",
+    "filter_outputs_from_array",
     "get_default_include_features",
     "get_default_include_features_vessel",
     "get_default_include_outputs",
     "get_default_include_outputs_vessel",
-    "filter_features_from_array",
-    "filter_outputs_from_array",
     "load_junction_rows_from_jax_dict",
     "plot_feature_histograms",
     "plot_lumped_param_histograms",
-    "_read_csv_matrix",
 ]

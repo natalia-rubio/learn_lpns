@@ -385,7 +385,7 @@ def process_geometric_input(centerline_path, geometric_input_path, output_path=N
     centerline_data, _ = read_centerline_vtp(centerline_path)
 
     print(f"Reading geometric input from: {geometric_input_path}")
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         geometric_input = json.load(f)
 
     print("Extracting junction centerline paths using BranchIdTmp ...")

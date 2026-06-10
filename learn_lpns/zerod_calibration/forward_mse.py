@@ -36,7 +36,7 @@ def _downsample_csv_file_to_times(input_csv_path, output_csv_path, target_times,
 
     try:
         # Read original CSV into memory
-        with open(input_csv_path, "r") as f:
+        with open(input_csv_path) as f:
             reader = csv.DictReader(f)
             fieldnames = reader.fieldnames
             if not fieldnames:
@@ -80,7 +80,7 @@ def _downsample_csv_file_to_times(input_csv_path, output_csv_path, target_times,
 
         # Write interpolated CSV: for each vessel and each target time write a row
         with open(output_csv_path, "w", newline="") as fout:
-            writer_fieldnames = [vessel_col, "time"] + numeric_fields
+            writer_fieldnames = [vessel_col, "time", *numeric_fields]
             writer = csv.DictWriter(fout, fieldnames=writer_fieldnames)
             writer.writeheader()
 
@@ -143,7 +143,7 @@ def parse_mse_comparison_csv(csv_path):
     result = {}
     if not os.path.exists(csv_path):
         return result
-    with open(csv_path, "r", newline="") as f:
+    with open(csv_path, newline="") as f:
         reader = csv.reader(f)
         in_summary = False
         header = None
@@ -455,12 +455,12 @@ def _write_mse_comparison_csv(output_csv_path, modalities, mse_results, all_obs_
         writer.writerow(["Zoom Window", f"{zoom_start_idx} to {zoom_end_idx - 1}"])
         writer.writerow([])
         writer.writerow(["Summary Statistics"])
-        writer.writerow(["Metric"] + headers)
+        writer.writerow(["Metric", *headers])
         for row_name, key, fmt in _MSE_SUMMARY_ROWS:
             writer.writerow([row_name] + [_mse_metric_cell(mse_results, mod, key, fmt) for mod in modalities])
         writer.writerow([])
         writer.writerow(["Detailed Results"])
-        writer.writerow(["Observation", "Type", "Vessel"] + headers)
+        writer.writerow(["Observation", "Type", "Vessel", *headers])
         for obs_key in sorted(all_obs_keys):
             obs_type, vessel_name = "unknown", "unknown"
             for modality_results in mse_results.values():
@@ -668,7 +668,7 @@ def calculate_mse_between_3d_and_0d(
         print(f"  ✗ Calibration input not found: {calibration_input_path}")
         return {}
 
-    with open(calibration_input_path, "r") as f:
+    with open(calibration_input_path) as f:
         calib_data = json.load(f)
 
     obs_3d = _load_mse_obs_3d(calib_data)

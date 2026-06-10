@@ -241,7 +241,7 @@ def fit_bcs_from_observations(geometric_input_path, observations, dt=None, fit_p
     """
     print("\nFitting outlet boundary conditions from observations...")
 
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         inp = json.load(f)
 
     boundary_conditions = inp.get("boundary_conditions", [])
@@ -332,7 +332,7 @@ def apply_fitted_outlet_bcs_to_file(file_path, fitted_bcs, file_type="config"):
         return False
 
     try:
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             data = json.load(f)
 
         bc_by_name = {bc.get("bc_name"): bc for bc in data.get("boundary_conditions", []) if bc.get("bc_name")}

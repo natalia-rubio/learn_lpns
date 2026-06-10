@@ -25,6 +25,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pre-commit>=4.0",
     "ruff>=0.4",
 ]
 
@@ -45,22 +47,29 @@ include = ["learn_lpns*"]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "integration: requires svZeroDPlus binaries and/or heavy data",
+]
+
+[tool.coverage.run]
+source = ["learn_lpns"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
 
 [tool.ruff]
 line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
-
-[tool.ruff.lint.per-file-ignores]
-# Script entry points insert REPO_ROOT on sys.path before learn_lpns imports.
-"learn_lpns/**/run_cross_validation.py" = ["E402"]
-"learn_lpns/**/generate_zerod_inputs.py" = ["E402"]
-"learn_lpns/**/batch_generate_zerod_inputs_vmr.py" = ["E402"]
-"learn_lpns/**/launch_training.py" = ["E402"]
-"learn_lpns/**/run_data_processing.py" = ["E402"]
-"learn_lpns/**/generate_split_indices.py" = ["E402"]
-"learn_lpns/**/regenerate_feature_histograms.py" = ["E402"]
-"learn_lpns/**/report_jax_test_split_counts.py" = ["E402"]
-"learn_lpns/**/plot_zero_d_params.py" = ["E402"]
+select = ["E", "F", "I", "UP", "B", "RUF"]
+ignore = [
+    # Plot labels and docs use typographic minus (U+2212), en-dash, etc.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]

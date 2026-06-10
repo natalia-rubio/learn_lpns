@@ -46,6 +46,6 @@ def load_dict(path: str) -> Any:
 
 
 __all__ = [
-    "save_dict",
     "load_dict",
+    "save_dict",
 ]

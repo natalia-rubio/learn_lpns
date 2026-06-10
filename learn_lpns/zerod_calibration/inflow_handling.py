@@ -21,7 +21,7 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
         return False
 
     # Read calibration input
-    with open(calibration_input_path, "r") as f:
+    with open(calibration_input_path) as f:
         calib_data = json.load(f)
 
     # Use full BC if available (stored for forward simulations), otherwise use calibration BC
@@ -42,7 +42,7 @@ def update_geometric_input_with_calibration_bc(geometric_input_path, calibration
         print("  Warning: Full BC not found, using calibration BC (may be second half)")
 
     # Read geometric input
-    with open(geometric_input_path, "r") as f:
+    with open(geometric_input_path) as f:
         geo_input = json.load(f)
 
     # Refine inlet BC for forward simulation (halve timestep size, interpolate flow)
@@ -112,7 +112,7 @@ def update_outlet_bcs_in_file(file_path, outlet_params, file_type="calibration i
         return False
 
     try:
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             data = json.load(f)
 
         updated_count = 0
@@ -168,7 +168,7 @@ def sync_nn_config_bcs_from_calibration(nn_config_paths, source_bc_path, verbose
             print(f"  ⊘ Skipping NN BC sync: source not found: {source_bc_path}")
         return 0
     try:
-        with open(source_bc_path, "r") as f:
+        with open(source_bc_path) as f:
             source_config = json.load(f)
     except Exception as e:
         if verbose:
@@ -184,7 +184,7 @@ def sync_nn_config_bcs_from_calibration(nn_config_paths, source_bc_path, verbose
         if not path or not os.path.exists(path):
             continue
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 nn_config = json.load(f)
             nn_config["boundary_conditions"] = copy.deepcopy(bcs)
             with open(path, "w") as f:
@@ -233,7 +233,7 @@ def refine_inlet_bc_for_forward_simulation(output_path, max_reasonable_points=10
             f"Calibration input file not found: {calibration_input_path}. Cannot refine BC without original source."
         )
 
-    with open(calibration_input_path, "r") as f:
+    with open(calibration_input_path) as f:
         calib_input = json.load(f)
 
     # Get BC from calibration input
@@ -264,7 +264,7 @@ def refine_inlet_bc_for_forward_simulation(output_path, max_reasonable_points=10
     bc_flow_refined = interp1d(bc_time, bc_flow, kind="cubic")(bc_time_refined)
 
     # Read output file to update it
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         output_data = json.load(f)
 
     # Update BC in output file

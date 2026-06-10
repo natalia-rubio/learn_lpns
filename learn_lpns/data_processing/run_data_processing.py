@@ -11,14 +11,8 @@ import argparse
 import csv
 import glob
 import os
-import sys
 
 import numpy as np
-
-# Allow running as a script (python learn_lpns/data_processing/run_data_processing.py ...)
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 from learn_lpns.config import get_pipeline_config
 from learn_lpns.data_processing.data_dict_from_csvs import (
@@ -103,8 +97,7 @@ def main():
         nargs="+",
         default=None,
         help=(
-            "List of geometries (e.g., 0063_1001 ...). "
-            "If not provided, auto-discovers geometries with both CSV files."
+            "List of geometries (e.g., 0063_1001 ...). If not provided, auto-discovers geometries with both CSV files."
         ),
     )
     parser.add_argument(
@@ -210,7 +203,7 @@ def main():
                         val = np.nan
                     flow_split_col.append(val)
                 X = np.column_stack([X, flow_split_col])
-                feature_names = feature_names + ["flow_split"]
+                feature_names = [*feature_names, "flow_split"]
                 # flow_split_inv = 1 / flow_split (NaN for zero or invalid)
                 flow_split_arr = np.asarray(flow_split_col, dtype=float)
                 with np.errstate(divide="ignore", invalid="ignore"):
@@ -220,7 +213,7 @@ def main():
                         np.nan,
                     )
                 X = np.column_stack([X, flow_split_inv])
-                feature_names = feature_names + ["flow_split_inv"]
+                feature_names = [*feature_names, "flow_split_inv"]
                 if args.verbose:
                     print(f"  Added flow_split, flow_split_inv from {geometric_results_path}")
             else:
@@ -241,7 +234,7 @@ def main():
             with open(meta_path, "w") as fmeta:
                 writer = csv.writer(fmeta)
                 writer.writerow(["junction_name", "primary_outlet_name"])
-                for jname, pout in zip(junction_names, outlet_primary_names):
+                for jname, pout in zip(junction_names, outlet_primary_names, strict=False):
                     writer.writerow([jname, pout])
             print(f"Saved geometric features meta to {meta_path}")
 
@@ -269,11 +262,11 @@ def main():
             # Build a lookup from (junction_name, primary_outlet_name) -> output row index
             if y_primary_outlet_names != outlet_primary_names or y_junction_names != junction_names:
                 output_key_to_idx = {}
-                for idx, (jn, pn) in enumerate(zip(y_junction_names, y_primary_outlet_names)):
+                for idx, (jn, pn) in enumerate(zip(y_junction_names, y_primary_outlet_names, strict=False)):
                     output_key_to_idx[(jn, pn)] = idx
 
                 reorder = []
-                for jn, pn in zip(junction_names, outlet_primary_names):
+                for jn, pn in zip(junction_names, outlet_primary_names, strict=False):
                     oi = output_key_to_idx.get((jn, pn))
                     if oi is None:
                         raise ValueError(
@@ -323,7 +316,7 @@ def main():
             with open(targets_meta_path, "w") as fmet:
                 writer = csv.writer(fmet)
                 writer.writerow(["junction_name", "primary_outlet_name"])
-                for jname, pout in zip(y_junction_names, y_primary_outlet_names):
+                for jname, pout in zip(y_junction_names, y_primary_outlet_names, strict=False):
                     writer.writerow([jname, pout])
             print(f"Saved targets meta to {targets_meta_path}")
 
@@ -331,7 +324,7 @@ def main():
             X_v, feat_names_v, vessel_ids, vessel_names = load_vessel_geometric_features(
                 geometric_input_path, verbose=args.verbose
             )
-            vessel_ids_t, vessel_names_t, targets_v = load_vessel_targets_from_config(calib_output_path)
+            vessel_ids_t, _vessel_names_t, targets_v = load_vessel_targets_from_config(calib_output_path)
             if len(X_v) == 0:
                 raise ValueError(f"No non-connector vessels found for {geo}")
             tidx = {vid: i for i, vid in enumerate(vessel_ids_t)}
@@ -411,8 +404,8 @@ def main():
             # ---- Generate train/val split indices (by geometry: all rows from one geometry in same set) ----
             if "input" not in data_dict:
                 raise ValueError("Expected 'input' in data_dict")
-            num_pts = int(getattr(data_dict["input"], "shape")[0])
-            row_ranges, _, geometries_ordered = resolve_geometry_row_ranges_from_jax_dict(data_dict)
+            num_pts = int(data_dict["input"].shape[0])
+            _row_ranges, _, geometries_ordered = resolve_geometry_row_ranges_from_jax_dict(data_dict)
             train_geometries, val_geometries = generate_geometry_split(
                 args.percent_train, args.seed, geometries_ordered
             )

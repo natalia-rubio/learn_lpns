@@ -23,11 +23,10 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-from typing import Dict, List, Sequence
+from collections.abc import Sequence
 
+from learn_lpns.tools.paths import repo_root
 from learn_lpns.zerod_calibration.tools.file_io import STANDARD_0D_SUBDIR
-
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 # Internal folder names used under data/zeroD/ and results/
 DEFAULT_SET_ORDER: Sequence[str] = (
@@ -37,14 +36,14 @@ DEFAULT_SET_ORDER: Sequence[str] = (
 )
 
 # Display names (aligned with cv_cross_set_summary_barchart.SET_DISPLAY_NAME); strip() applied when writing.
-SET_DISPLAY_NAME: Dict[str, str] = {
+SET_DISPLAY_NAME: dict[str, str] = {
     "VMR_rigid_aorta_adults_all": "Aortic",
     "VMR_abdo": "Aortofemoral ",
     "VMR_pulmo_healthy": "Pulmonary",
 }
 
 # Alternate spellings -> canonical set_name under data/zeroD/
-SET_NAME_ALIASES: Dict[str, str] = {
+SET_NAME_ALIASES: dict[str, str] = {
     "VMR_pulmonary_healthy": "VMR_pulmo_healthy",
 }
 
@@ -66,14 +65,14 @@ def _resolve_set_name(name: str) -> str:
     return SET_NAME_ALIASES.get(name, name)
 
 
-def _load_legacy_to_name_from_csv(csv_path: str) -> Dict[str, str]:
+def _load_legacy_to_name_from_csv(csv_path: str) -> dict[str, str]:
     """Map Legacy Name -> Name (first CSV column). Raises on duplicate legacy keys with conflicting names."""
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         fields = reader.fieldnames or []
         if "Legacy Name" not in fields or "Name" not in fields:
             raise KeyError(f"CSV must have 'Name' and 'Legacy Name'; got fields: {fields!r}")
-        out: Dict[str, str] = {}
+        out: dict[str, str] = {}
         for row in reader:
             leg = (row.get("Legacy Name") or "").strip()
             name = (row.get("Name") or "").strip()
@@ -87,7 +86,7 @@ def _load_legacy_to_name_from_csv(csv_path: str) -> Dict[str, str]:
         return out
 
 
-def discover_geometry_legacy_names(set_name: str, zero_d_root: str) -> List[str]:
+def discover_geometry_legacy_names(set_name: str, zero_d_root: str) -> list[str]:
     """
     Return sorted legacy-style geometry directory names for ``set_name``.
     """
@@ -126,8 +125,8 @@ def build_latex_table(
     label: str = "tab:vmr-cohort-geometries",
 ) -> str:
     legacy_to_name = _load_legacy_to_name_from_csv(csv_path)
-    columns: List[List[str]] = []
-    headers: List[str] = []
+    columns: list[list[str]] = []
+    headers: list[str] = []
 
     for set_name in set_order:
         canonical = _resolve_set_name(set_name)
@@ -143,7 +142,7 @@ def build_latex_table(
     nrows = max((len(c) for c in columns), default=0)
 
     hdr_cells = " & ".join(f"\\textbf{{{h}}}" for h in headers)
-    blocks: List[str] = [
+    blocks: list[str] = [
         r"% Requires: \usepackage{booktabs}",
         r"% One column per cohort; geometry labels are CSV ``Name`` (via Legacy Name lookup).",
         r"\begin{table}[htbp]",
@@ -184,17 +183,17 @@ def main() -> None:
     parser.add_argument(
         "--output",
         "-o",
-        default=os.path.join(REPO_ROOT, "results", "vmr_cohort_geometries.tex"),
+        default=os.path.join(str(repo_root()), "results", "vmr_cohort_geometries.tex"),
         help="Output .tex path (default: results/vmr_cohort_geometries.tex under repo root)",
     )
     parser.add_argument(
         "--zero_d_root",
-        default=os.path.join(REPO_ROOT, "data", "zeroD"),
+        default=os.path.join(str(repo_root()), "data", "zeroD"),
         help="Root directory containing VMR_* set folders",
     )
     parser.add_argument(
         "--csv",
-        default=os.path.join(REPO_ROOT, "data", "dataset-svprojects.csv"),
+        default=os.path.join(str(repo_root()), "data", "dataset-svprojects.csv"),
         help="Path to dataset-svprojects.csv",
     )
     parser.add_argument(

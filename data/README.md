@@ -14,7 +14,7 @@ This tree ships a **minimal VMR demo cohort** so you can run the pipeline withou
 
 ## CLI `set_name`
 
-Use **`VMR_aortas`** for scripts that take `--set_name` (batch generation, cross-validation, data processing).  
+Use **`VMR_aortas`** for scripts that take `--set_name` (batch generation, cross-validation, data processing).
 Projected solutions live under `data/oneD/VMR/`; the code resolves that path automatically when `set_name` contains `VMR`.
 
 Example:

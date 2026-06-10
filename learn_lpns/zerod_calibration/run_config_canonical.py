@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, FrozenSet, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 _GEN_LOSS_SUFFIX = "_gen_loss"  # on-disk path fragment; unchanged for existing data trees
 _ASYMMETRIC_LOSS_SUFFIX = "_asymmetric_loss"
@@ -13,7 +14,7 @@ _PENALTY_ON_SUFFIX = "_penalty_on"
 # Default ``--run_config`` path suffix for repo CLIs when omitted (under ``set_name``).
 DEFAULT_CLI_RUN_CONFIG = "gen_loss"
 
-RUN_CONFIG_TOKENS: FrozenSet[str] = frozenset(
+RUN_CONFIG_TOKENS: frozenset[str] = frozenset(
     {
         "penalty_on",
         "gen_loss",
@@ -22,7 +23,7 @@ RUN_CONFIG_TOKENS: FrozenSet[str] = frozenset(
     }
 )
 
-RUN_CONFIG_ALIASES: Dict[str, str] = {
+RUN_CONFIG_ALIASES: dict[str, str] = {
     # User token ``generation_weighted_loss`` → path token ``gen_loss`` (suffix ``_gen_loss``).
     "generation_weighted_loss": "gen_loss",
 }
@@ -30,9 +31,9 @@ RUN_CONFIG_ALIASES: Dict[str, str] = {
 
 def parse_underscore_tokens(
     spec: str,
-    vocabulary: FrozenSet[str],
-    aliases: Optional[Dict[str, str]] = None,
-) -> FrozenSet[str]:
+    vocabulary: frozenset[str],
+    aliases: dict[str, str] | None = None,
+) -> frozenset[str]:
     """
     Parse an underscore-separated token string (order-independent).
 
@@ -66,7 +67,7 @@ def parse_underscore_tokens(
     return frozenset(found)
 
 
-def compose_run_config_suffix(tokens: FrozenSet[str]) -> str:
+def compose_run_config_suffix(tokens: frozenset[str]) -> str:
     """Build canonical path suffix from a set of run-config tokens."""
     if "penalty_on" in tokens and "quadratic_resistor" not in tokens:
         raise ValueError("penalty_on requires quadratic_resistor (L2 calibration penalties apply only in RRI mode).")
@@ -79,7 +80,7 @@ def compose_run_config_suffix(tokens: FrozenSet[str]) -> str:
     if not has_quadratic_resistor and not has_penalty_on and not has_asymmetric_loss and not has_gen_loss:
         return "base"
 
-    parts: List[str] = []
+    parts: list[str] = []
     if has_quadratic_resistor:
         parts.append("quadratic_resistor")
     if has_penalty_on:
@@ -105,14 +106,14 @@ def iter_composed_run_config_suffixes() -> Iterator[str]:
                 continue
 
 
-def discover_run_config_suffixes(parent_dir: str) -> List[str]:
+def discover_run_config_suffixes(parent_dir: str) -> list[str]:
     """List run-config subfolder names under ``parent_dir`` (e.g. a CV set directory)."""
     if not os.path.isdir(parent_dir):
         return []
     return sorted(name for name in os.listdir(parent_dir) if os.path.isdir(os.path.join(parent_dir, name)))
 
 
-def resolve_run_config_suffix(spec: Optional[str]) -> str:
+def resolve_run_config_suffix(spec: str | None) -> str:
     """
     Resolve user ``--run_config`` input to a canonical path suffix.
 
@@ -129,7 +130,7 @@ def resolve_run_config_suffix(spec: Optional[str]) -> str:
     return compose_run_config_suffix(tokens)
 
 
-def canonical_run_config_for_data_paths(run_config_suffix: Optional[str]) -> Optional[str]:
+def canonical_run_config_for_data_paths(run_config_suffix: str | None) -> str | None:
     """
     Strip a trailing ``_gen_loss`` for comparisons that ignore gen-loss variant.
 
@@ -145,7 +146,7 @@ def canonical_run_config_for_data_paths(run_config_suffix: Optional[str]) -> Opt
     return s
 
 
-def run_config_suffix_has_generation_weighted_loss(run_config_suffix: Optional[str]) -> bool:
+def run_config_suffix_has_generation_weighted_loss(run_config_suffix: str | None) -> bool:
     """True if the run-config path suffix denotes generation-weighted training."""
     if not run_config_suffix:
         return False
@@ -153,7 +154,7 @@ def run_config_suffix_has_generation_weighted_loss(run_config_suffix: Optional[s
     return s == "gen_loss" or s.endswith(_GEN_LOSS_SUFFIX)
 
 
-def run_config_suffix_has_asymmetric_loss(run_config_suffix: Optional[str]) -> bool:
+def run_config_suffix_has_asymmetric_loss(run_config_suffix: str | None) -> bool:
     """True if the run-config suffix includes the ``asymmetric_loss`` path fragment."""
     if not run_config_suffix:
         return False
@@ -161,7 +162,7 @@ def run_config_suffix_has_asymmetric_loss(run_config_suffix: Optional[str]) -> b
     return s == "asymmetric_loss" or _ASYMMETRIC_LOSS_SUFFIX in s or s.startswith("asymmetric_loss_")
 
 
-def run_config_suffix_has_quadratic_resistor(run_config_suffix: Optional[str]) -> bool:
+def run_config_suffix_has_quadratic_resistor(run_config_suffix: str | None) -> bool:
     """True if the run-config suffix includes the ``quadratic_resistor`` path fragment."""
     if not run_config_suffix:
         return False
@@ -169,7 +170,7 @@ def run_config_suffix_has_quadratic_resistor(run_config_suffix: Optional[str]) -
     return s == "quadratic_resistor" or _QUADRATIC_RESISTOR_SUFFIX in s or s.startswith("quadratic_resistor_")
 
 
-def run_config_suffix_has_penalty_on(run_config_suffix: Optional[str]) -> bool:
+def run_config_suffix_has_penalty_on(run_config_suffix: str | None) -> bool:
     """True if the run-config suffix includes the ``penalty_on`` path fragment."""
     if not run_config_suffix:
         return False
@@ -177,12 +178,12 @@ def run_config_suffix_has_penalty_on(run_config_suffix: Optional[str]) -> bool:
     return s == "penalty_on" or s == "quadratic_resistor_penalty_on" or _PENALTY_ON_SUFFIX in s
 
 
-def run_config_includes_gen_loss(run_config_suffix: Optional[str]) -> bool:
+def run_config_includes_gen_loss(run_config_suffix: str | None) -> bool:
     """Deprecated alias for :func:`run_config_suffix_has_generation_weighted_loss`."""
     return run_config_suffix_has_generation_weighted_loss(run_config_suffix)
 
 
-def run_config_suffix_to_flags(run_config_suffix: Any) -> Dict[str, bool]:
+def run_config_suffix_to_flags(run_config_suffix: Any) -> dict[str, bool]:
     """Derive boolean flags from a canonical run_config suffix string."""
     s_full = (run_config_suffix or "base").strip()
     generation_weighted_loss = run_config_suffix_has_generation_weighted_loss(s_full)
@@ -192,3 +193,22 @@ def run_config_suffix_to_flags(run_config_suffix: Any) -> Dict[str, bool]:
         "penalty_on": run_config_suffix_has_penalty_on(s_full),
         "generation_weighted_loss": generation_weighted_loss,
     }
+
+
+__all__ = [
+    "DEFAULT_CLI_RUN_CONFIG",
+    "RUN_CONFIG_ALIASES",
+    "RUN_CONFIG_TOKENS",
+    "canonical_run_config_for_data_paths",
+    "compose_run_config_suffix",
+    "discover_run_config_suffixes",
+    "iter_composed_run_config_suffixes",
+    "parse_underscore_tokens",
+    "resolve_run_config_suffix",
+    "run_config_includes_gen_loss",
+    "run_config_suffix_has_asymmetric_loss",
+    "run_config_suffix_has_generation_weighted_loss",
+    "run_config_suffix_has_penalty_on",
+    "run_config_suffix_has_quadratic_resistor",
+    "run_config_suffix_to_flags",
+]

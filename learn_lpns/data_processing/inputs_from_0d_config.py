@@ -18,14 +18,14 @@ import json
 import os
 import re
 from collections import deque
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import numpy as np
 
 from learn_lpns.zerod_calibration.tools.file_io import read_zerod_csv
 
 
-def _safe_get(d: Dict[str, Any], *keys, default=None):
+def _safe_get(d: dict[str, Any], *keys, default=None):
     """Nested dict get with default."""
     cur = d
     for k in keys:
@@ -67,7 +67,7 @@ def _safe_mult(a, b):
 #
 # To add a new computed feature, just append a tuple here.
 # ---------------------------------------------------------------------------
-COMPUTED_OUTLET_FEATURES: List[Tuple[str, Any]] = [
+COMPUTED_OUTLET_FEATURES: list[tuple[str, Any]] = [
     ("radius_ratio", lambda out, junc: _safe_div(out["r_local"], junc["inlet_max_r"])),
     (
         "poiseuille_resistance_calc",
@@ -92,7 +92,7 @@ COMPUTED_OUTLET_FEATURES: List[Tuple[str, Any]] = [
 # r_local (sqrt(inlet_area/pi)), inlet_max_r (inlet_max_inscribed_radius).
 # To add a new computed vessel feature, append a tuple here.
 # ---------------------------------------------------------------------------
-COMPUTED_VESSEL_FEATURES: List[Tuple[str, Any]] = [
+COMPUTED_VESSEL_FEATURES: list[tuple[str, Any]] = [
     ("radius_ratio", lambda d: _safe_div(d["outlet_max_r"], d["inlet_max_r"])),
     ("rmin_rat", lambda d: _safe_div(d["max_inscribed_radius_min"], d["outlet_max_r"])),
     ("rmax_rat", lambda d: _safe_div(d["max_inscribed_radius_max"], d["outlet_max_r"])),
@@ -111,7 +111,7 @@ COMPUTED_VESSEL_FEATURES: List[Tuple[str, Any]] = [
 ]
 
 
-def _find_root_vessel_id_for_generation(cfg: Dict[str, Any]):
+def _find_root_vessel_id_for_generation(cfg: dict[str, Any]):
     """
     Vessel_id of the tree root (inlet branch). Prefer vessel with inlet BC, then
     name containing branch0, else minimum vessel_id.
@@ -134,7 +134,7 @@ def _find_root_vessel_id_for_generation(cfg: Dict[str, Any]):
     return min(ids) if ids else None
 
 
-def compute_bifurcation_generation_by_vessel(cfg: Dict[str, Any]) -> Dict[Any, float]:
+def compute_bifurcation_generation_by_vessel(cfg: dict[str, Any]) -> dict[Any, float]:
     """
     Map vessel_id -> generation: number of 2-outlet junctions along the path from
     the root inlet vessel to this vessel. The root vessel has generation 0.
@@ -150,7 +150,7 @@ def compute_bifurcation_generation_by_vessel(cfg: Dict[str, Any]) -> Dict[Any, f
     except (TypeError, ValueError):
         pass
     junctions = cfg.get("junctions", []) or []
-    gen: Dict[Any, float] = {root: 0.0}
+    gen: dict[Any, float] = {root: 0.0}
     q = deque([root])
     while q:
         vid = q.popleft()
@@ -180,7 +180,7 @@ def compute_bifurcation_generation_by_vessel(cfg: Dict[str, Any]) -> Dict[Any, f
                     q.append(oid_int)
                 else:
                     gen[oid_int] = min(gen[oid_int], float(g_next))
-    out: Dict[Any, float] = {}
+    out: dict[Any, float] = {}
     for k, v in gen.items():
         try:
             out[int(k)] = float(v)
@@ -193,7 +193,7 @@ def load_junction_geometric_features(
     config_path: str,
     require_two_outlets: bool = True,
     verbose: bool = False,
-) -> Tuple[np.ndarray, List[str], List[str]]:
+) -> tuple[np.ndarray, list[str], list[str]]:
     """
     Extract a junction-level geometric feature matrix from a 0D config JSON.
 
@@ -216,7 +216,7 @@ def load_junction_geometric_features(
             List of length n_junctions; `junction_names[i]` corresponds to
             row `X[i, :]`.
     """
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         cfg = json.load(f)
 
     gen_by_vessel = compute_bifurcation_generation_by_vessel(cfg)
@@ -225,10 +225,10 @@ def load_junction_geometric_features(
     if not isinstance(junctions, list):
         raise ValueError("Expected 'junctions' to be a list in config.")
 
-    rows: List[List[float]] = []
-    junction_names: List[str] = []
+    rows: list[list[float]] = []
+    junction_names: list[str] = []
     # Per-row primary outlet name (the outlet used as outlet0 for that row)
-    outlet_primary_names: List[str] = []
+    outlet_primary_names: list[str] = []
 
     # Build vessel_id -> vessel_name mapping from the config
     vessels = cfg.get("vessels", [])
@@ -317,26 +317,39 @@ def load_junction_geometric_features(
             try:
                 return float(x)
             except (TypeError, ValueError):
-                raise ValueError(f"Could not convert {x} to float")
-                return None
+                raise ValueError(f"Could not convert {x} to float") from None
 
         junction_raw = {"inlet_max_r": inlet_max_r, "inlet_tangent": inlet_tangent}
 
-        def get_outlet_features(outlet_name: str) -> List[float]:
+        def get_outlet_features(
+            outlet_name: str,
+            *,
+            _outlet_path_lengths=outlet_path_lengths,
+            _outlet_tortuosities=outlet_tortuosities,
+            _outlet_tangents=outlet_tangents,
+            _outlet_max_r=outlet_max_r,
+            _outlet_max_r_min_path=outlet_max_r_min_path,
+            _outlet_max_r_max_path=outlet_max_r_max_path,
+            _outlet_angle_diffs=outlet_angle_diffs,
+            _outlet_L=outlet_L,
+            _outlet_R_poiseuille=outlet_R_poiseuille,
+            _outlet_stenosis_coeff=outlet_stenosis_coeff,
+            _junction_raw=junction_raw,
+        ) -> list[float]:
             """Extract raw + computed features for a single outlet."""
-            pl = outlet_path_lengths.get(outlet_name)
-            tor = outlet_tortuosities.get(outlet_name)
-            tan = outlet_tangents.get(outlet_name, [None, None, None]) or [None, None, None]
+            pl = _outlet_path_lengths.get(outlet_name)
+            tor = _outlet_tortuosities.get(outlet_name)
+            tan = _outlet_tangents.get(outlet_name, [None, None, None]) or [None, None, None]
             if len(tan) != 3:
                 print(f"Outlet tangent has wrong length: {tan}")
                 tan = [None, None, None]
-            r_loc = outlet_max_r.get(outlet_name)
-            r_min_p = outlet_max_r_min_path.get(outlet_name)
-            r_max_p = outlet_max_r_max_path.get(outlet_name)
-            ang = outlet_angle_diffs.get(outlet_name)
-            L_val = outlet_L.get(outlet_name, 0.0)
-            R_pois = outlet_R_poiseuille.get(outlet_name, 0.0)
-            sten = outlet_stenosis_coeff.get(outlet_name, 0.0)
+            r_loc = _outlet_max_r.get(outlet_name)
+            r_min_p = _outlet_max_r_min_path.get(outlet_name)
+            r_max_p = _outlet_max_r_max_path.get(outlet_name)
+            ang = _outlet_angle_diffs.get(outlet_name)
+            L_val = _outlet_L.get(outlet_name, 0.0)
+            R_pois = _outlet_R_poiseuille.get(outlet_name, 0.0)
+            sten = _outlet_stenosis_coeff.get(outlet_name, 0.0)
 
             outlet_raw = {
                 "path_length": pl,
@@ -367,7 +380,7 @@ def load_junction_geometric_features(
             ]
 
             for _name, func in COMPUTED_OUTLET_FEATURES:
-                features.append(_to_float(func(outlet_raw, junction_raw)))
+                features.append(_to_float(func(outlet_raw, _junction_raw)))
 
             return features
 
@@ -397,7 +410,7 @@ def load_junction_geometric_features(
 
         # Row 1: inlet + outlet0 + outlet1
         if "connector" not in outlet0_name or "connectorEL" in outlet0_name:
-            feat_row_0_first: List[float] = [outlet0_vid]
+            feat_row_0_first: list[float] = [outlet0_vid]
             if verbose:
                 print(f"Adding outlet 0 features: {outlet0_name}, outlet vessel id: {outlet0_vid}")
                 print(f"Adding inlet max inscribed radius: {inlet_max_r}")
@@ -415,7 +428,7 @@ def load_junction_geometric_features(
         if "connector" not in outlet1_name or "connectorEL" in outlet1_name:
             if verbose:
                 print(f"Adding outlet 1 features: {outlet1_name}, outlet vessel id: {outlet1_vid}")
-            feat_row_1_first: List[float] = [outlet1_vid]
+            feat_row_1_first: list[float] = [outlet1_vid]
             feat_row_1_first.append(_to_float(inlet_max_r))
             feat_row_1_first.extend(_to_float(c) for c in inlet_tangent)
             feat_row_1_first.append(generation_val)
@@ -453,7 +466,7 @@ def load_junction_geometric_features(
     _computed_outlet_suffixes = [name for name, _ in COMPUTED_OUTLET_FEATURES]
     _all_outlet_suffixes = _raw_outlet_suffixes + _computed_outlet_suffixes
 
-    feature_names: List[str] = [
+    feature_names: list[str] = [
         "outlet_vessel_id",
         "inlet_max_inscribed_radius",
         "inlet_tangent_x",
@@ -472,7 +485,7 @@ def _is_split_connector(vessel_name: str) -> bool:
     return bool(re.search(r"_connector\d+$", vessel_name))
 
 
-def _resolve_original_inlet_per_junction(cfg: Dict[str, Any]) -> Dict[str, str]:
+def _resolve_original_inlet_per_junction(cfg: dict[str, Any]) -> dict[str, str]:
     """
     For each junction (with two outlets), resolve the original inlet vessel name:
     the vessel that carries the total flow into the original (possibly multi-outlet) junction.
@@ -488,19 +501,19 @@ def _resolve_original_inlet_per_junction(cfg: Dict[str, Any]) -> Dict[str, str]:
         v.get("vessel_id"): v.get("vessel_name", "") for v in vessels if v.get("vessel_id") is not None
     }
     # vessel_id -> junction that has this vessel as an outlet (for tracing back)
-    outlet_vessel_id_to_junction: Dict[int, str] = {}
+    outlet_vessel_id_to_junction: dict[int, str] = {}
     for j in junctions:
         j_name = j.get("junction_name", "")
         for vid in j.get("outlet_vessels", []):
             outlet_vessel_id_to_junction[vid] = j_name
 
-    junction_to_inlet_id: Dict[str, int] = {}
+    junction_to_inlet_id: dict[str, int] = {}
     for j in junctions:
         inlets = j.get("inlet_vessels", [])
         if inlets:
             junction_to_inlet_id[j.get("junction_name", "")] = inlets[0]
 
-    out: Dict[str, str] = {}
+    out: dict[str, str] = {}
     for j in junctions:
         j_name = j.get("junction_name", "")
         if not j_name or len(j.get("outlet_vessels", [])) != 2:
@@ -529,7 +542,7 @@ def compute_junction_flow_splits(
     config_path: str,
     geometric_results_csv_path: str,
     require_two_outlets: bool = True,
-) -> Dict[str, Tuple[float, float]]:
+) -> dict[str, tuple[float, float]]:
     """
     Compute flow split (percentage of inlet flow through each outlet) from the
     base geometric 0D simulation results. If multiple timepoints exist, the
@@ -552,11 +565,11 @@ def compute_junction_flow_splits(
         Dict mapping junction_name -> ((outlet0_name, outlet1_name), (flow_split0_pct, flow_split1_pct)).
         Flow splits are in [0, 100]. Missing/invalid data yields (( "", ""), (nan, nan)).
     """
-    out: Dict[str, Tuple[Tuple[str, str], Tuple[float, float]]] = {}
+    out: dict[str, tuple[tuple[str, str], tuple[float, float]]] = {}
     if not os.path.exists(geometric_results_csv_path):
         return out
 
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         cfg = json.load(f)
 
     vessels = cfg.get("vessels", [])
@@ -598,8 +611,8 @@ def compute_junction_flow_splits(
                 f"Results keys include: {list(results.keys())[:5]}..."
             )
 
-        ratios0: List[float] = []
-        ratios1: List[float] = []
+        ratios0: list[float] = []
+        ratios1: list[float] = []
         for t in times:
             # Denominator: flow through original inlet (flow_out of that vessel at junction)
             inlet_data = results[original_inlet_name].get(t, {})
@@ -634,7 +647,7 @@ def compute_junction_flow_splits(
 def load_vessel_geometric_features(
     config_path: str,
     verbose: bool = False,
-) -> Tuple[np.ndarray, List[str], List[int], List[str]]:
+) -> tuple[np.ndarray, list[str], list[int], list[str]]:
     """
     Extract a vessel-level geometric feature matrix from a 0D config JSON.
 
@@ -649,7 +662,7 @@ def load_vessel_geometric_features(
         vessel_ids: List of vessel_id; vessel_ids[i] corresponds to row X[i, :].
         vessel_names: List of vessel_name; vessel_names[i] corresponds to row X[i, :].
     """
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         cfg = json.load(f)
 
     gen_by_vessel = compute_bifurcation_generation_by_vessel(cfg)
@@ -662,34 +675,30 @@ def load_vessel_geometric_features(
     # vessel_id, is_inlet, generation, base geometric params + all COMPUTED_VESSEL_FEATURES
     # + zero_d_element_values from config
     _computed_vessel_suffixes = [name for name, _ in COMPUTED_VESSEL_FEATURES]
-    feature_names = (
-        [
-            "vessel_id",
-            "is_inlet",
-            "generation",
-            "vessel_length",
-            "inlet_area",
-            "outlet_area",
-            "path_length",
-            "tortuosity",
-            "angle_diff",
-            "area_ratio",
-            "inlet_max_inscribed_radius",
-            "outlet_max_inscribed_radius",
-            "max_inscribed_radius_min",
-            "max_inscribed_radius_max",
-        ]
-        + _computed_vessel_suffixes
-        + [
-            "R_poiseuille_geometric",
-            "L_geometric",
-            "stenosis_coefficient_geometric",
-        ]
-    )
+    feature_names = [
+        "vessel_id",
+        "is_inlet",
+        "generation",
+        "vessel_length",
+        "inlet_area",
+        "outlet_area",
+        "path_length",
+        "tortuosity",
+        "angle_diff",
+        "area_ratio",
+        "inlet_max_inscribed_radius",
+        "outlet_max_inscribed_radius",
+        "max_inscribed_radius_min",
+        "max_inscribed_radius_max",
+        *_computed_vessel_suffixes,
+        "R_poiseuille_geometric",
+        "L_geometric",
+        "stenosis_coefficient_geometric",
+    ]
 
-    rows: List[List[float]] = []
-    vessel_ids: List[int] = []
-    vessel_names_out: List[str] = []
+    rows: list[list[float]] = []
+    vessel_ids: list[int] = []
+    vessel_names_out: list[str] = []
 
     for v in vessels:
         vessel_name = v.get("vessel_name", "")
@@ -751,30 +760,26 @@ def load_vessel_geometric_features(
             val = func(vessel_raw)
             computed_vals.append(float(val) if val is not None else 0.0)
 
-        row = (
-            [
-                float(vessel_id),
-                is_inlet,
-                gnum,
-                vessel_length,
-                inlet_area,
-                outlet_area,
-                path_length,
-                tortuosity,
-                angle_diff,
-                area_ratio,
-                inlet_misr,
-                outlet_misr,
-                misr_min,
-                misr_max,
-            ]
-            + computed_vals
-            + [
-                R_poiseuille_geometric,
-                L_geometric,
-                stenosis_coefficient_geometric,
-            ]
-        )
+        row = [
+            float(vessel_id),
+            is_inlet,
+            gnum,
+            vessel_length,
+            inlet_area,
+            outlet_area,
+            path_length,
+            tortuosity,
+            angle_diff,
+            area_ratio,
+            inlet_misr,
+            outlet_misr,
+            misr_min,
+            misr_max,
+            *computed_vals,
+            R_poiseuille_geometric,
+            L_geometric,
+            stenosis_coefficient_geometric,
+        ]
         rows.append(row)
         vessel_ids.append(int(vessel_id))
         vessel_names_out.append(vessel_name)
@@ -788,7 +793,7 @@ def load_vessel_geometric_features(
 
 def load_vessel_targets_from_config(
     calibrated_config_path: str,
-) -> Tuple[List[int], List[str], np.ndarray]:
+) -> tuple[list[int], list[str], np.ndarray]:
     """
     Load vessel targets (R_poiseuille, stenosis_coefficient, L) from a calibrated
     0D config JSON. Only non-connector vessels are included; order matches
@@ -799,7 +804,7 @@ def load_vessel_targets_from_config(
         vessel_names: List of vessel_name.
         targets: Array of shape (n_vessels, 3) with columns [R_poiseuille, stenosis_coefficient, L].
     """
-    with open(calibrated_config_path, "r") as f:
+    with open(calibrated_config_path) as f:
         cfg = json.load(f)
 
     vessels = cfg.get("vessels", [])

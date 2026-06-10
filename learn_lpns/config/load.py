@@ -18,9 +18,9 @@ from typing import Any
 import yaml
 
 from learn_lpns.config.models import PipelineConfig
+from learn_lpns.tools.paths import repo_root
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _PACKAGE_DIR.parent.parent
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -44,7 +44,7 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
 
 def resolve_set_config_path(set_name: str) -> Path | None:
     """Return config/sets/<set_name>.yaml if it exists, else None."""
-    path = _REPO_ROOT / "config" / "sets" / f"{set_name}.yaml"
+    path = repo_root() / "config" / "sets" / f"{set_name}.yaml"
     return path if path.is_file() else None
 
 
@@ -68,7 +68,7 @@ def resolve_config_path(config_path: str | Path | None = None) -> Path:
             raise FileNotFoundError(f"LEARN_LPNS_CONFIG points to missing file: {path}")
         return path
 
-    repo_default = _REPO_ROOT / "config" / "defaults.yaml"
+    repo_default = repo_root() / "config" / "defaults.yaml"
     if repo_default.is_file():
         return repo_default
 

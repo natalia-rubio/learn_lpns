@@ -26,7 +26,7 @@ def init_weights(network_params):
     key = random.key(0)
     sizes_in, sizes_out = get_sizes(network_params)
     keys = random.split(key, len(sizes_in))
-    return [random_layer_params(m, n, k) for m, n, k in zip(sizes_in, sizes_out, keys)]
+    return [random_layer_params(m, n, k) for m, n, k in zip(sizes_in, sizes_out, keys, strict=False)]
 
 
 def get_batch_indices(indices, batch_size):

@@ -46,7 +46,7 @@ def read_cv_summary_rows(summary_path):
     if not os.path.exists(summary_path):
         return None
     rows = []
-    with open(summary_path, "r", newline="") as f:
+    with open(summary_path, newline="") as f:
         reader = csv.reader(f)
         header = next(reader, None)
         if not header or header[0] != "trial_id":
@@ -126,7 +126,7 @@ def write_metric_summary_csv(path, prefix, modalities, all_trial_results):
     cols = [prefix + mod for mod in modalities]
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["trial_id", "val_geometries"] + cols)
+        writer.writerow(["trial_id", "val_geometries", *cols])
         for row in all_trial_results:
             if "error" in row:
                 writer.writerow([row.get("trial_id", ""), row.get("val_geometries", "")] + [""] * len(cols))

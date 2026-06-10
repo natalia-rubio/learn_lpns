@@ -432,9 +432,9 @@ def build_vessel_name_mapping(bifurcations_geometric_input_path, el_geometric_in
     if not os.path.exists(bifurcations_geometric_input_path) or not os.path.exists(el_geometric_input_path):
         return {}
 
-    with open(bifurcations_geometric_input_path, "r") as f:
+    with open(bifurcations_geometric_input_path) as f:
         bif_data = json.load(f)
-    with open(el_geometric_input_path, "r") as f:
+    with open(el_geometric_input_path) as f:
         el_data = json.load(f)
 
     bif_vessels = {v["vessel_name"]: v for v in bif_data.get("vessels", [])}
@@ -579,7 +579,7 @@ def extract_data_from_calibration_input(calibration_input_path, location):
         pressures: Pressure values (in dynes/cm^2)
         flows: Flow values (in cm³/s)
     """
-    with open(calibration_input_path, "r") as f:
+    with open(calibration_input_path) as f:
         calib_data = json.load(f)
 
     if "y" not in calib_data:
@@ -617,7 +617,7 @@ def get_all_locations_from_calibration_input(calibration_input_path):
     Returns:
         List of location strings (e.g., ["INFLOW:branch0_seg0", "branch0_seg0:J0", ...])
     """
-    with open(calibration_input_path, "r") as f:
+    with open(calibration_input_path) as f:
         calib_data = json.load(f)
 
     if "y" not in calib_data:
@@ -807,7 +807,7 @@ def plot_location_comparison(
 
     # Parse location
     try:
-        source, target, vessel_name, is_inlet, location_type = parse_location(location)
+        _source, _target, vessel_name, is_inlet, location_type = parse_location(location)
     except ValueError as e:
         print(f"Error: {e}")
         return False
@@ -1234,13 +1234,13 @@ def plot_location_comparison(
     handles, labels = axes[0].get_legend_handles_labels()
     seen = set()
     unique_handles, unique_labels = [], []
-    for handle, label in zip(handles, labels):
+    for handle, label in zip(handles, labels, strict=False):
         if label not in seen:
             seen.add(label)
             unique_handles.append(handle)
             unique_labels.append(label)
 
-    legend_pairs = list(zip(unique_handles, unique_labels))
+    legend_pairs = list(zip(unique_handles, unique_labels, strict=False))
     legend_pairs.sort(key=lambda hl: _legend_order_key(hl[1]))
     unique_handles = [h for h, _ in legend_pairs]
     unique_labels = [lb for _, lb in legend_pairs]
@@ -1256,7 +1256,7 @@ def plot_location_comparison(
     center_x = 0.5
     handles_3d, labels_3d = [], []
     handles_rest, labels_rest = [], []
-    for h, lb in zip(unique_handles, unique_labels):
+    for h, lb in zip(unique_handles, unique_labels, strict=False):
         if lb.split("\n")[0].strip() == "3D":
             handles_3d.append(h)
             labels_3d.append(lb)

@@ -16,7 +16,7 @@ def update_simulation_parameters(geo_dir, json_path, inlet_cap_name, capacitance
     Update geometric input JSON with simulation parameters
     """
     # Read JSON
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         zerod_input = json.load(f)
 
     if "simulation_parameters" in zerod_input:
@@ -130,13 +130,13 @@ def create_geometric_zerod_input_rom(
                 if not os.path.exists(geometric_input_path):
                     geometric_input_path = None
 
-        inlet_cap, outlet_caps, mesh_surfaces_dir = find_inlet_outlet_caps_from_centerline(
+        inlet_cap, outlet_caps, _mesh_surfaces_dir = find_inlet_outlet_caps_from_centerline(
             centerline_path, geometric_input_path=geometric_input_path
         )
     else:
         # Find inlet and outlet caps (handles both svVascularize and SimVascular formats)
         print("Identifying inlet and outlet caps from mesh files...")
-        inlet_cap, outlet_caps, mesh_surfaces_dir = find_inlet_outlet_caps(geo_dir)
+        inlet_cap, outlet_caps, _mesh_surfaces_dir = find_inlet_outlet_caps(geo_dir)
 
     # Get geometry name from directory or centerline path
     if geo_dir and os.path.exists(geo_dir):
@@ -237,9 +237,9 @@ solution_params.num_time_steps = {num_time_steps}
 output_dir = '{os.path.dirname(output_path)}'
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
-rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_params, 
-                                fluid=fluid_props, material=material, 
-                                boundary_conditions=bcs, solution=solution_params, 
+rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_params,
+                                fluid=fluid_props, material=material,
+                                boundary_conditions=bcs, solution=solution_params,
                                 directory=output_dir)
 """
 
@@ -287,7 +287,7 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
 
     # Read and fix junction types (replace "internal_junction" with "NORMAL_JUNCTION")
     print("Post-processing generated JSON file...")
-    with open(generated_json, "r") as f:
+    with open(generated_json) as f:
         zerod_input = json.load(f)
 
     # Set capacitances to cap_val
@@ -366,7 +366,7 @@ rom_simulation.write_input_file(model_order=0, model=model_params, mesh=mesh_par
     update_simulation_parameters(geo_dir, output_path, inlet_cap, zero_stenosis=True)
 
     # Re-read the updated JSON
-    with open(output_path, "r") as f:
+    with open(output_path) as f:
         zerod_input = json.load(f)
 
     # Create simplified vessel_bc_map for compatibility

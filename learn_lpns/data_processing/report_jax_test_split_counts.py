@@ -37,13 +37,9 @@ import glob
 import os
 import re
 import sys
-from typing import List, Tuple
-
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 from learn_lpns.tools.basic import load_dict
+from learn_lpns.tools.paths import repo_root
 from learn_lpns.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
 
 _JAX_ENV_HINT = (
@@ -85,7 +81,7 @@ def report_one_set(
     run_config: str,
     geometry_variant: str,
     set_type: str,
-) -> Tuple[int, int, int, int, str, str]:
+) -> tuple[int, int, int, int, str, str]:
     """
     Returns:
         n_vessel_rows, n_junction_rows, n_bifurcations, num_geos, junction_pkl, vessel_pkl
@@ -135,7 +131,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--data_root",
-        default=os.path.join(REPO_ROOT, "data"),
+        default=os.path.join(str(repo_root()), "data"),
         help="Repo data root (default: <repo>/data)",
     )
     parser.add_argument(
@@ -159,7 +155,7 @@ def main() -> None:
 
     jax_root = os.path.join(args.data_root, "jax_arrays")
     if args.set_names:
-        sets: List[str] = list(args.set_names)
+        sets: list[str] = list(args.set_names)
     else:
         if not os.path.isdir(jax_root):
             raise SystemExit(f"Not a directory: {jax_root}")
@@ -182,7 +178,7 @@ def main() -> None:
             f"No sets found under {jax_root} with {args.run_config}/{args.geometry_variant}/{args.set_type}"
         )
 
-    rows_out: List[Tuple[str, int, int, int, int]] = []
+    rows_out: list[tuple[str, int, int, int, int]] = []
     for s in sets:
         n_v, n_j, n_bif, n_geo, jp, vp = report_one_set(
             args.data_root,
