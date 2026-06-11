@@ -1,4 +1,5 @@
 import os
+from functools import partial
 
 import jax.numpy as jnp
 import optax
@@ -118,12 +119,12 @@ class NeuralNet:
         self.weights = optax.apply_updates(self.weights, updates)
 
 
-@jit(static_argnums=(2,))
+@partial(jit, static_argnums=(2,))
 def predict(input, weights, use_leaky_relu=False):
     return batched_forward_pass(input, weights, use_leaky_relu)
 
 
-@jit(static_argnums=(2, 3))  # target_output_column, use_leaky_relu
+@partial(jit, static_argnums=(2, 3))  # target_output_column, use_leaky_relu
 def loss(
     input,
     outputs,
@@ -143,7 +144,7 @@ def loss(
     return jnp.sum(residual_weight * squared_residual) / jnp.maximum(jnp.sum(residual_weight), 1e-8) + L2_penalty * 0
 
 
-@jit(static_argnums=(2, 3))  # target_output_column, use_leaky_relu
+@partial(jit, static_argnums=(2, 3))  # target_output_column, use_leaky_relu
 def loss_pure(input, outputs, target_output_column, use_leaky_relu, weights):
     coefs_pred = predict(input, weights, use_leaky_relu)
     return jnp.sqrt(jnp.mean(jnp.square(coefs_pred[:, 0] - outputs[:, target_output_column])))
