@@ -185,7 +185,7 @@ Display names for console tables, CSV headers, and LaTeX exports: `learn_lpns/ze
 | `geometric`                             | Standard                      |
 | `BloodVesselJunction`                   | Calibrated                    |
 | `BloodVesselJunction_NN`                | Learned Junctions             |
-| `Vessel_NN`                             | Learned Vessel                |
+| `Vessel_NN`                             | Learned Vessels               |
 | `BloodVesselJunction_NN_plus_Vessel_NN` | Learned Junctions and Vessels |
 
 
