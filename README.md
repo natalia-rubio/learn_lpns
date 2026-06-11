@@ -87,18 +87,6 @@ PYTHON=$(brew --prefix python@3.12)/bin/python3.12 ./scripts/setup_cross_validat
 source scripts/cv_env.sh
 ```
 
-Manual install:
-
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install --upgrade pip setuptools
-pip install -U "jax[cpu]"          # or CUDA variant — install JAX first
-pip install -e ".[dev]"
-./scripts/setup_cross_validation.sh --skip-clone --skip-python
-source scripts/cv_env.sh
-```
-
-Install JAX before `pip install -e ".[dev]"` so jax/jaxlib stay matched. See [docs/usage.md](docs/usage.md) for all CLI commands.
 
 ## Quick start
 
