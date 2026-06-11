@@ -49,12 +49,14 @@ def svzerodsolver_path():
 def test_svzerodsolver_executable_smoke(svzerodsolver_path):
     """Minimal check: binary exists and runs (no Python pipeline logic)."""
     result = subprocess.run(
-        [svzerodsolver_path, "--help"],
+        [svzerodsolver_path, "/__svzerodsolver_smoke_nonexistent__.json"],
         check=False,
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, result.stderr
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "[svzerodsolver]" in combined
+    assert "cannot be opened" in combined
 
 
 @pytest.fixture(scope="module")

@@ -84,15 +84,15 @@ brew install git-lfs && git lfs install && git lfs pull
 ```bash
 # One-shot (macOS: brew install cmake python@3.12 first)
 PYTHON=$(brew --prefix python@3.12)/bin/python3.12 ./scripts/setup_cross_validation.sh
+# or: ./scripts/setup_cross_validation.sh
 source scripts/cv_env.sh
 ```
 
-
 ## Quick start
 
+After [Setup](#setup), run cross-validation on the sample cohort:
+
 ```bash
-./scripts/setup_cross_validation.sh
-source scripts/cv_env.sh
 learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2 --run_config gen_loss
 ```
 
