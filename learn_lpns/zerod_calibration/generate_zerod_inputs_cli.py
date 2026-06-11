@@ -129,9 +129,9 @@ def add_generate_zerod_inputs_arguments(
         help="Only Step 6 comparison plots (location + zero-D parameter bars); requires existing zeroD outputs",
     )
     parser.add_argument(
-        "--NN_vessel",
+        "--Vessel_NN",
         action="store_true",
-        dest="NN_vessel",
+        dest="Vessel_NN",
         help="Also run vessel NN inference and forward sim (*_NN_JunctionAndVessel)",
     )
     parser.add_argument(
@@ -259,7 +259,7 @@ def namespace_to_generate_zerod_argv(
         ("no_redo", "--no_redo"),
         ("NN_only", "--NN_only"),
         ("plots_only", "--plots_only"),
-        ("NN_vessel", "--NN_vessel"),
+        ("Vessel_NN", "--Vessel_NN"),
     ]
     for attr, flag in bool_flags:
         if getattr(ns, attr, False):

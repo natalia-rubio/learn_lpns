@@ -14,7 +14,7 @@ _STYLE_MAP = {
     "BloodVesselJunction": {"color": "orange"},
     "BloodVesselJunction_NN": {"color": "dodgerblue"},
     "BloodVesselJunction_NN_plus_Vessel_NN": {"color": "orchid"},
-    "NN_vessel": {"color": "chartreuse"},
+    "Vessel_NN": {"color": "chartreuse"},
 }
 
 

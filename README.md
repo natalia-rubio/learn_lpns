@@ -2,8 +2,6 @@
 
 This repository contains functionality to train and deploy neural networks that predict lumped parameters (e.g. resistances, inductances) for 0D "electric circuit" models of cardiovascular flows.  The neural networks predict lumped parameters from the vascular geometry and are trained on high-fidelity 3D data.  This work is described in greater detail in this [paper](https://arxiv.org/abs/2604.01549).  A second, more lightweight repo, [learnedZeroD](https://github.com/natalia-rubio/learnedZeroD), provides functionality to convert a standard 0D model of a vasculature into the more accurate learned representation using pre-trained neural networks.
 
-
-
 ## Pipeline Overview
 
 The workflow has two modes:
@@ -66,7 +64,7 @@ flowchart LR
   - Learned 0D input files: contains neural-network predicted resistances and inductances (saved in `data/zeroD`).  Generated only if trained neural networks are available (`learn-lpns-train` has been run).
   - Forward 0D simulation results:  Flow and pressure results generated for standard, calibrated, and learned input files, as available.  csv files containing results for each 0D node at each timestep, plots of each solution (compared to the 3D solution) in time at a specified (generally inlet) node.  Printed table listing inlet pressure MSE with respect to 3D simulation.
 - `learn-lpns-train`: Trained neural networks.
-- `learn-lpns-cv`: Results of k-fold validation in csv and barchart visualization (saved to `results/cross-validation`).  Also generates all the above outputs in the proceess.
+- `learn-lpns-cv`: k-fold cross-validation; summary CSVs and barcharts saved to `results/cross_validation`. Before trials run, generates any missing prerequisite files for the cohort (calibrated zeroD JSONs, `ml_inputs`, `jax_arrays`, train/val splits). Each trial trains NNs and runs inference on held-out geometries, producing the forward-simulation and MSE outputs above where applicable.
 
 ## Requirements
 
@@ -76,7 +74,7 @@ flowchart LR
 
 ## Setup
 
-Bundled sample data under `data/` uses **Git LFS** (~70 MB of VTP/JSON). After clone:
+Sample data under `data/` uses **Git LFS** (~70 MB of VTP/JSON). After clone:
 
 ```bash
 brew install git-lfs && git lfs install && git lfs pull
@@ -125,14 +123,14 @@ make notebook
 ## Documentation
 
 
-| Guide                                                                            | Contents                                                                |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| [docs/usage.md](docs/usage.md)                                                   | Run config, batch generation, CV, training, visualizations              |
-| [docs/architecture.md](docs/architecture.md)                                     | Pipeline diagram, design decisions, tradeoffs                           |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                                               | Setup, checks, conventional commits, PR checklist                       |
-| [docs/data_and_results.md](docs/data_and_results.md)                             | Data layout, sample cohort, output paths                                |
-| [data/README.md](data/README.md)                                                 | Bundled VMR seed inputs + gen_loss demo JSONs                           |
-| [examples/nn_parameter_comparison.ipynb](examples/nn_parameter_comparison.ipynb) | Notebook: train NN, compare zero-D parameters (no solver)               |
+| Guide                                                                            | Contents                                                                                                            |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [docs/usage.md](docs/usage.md)                                                   | Run config, batch generation, CV, training, visualizations                                                          |
+| [docs/architecture.md](docs/architecture.md)                                     | Design decisions                                                                                                    |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                               | Setup, checks                                                                                                       |
+| [docs/data_and_results.md](docs/data_and_results.md)                             | Data layout, sample cohort, output paths                                                                            |
+| [data/README.md](data/README.md)                                                 | Provided VMR_aortas cohort, inputs needed for example notebook                                                      |
+| [examples/nn_parameter_comparison.ipynb](examples/nn_parameter_comparison.ipynb) | Notebook: Representative workflow skipping steps that require external svzerodsolver and svzerodcalibrator binaries |
 
 
 ## Repository layout
@@ -162,7 +160,7 @@ learn_lpns/                          # installable Python package
 └── tools/
     └── basic.py                     # shared dict I/O helpers
 
-data/                                # bundled seed inputs + generated artifacts
+data/                                # provided seed inputs + generated artifacts
 ├── zeroD/                           # 0D JSON configs and simulation outputs
 ├── oneD/                            # 1D centerline VTPs (3D projected)
 ├── ml_inputs/                       # feature/label CSVs
@@ -180,7 +178,7 @@ docs/                                # usage, architecture, data layout
 assets/                              # README figures
 ```
 
-See [data/README.md](data/README.md) for bundled sample cohort paths.
+See [data/README.md](data/README.md) for provided sample cohort paths.
 
 ## Console entry points
 

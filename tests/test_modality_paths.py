@@ -21,11 +21,11 @@ def test_modality_key_from_table_header_roundtrip():
 
 
 def test_sort_modalities_default_order():
-    unordered = ["NN_vessel", "geometric", "BloodVesselJunction_NN"]
+    unordered = ["Vessel_NN", "geometric", "BloodVesselJunction_NN"]
     assert sort_modalities(unordered) == [
         "geometric",
         "BloodVesselJunction_NN",
-        "NN_vessel",
+        "Vessel_NN",
     ]
 
 
@@ -53,7 +53,7 @@ def test_nn_forward_sim_specs_with_vessel():
     assert keys == [
         "BloodVesselJunction_NN",
         "BloodVesselJunction_NN_plus_Vessel_NN",
-        "NN_vessel",
+        "Vessel_NN",
     ]
 
 
@@ -88,4 +88,4 @@ def test_modality_csv_paths_includes_existing_files(tmp_path):
     assert paths["geometric"] == str(geometric_csv)
     assert paths[junction_type] == str(calibrated_csv)
     assert paths["BloodVesselJunction_NN"] == str(nn_csv)
-    assert "NN_vessel" not in paths
+    assert "Vessel_NN" not in paths

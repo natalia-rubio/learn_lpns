@@ -228,7 +228,7 @@ LINE_STYLES = {
         "label": "Learned Junctions and Vessels",
         "alpha": 0.75,
     },
-    "NN_vessel": {
+    "Vessel_NN": {
         "color": "gold",
         "linestyle": "-.",
         "linewidth": 4,
@@ -246,8 +246,8 @@ def _modality_key_from_plot_key(key):
         return "geometric"
     if "BloodVesselJunction_NN_plus_Vessel_NN" in key:
         return "BloodVesselJunction_NN_plus_Vessel_NN"
-    if "NN_vessel" in key:
-        return "NN_vessel"
+    if "Vessel_NN" in key:
+        return "Vessel_NN"
     if "BloodVesselJunction_NN" in key:
         return "BloodVesselJunction_NN"
     if "NORMAL_JUNCTION" in key:
@@ -320,8 +320,8 @@ def get_line_style(key):
     """
     if key in LINE_STYLES:
         base = LINE_STYLES[key]
-    elif "NN_vessel" in key:
-        base = LINE_STYLES["NN_vessel"]
+    elif "Vessel_NN" in key:
+        base = LINE_STYLES["Vessel_NN"]
     elif "BloodVesselJunction_NN" in key or key.endswith("_NN"):
         base = {
             "color": "dodgerblue",
@@ -1395,7 +1395,7 @@ def main():
                 "BloodVesselJunction_NN_plus_Vessel_NN",
                 f"{args.geometry_variant}_NN_JunctionAndVessel_results.csv",
             ),
-            ("NN_vessel", f"{args.geometry_variant}_NN_VesselOnly_results.csv"),
+            ("Vessel_NN", f"{args.geometry_variant}_NN_VesselOnly_results.csv"),
         ]:
             nn_path = os.path.join(data_dir, nn_basename)
             if os.path.exists(nn_path):

@@ -12,7 +12,7 @@ The `data/` directory is organized by `set_name` (cohort of vascular geometries)
 | `jax_arrays/` | Stacked arrays for JAX training/inference; includes vessel-mode arrays when enabled. |
 | `split_indices/` | Train/validation geometry splits for reproducible CV trials. |
 
-## Bundled sample cohort (`VMR_aortas`)
+## Provided sample cohort (`VMR_aortas`)
 
 Five adult aortic geometries from the [Vascular Model Repository](https://www.vascularmodel.com/) ship with the repo for local testing:
 

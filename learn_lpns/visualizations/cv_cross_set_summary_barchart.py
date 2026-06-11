@@ -58,7 +58,7 @@ RUN_CONFIG_FALLBACK_ORDER = [
 
 MODALITY_ORDER = [
     "geometric",
-    "NN_vessel",
+    "Vessel_NN",
     "BloodVesselJunction_NN",
     "BloodVesselJunction_NN_plus_Vessel_NN",
     "BloodVesselJunction",
@@ -66,7 +66,7 @@ MODALITY_ORDER = [
 
 MODALITY_LABEL = {
     "geometric": ["Baseline", "(Poiseuille)"],
-    "NN_vessel": ["Learned", "Vessels"],
+    "Vessel_NN": ["Learned", "Vessels"],
     "BloodVesselJunction_NN": ["Learned", "Junctions"],
     "BloodVesselJunction_NN_plus_Vessel_NN": ["Learned", "Junctions", "and Vessels"],
     "BloodVesselJunction": ["Optimal", "(Fit to 3D)"],

@@ -49,7 +49,7 @@ MODALITY_KEYS = list(DEFAULT_MODALITY_ORDER)
 MODALITY_STYLE_KEY = {
     "geometric": "geometric_0d",
     "BloodVesselJunction_NN": "BloodVesselJunction_NN",
-    "NN_vessel": "NN_vessel",
+    "Vessel_NN": "Vessel_NN",
     "BloodVesselJunction_NN_plus_Vessel_NN": "BloodVesselJunction_NN_plus_Vessel_NN",
     "BloodVesselJunction": "BloodVesselJunction",
 }

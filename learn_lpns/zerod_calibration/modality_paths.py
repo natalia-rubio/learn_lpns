@@ -17,7 +17,7 @@ MODALITY_DISPLAY: dict[str, str] = {
     "BloodVesselJunction": "Calibrated",
     "BloodVesselJunction_NN": "Learned Junctions",
     "BloodVesselJunction_NN_plus_Vessel_NN": "Learned Junctions and Vessels",
-    "NN_vessel": "Learned Vessel",
+    "Vessel_NN": "Learned Vessel",
 }
 
 DEFAULT_MODALITY_ORDER: tuple[str, ...] = (
@@ -25,7 +25,7 @@ DEFAULT_MODALITY_ORDER: tuple[str, ...] = (
     "BloodVesselJunction",
     "BloodVesselJunction_NN",
     "BloodVesselJunction_NN_plus_Vessel_NN",
-    "NN_vessel",
+    "Vessel_NN",
 )
 
 __all__ = [
@@ -111,7 +111,7 @@ def nn_forward_sim_specs(
                     ),
                 ),
                 (
-                    "NN_vessel",
+                    "Vessel_NN",
                     os.path.join(base_dir, f"{geo_variant_name}_NN_{NN_VESSEL_ONLY_SUFFIX}.json"),
                     os.path.join(base_dir, f"{geo_variant_name}_NN_{NN_VESSEL_ONLY_SUFFIX}_results.csv"),
                 ),

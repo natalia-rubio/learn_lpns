@@ -472,7 +472,7 @@ def _run_zerod_inputs_for_cv(
         model_dir=model_dir,
         NN_only=bool(model_dir) and not plots_only,
         plots_only=plots_only,
-        NN_vessel=nn_vessel,
+        Vessel_NN=nn_vessel,
         verbose=verbose,
         skip_steps="",
         no_redo=False,
@@ -577,7 +577,7 @@ def run_cross_validation(
     else:
         trials_to_run = list(range(num_trials))
     if nn_vessel:
-        print("NN-vessel: will train vessel NN per trial and include vessel-predicted modality in MSE")
+        print("Vessel_NN: will train vessel NN per trial and include vessel-predicted modality in MSE")
     if asymmetric_loss:
         print("Asymmetric loss: per-model overestimate weights")
     if quadratic_resistor:
@@ -992,7 +992,7 @@ def main():
         ),
     )
     parser.add_argument(
-        "--NN_vessel",
+        "--Vessel_NN",
         action="store_true",
         dest="nn_vessel",
         default=True,
@@ -1002,7 +1002,7 @@ def main():
         ),
     )
     parser.add_argument(
-        "--no_NN_vessel",
+        "--no_Vessel_NN",
         action="store_false",
         dest="nn_vessel",
         help="Disable vessel NN training and inference (junction NN only).",

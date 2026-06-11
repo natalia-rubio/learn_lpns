@@ -1,7 +1,6 @@
-# Sample data (bundled with the repository)
+# Sample data (provided with the repository)
 
   I provide a **minimal aortic demo cohort** from the [Vascular Model Repository](https://www.vascularmodel.com/) so the pipeline can be run without sourcing inputs elsewhere.  The specific files come from the work [Pfaller et al.](https://onlinelibrary.wiley.com/doi/abs/10.1002/cnm.3639) and the repo [richter2024-paper-tools](https://github.com/StanfordCBCL/richter2024-paper-tools/tree/main/data/geometric_pfaller22/input).
-
 
 The larger files (1D VTPs and 0D JSONs) are stored with **[Git LFS](https://git-lfs.com)**. After clone:
 
@@ -17,11 +16,13 @@ git lfs pull           # download LFS objects for this repo
 
 ## Layout
 
-| Path | Contents |
-|------|----------|
-| `zeroD/VMR_aortas/standard-0d/*.json` | Standard 0D solver input JSONs (one per geometry) |
-| `zeroD/VMR_aortas/gen_loss/<geo>/bifurcations_EL_calibrated_output_BloodVesselJunction.json` | Calibrated ground truth on bifurcations_EL topology (used in notebook demo, tracked) |
-| `oneD/VMR/<geo_id>/unsteady_soln.vtp` | 1D centerline solutions (3D projected onto centerlines) used for topology steps |
+
+| Path                                                                                         | Contents                                                                                                                 |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `zeroD/VMR_aortas/standard-0d/*.json`                                                        | Standard 0D solver input JSONs (one per geometry)                                                                        |
+| `zeroD/VMR_aortas/gen_loss/<geo>/bifurcations_EL_calibrated_output_BloodVesselJunction.json` | Calibrated ground truth on pre-processed bifurcations_EL 0D input file (used in notebook demo, tracked)                  |
+| `oneD/VMR/<geo_id>/unsteady_soln.vtp`                                                        | 1D centerline solutions (3D solutions projected onto centerlines) used for geometric feature extraction and calibration. |
+
 
 **Active notebook cohort (5 geometries):** `0129_0000`, `0154_0001`, `0174_0000`, `0175_0000`, `0176_0000`
 

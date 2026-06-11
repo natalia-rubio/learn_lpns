@@ -2,7 +2,7 @@
 
 Run from the **repository root** (or use console entry points after `pip install -e ".[dev]"`).
 
-The bundled sample cohort is **`VMR_aortas`** (5 geometries). See [data/README.md](../data/README.md).
+The provided sample cohort is `**VMR_aortas`** (5 geometries). See [data/README.md](../data/README.md).
 
 ## Quick start (cross-validation)
 
@@ -26,13 +26,15 @@ Physics and training variants are selected with a single `--run_config` flag on 
 
 See `learn_lpns/zerod_calibration/run_config_canonical.py`.
 
-| Token | Effect |
-| ----- | ------ |
-| *(none)* | `base` — RI junction model, symmetric NN loss, no generation-weighted training |
-| `quadratic_resistor` | RRI junction model (R + stenosis + L); off by default |
-| `penalty_on` | Enable L2 calibration penalties (requires `quadratic_resistor`) |
-| `asymmetric_loss` | Asymmetric NN loss (per-coefficient overestimate weights) |
-| `gen_loss` | Generation-weighted NN training loss (`weight = scale / 2^generation`) |
+
+| Token                | Effect                                                                         |
+| -------------------- | ------------------------------------------------------------------------------ |
+| *(none)*             | `base` — RI junction model, symmetric NN loss, no generation-weighted training |
+| `quadratic_resistor` | RRI junction model (R + stenosis + L); off by default                          |
+| `penalty_on`         | Enable L2 calibration penalties (requires `quadratic_resistor`)                |
+| `asymmetric_loss`    | Asymmetric NN loss (per-coefficient overestimate weights)                      |
+| `gen_loss`           | Generation-weighted NN training loss (`weight = scale / 2^generation`)         |
+
 
 **Alias:** `generation_weighted_loss` → `gen_loss` (on-disk suffix remains `_gen_loss`).
 
@@ -48,14 +50,6 @@ quadratic_resistor_gen_loss       →  quadratic_resistor_gen_loss
 gen_loss_quadratic_resistor_asymmetric_loss  →  quadratic_resistor_asymmetric_loss_gen_loss
 base                              →  base
 ```
-
-### Migration from older folder names
-
-| Old layout | New equivalent |
-| ---------- | -------------- |
-| `stenosis_off_*_gen_loss` | `gen_loss` |
-| Default RRI with penalties | `quadratic_resistor_penalty_on_gen_loss` |
-| `penalty_off_quadratic_resistor_*` | `quadratic_resistor_gen_loss` |
 
 ### On-disk layout
 
@@ -84,7 +78,7 @@ learn-lpns-batch-zerod \
 
 `--skip_steps` tokens (order-independent): `base_generation`, `observation`, `calibration`, `forward`, `nn_inference`, `mse`, `plots`.
 
-Other flags: `--no_redo`, `--NN_only`, `--NN_vessel`, `--skip_existing`.
+Other flags: `--no_redo`, `--NN_only`, `--Vessel_NN`, `--skip_existing`.
 
 ## k-fold cross-validation
 
@@ -92,29 +86,33 @@ Each trial randomly splits geometries into train vs validation sets, trains junc
 
 ### What CV regenerates
 
-| Stage | When | What runs |
-| ----- | ---- | --------- |
-| **Bootstrap** | Only if prerequisites missing | `batch_generate_zerod_inputs_vmr` + `run_data_processing` |
-| **Per trial** | Always (val geometries) | `generate_zerod_inputs --NN_only` (NN inference, forward sim, MSE, plots) |
 
-Bootstrap triggers when any of the following is true:
+| Stage                       | When                      | What runs                                                                 |
+| --------------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| **Prerequisite generation** | Only if files are missing | `batch_generate_zerod_inputs_vmr` + `run_data_processing`                 |
+| **Per trial**               | Always (val geometries)   | `generate_zerod_inputs --NN_only` (NN inference, forward sim, MSE, plots) |
+
+
+Prerequisite generation runs when any of the following is true:
 
 - ml_inputs missing for some geometry
 - jax pickle missing for the cohort size
 - calibrated zeroD incomplete (not missing NN forward files—those are created per trial)
 
-When bootstrap runs, batch processes only missing geometries. Data processing uses all geometries if jax must be rebuilt, otherwise only the batch subset.
+When that step runs, batch processing generates only missing geometries. Data processing uses all geometries if jax must be rebuilt, otherwise only the batch subset.
 
 ### CV flags
 
-| Flag | Purpose |
-| ---- | ------- |
-| `--no_redo` | Passed to bootstrap batch only; skips recreating existing zeroD files |
-| `--skip_training_if_exists` | Skip training if checkpoints exist for a trial |
-| `--trial N` | Re-run only trial `N` (0-based); merges into existing summary CSV |
-| `--metrics_only` | Rebuild summary CSVs from existing MSE files (no train/deploy) |
-| `--plots_only` | Regenerate location comparison plots from existing zeroD data |
-| `--skip_barchart` | Skip automatic barchart generation |
+
+| Flag                        | Purpose                                                                          |
+| --------------------------- | -------------------------------------------------------------------------------- |
+| `--no_redo`                 | During prerequisite batch generation only; skips recreating existing zeroD files |
+| `--skip_training_if_exists` | Skip training if pre-trained models exist for a trial                            |
+| `--trial N`                 | Re-run only trial `N` (0-based); merges into existing summary CSV                |
+| `--metrics_only`            | Rebuild summary CSVs from existing MSE files (no train/deploy)                   |
+| `--plots_only`              | Regenerate location comparison plots from existing zeroD data                    |
+| `--skip_barchart`           | Skip automatic barchart generation                                               |
+
 
 ### CV outputs
 
@@ -136,28 +134,33 @@ learn-lpns-train VMR_aortas 5 bifurcations_EL \
 
 Positional args: `set_name`, `num_geos`, optional `geometry_variant` (default `all` → both `bifurcations` and `bifurcations_EL`).
 
-| Flag | Purpose |
-| ---- | ------- |
-| `--run_config` | Path suffix for jax_arrays and split_indices |
-| `--asymmetric_loss` | Per-coefficient overestimate weights |
-| `--generation_weighted_loss` | Enable generation-weighted loss |
+
+| Flag                               | Purpose                                                                 |
+| ---------------------------------- | ----------------------------------------------------------------------- |
+| `--run_config`                     | Path suffix for jax_arrays and split_indices                            |
+| `--asymmetric_loss`                | Per-coefficient overestimate weights                                    |
+| `--generation_weighted_loss`       | Enable generation-weighted loss                                         |
 | `--generation_weighted_loss_scale` | Multiplier for generation weights (default from `config/defaults.yaml`) |
-| `--vessel` | Train vessel NNs |
-| `--leaky_relu` | Leaky ReLU activations |
-| `--quiet_epochs` | Suppress per-epoch loss logging |
-| `--split_path` / `--model_dir` | Override split pickle or output directory |
+| `--vessel`                         | Train vessel NNs                                                        |
+| `--leaky_relu`                     | Leaky ReLU activations                                                  |
+| `--quiet_epochs`                   | Suppress per-epoch loss logging                                         |
+| `--split_path` / `--model_dir`     | Override split pickle or output directory                               |
+
 
 Bifurcation **generation** is stored in the jax pickle (not an NN input) and used only with generation-weighted loss.
 
 ## Notebook example (no C++ solver)
 
-[examples/nn_parameter_comparison.ipynb](../examples/nn_parameter_comparison.ipynb) walks through:
+[examples/nn_parameter_comparison.ipynb](../examples/nn_parameter_comparison.ipynb) walks through a five-geometry demo (`VMR_aortas`: `0129_0000`, `0154_0001`, `0174_0000`, `0175_0000`, `0176_0000`) without running calibration or forward simulation:
 
-1. Verify bundled inputs per geometry: `standard-0d/<geo>.json`, `gen_loss/<geo>/bifurcations_EL_calibrated_output_BloodVesselJunction.json`, and `oneD/VMR/<geo>/unsteady_soln.vtp`
-2. Build `bifurcations_EL_geometric_input.json` in Python from standard-0d + VTP (bifurcation split + entrance length)
-3. Build `ml_inputs`, `jax_arrays`, and a geometry-level train/val split (4 train / 1 val; change `SEED` in the notebook)
-4. Train junction and vessel NNs and run inference on the held-out geometry
-5. Plot zero-D parameter bar charts and print MAE vs calibrated
+1. **Setup** — verify provided inputs per geometry (`standard-0d/<geo>.json`, `gen_loss/<geo>/bifurcations_EL_calibrated_output_BloodVesselJunction.json`, `oneD/VMR/<geo>/unsteady_soln.vtp`); set `SEED` for an 80% geometry-level train/val split (4 train / 1 val).
+2. **Geometric pre-processing** — for all five geometries, build `bifurcations_EL_geometric_input.json` in Python via `materialize_bifurcations_el_from_base` (bifurcation split + entrance-length adjustment from standard-0d + VTP; no svZeroDPlus).
+3. **Calibration** — skipped; uses the provided calibrated JSON as ground truth.
+4. **Training data** — run `learn-lpns-data-processing` to build `ml_inputs`, `jax_arrays`, and geometry-level split indices.
+5. **Training** — train junction and vessel NNs with `learn-lpns-train` (six models: R, S, L for junctions and vessels).
+6. **Inference** — predict R, S, L on the held-out geometry and write learned 0D JSON configs (`bifurcations_EL_NN_JunctionOnly.json`, etc.).
+7. **Parameter comparison plot** — bar chart of standard, calibrated, and learned R/S/L per element on the validation geometry.
+8. **Forward simulation** — skipped; notebook shows a reference inlet comparison figure (requires `svzerodsolver` to reproduce).
 
 ```bash
 make notebook    # one-shot: venv, JAX, [dev,notebook], open Jupyter
@@ -170,19 +173,21 @@ pip install -e ".[dev,notebook]"
 jupyter notebook examples/nn_parameter_comparison.ipynb
 ```
 
-Bundled inputs: two bifurcations_EL JSONs per geometry (geometric + calibrated). See [data/README.md](../data/README.md).
+Provided inputs per geometry: standard-0d JSON, calibrated bifurcations_EL JSON, and 1D centerline VTP. The geometric bifurcations_EL JSON is generated in step 2. See [data/README.md](../data/README.md).
 
 ## MSE modalities
 
 Display names for console tables, CSV headers, and LaTeX exports: `learn_lpns/zerod_calibration/modality_paths.py`.
 
-| Modality key | Display name |
-| ------------ | ------------ |
-| `geometric` | Standard |
-| `BloodVesselJunction` | Calibrated |
-| `BloodVesselJunction_NN` | Learned Junctions |
-| `NN_vessel` | Learned Vessel |
+
+| Modality key                            | Display name                  |
+| --------------------------------------- | ----------------------------- |
+| `geometric`                             | Standard                      |
+| `BloodVesselJunction`                   | Calibrated                    |
+| `BloodVesselJunction_NN`                | Learned Junctions             |
+| `Vessel_NN`                             | Learned Vessel                |
 | `BloodVesselJunction_NN_plus_Vessel_NN` | Learned Junctions and Vessels |
+
 
 ## Data processing
 
@@ -199,24 +204,27 @@ learn-lpns-data-processing \
 
 Reporting scripts under `learn_lpns/visualizations/` (run as modules from repo root):
 
-| Script | Purpose |
-| ------ | ------- |
-| `cv_cross_set_summary_barchart` | CV metrics across cohorts |
-| `cv_max_pct_error_by_config_barchart` | Max pressure error by run-config |
-| `cv_pressure_max_pct_error_barchart` | Per-trial CV bar chart |
-| `cv_pressure_errors_to_latex` | CV metrics → LaTeX table |
-| `cv_geometric_vs_calibrated_histograms` | Geometric vs calibrated parameter errors |
-| `plot_location_comparison` | Pressure/flow vs time at observation locations |
-| `plot_zero_d_parameter_bars` | 0D parameters by modality |
-| `run_zerod_comparison_plots` | Common comparison plot workflows |
+
+| Script                                  | Purpose                                        |
+| --------------------------------------- | ---------------------------------------------- |
+| `cv_cross_set_summary_barchart`         | CV metrics across cohorts                      |
+| `cv_max_pct_error_by_config_barchart`   | Max pressure error by run-config               |
+| `cv_pressure_max_pct_error_barchart`    | Per-trial CV bar chart                         |
+| `cv_pressure_errors_to_latex`           | CV metrics → LaTeX table                       |
+| `cv_geometric_vs_calibrated_histograms` | Geometric vs calibrated parameter errors       |
+| `plot_location_comparison`              | Pressure/flow vs time at observation locations |
+| `plot_zero_d_parameter_bars`            | 0D parameters by modality                      |
+| `run_zerod_comparison_plots`            | Common comparison plot workflows               |
+
 
 Most accept `--run_config`, `--set_name`, and `--geometry_variant`. See each module’s `--help` for defaults.
 
 ## Console entry points
 
-| Command | Script |
-| ------- | ------ |
-| `learn-lpns-cv` | `learn_lpns/zerod_calibration/run_cross_validation.py` |
-| `learn-lpns-batch-zerod` | `learn_lpns/zerod_calibration/batch_generate_zerod_inputs_vmr.py` |
-| `learn-lpns-data-processing` | `learn_lpns/data_processing/run_data_processing.py` |
-| `learn-lpns-train` | `learn_lpns/neural_network/launch_training.py` |
+
+| Command                      | Script                                                            |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `learn-lpns-cv`              | `learn_lpns/zerod_calibration/run_cross_validation.py`            |
+| `learn-lpns-batch-zerod`     | `learn_lpns/zerod_calibration/batch_generate_zerod_inputs_vmr.py` |
+| `learn-lpns-data-processing` | `learn_lpns/data_processing/run_data_processing.py`               |
+| `learn-lpns-train`           | `learn_lpns/neural_network/launch_training.py`                    |

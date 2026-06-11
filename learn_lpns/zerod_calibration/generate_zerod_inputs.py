@@ -426,7 +426,7 @@ def main():
         geo_variant_paths = geometry_variants[args.geometry_variant]
         variant_geometric_input = geo_variant_paths["geometric_input"]
         calib_output_path = geo_variant_paths["junction_types"][JUNCTION_TYPE]["calibrated_output"]
-        nn_vessel_flag = getattr(args, "NN_vessel", False)
+        nn_vessel_flag = getattr(args, "Vessel_NN", False)
         nn_json_by_key = {
             key: sim_input
             for key, sim_input, _ in nn_forward_sim_specs(
@@ -438,7 +438,7 @@ def main():
         }
         nn_output_path = nn_json_by_key["BloodVesselJunction_NN"]
         nn_junction_and_vessel_path = nn_json_by_key.get("BloodVesselJunction_NN_plus_Vessel_NN")
-        nn_vessel_only_path = nn_json_by_key.get("NN_vessel")
+        nn_vessel_only_path = nn_json_by_key.get("Vessel_NN")
 
         if not os.path.exists(variant_geometric_input):
             raise FileNotFoundError(f"Geometric input not found: {variant_geometric_input}")
@@ -564,7 +564,7 @@ def main():
                     ) from e
 
             # Step 3.8 (optional): Vessel NN inference: predict vessel R/S/L and write NN_JunctionAndVessel config
-            if getattr(args, "NN_vessel", False):
+            if getattr(args, "Vessel_NN", False):
                 from learn_lpns.zerod_calibration.nn_inference import run_vessel_inference
 
                 if not os.path.exists(nn_output_path):
@@ -595,7 +595,7 @@ def main():
                         with open(nn_vessel_only_path, "w") as f:
                             json.dump(vessel_only_config, f, indent=4)
                         generated_files.append(nn_vessel_only_path)
-                        print(f"      ✓ NN_vessel (geometric junctions + NN vessels) saved to {nn_vessel_only_path}")
+                        print(f"      ✓ Vessel_NN (geometric junctions + NN vessels) saved to {nn_vessel_only_path}")
                     except Exception as e:
                         raise Exception(f"Vessel NN inference failed for {args.geometry_variant}: {e}") from e
 
@@ -659,7 +659,7 @@ def main():
                     base_dir,
                     geo_variant_name,
                     JUNCTION_TYPE,
-                    getattr(args, "NN_vessel", False),
+                    getattr(args, "Vessel_NN", False),
                 ):
                     _run_forward_simulation_step(
                         sim_input,
@@ -684,7 +684,7 @@ def main():
                 base_dir,
                 args.geometry_variant,
                 JUNCTION_TYPE,
-                getattr(args, "NN_vessel", False),
+                getattr(args, "Vessel_NN", False),
             )
             variant_calibration_input = geo_variant_paths["calibration_input"]
             if not csv_results_dict or not os.path.exists(variant_calibration_input):
@@ -720,7 +720,7 @@ def main():
                 geo_name=args.geo_name,
                 run_config=run_config_suffix,
                 trial_id=args.trial_id,
-                nn_vessel=getattr(args, "NN_vessel", False),
+                nn_vessel=getattr(args, "Vessel_NN", False),
                 verbose=verbose,
             )
         except Exception as e:

@@ -201,7 +201,7 @@ Examples:
     print(f"  Skip steps: {args.skip_steps or '(none)'}")
     print(f"  No-redo mode: {args.no_redo}")
     print(f"  NN-only mode: {args.NN_only}")
-    print(f"  NN-vessel mode: {args.NN_vessel}")
+    print(f"  Vessel_NN mode: {args.Vessel_NN}")
     print(f"  Skip existing: {args.skip_existing}")
     print(f"  Timeout per geometry: {args.timeout}s ({args.timeout / 60:.1f} minutes)")
     print(f"  Max failures: {args.max_failures if args.max_failures else 'unlimited'}")
