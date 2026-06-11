@@ -131,7 +131,6 @@ make notebook    # venv + deps + open Jupyter (~15–30 min to run all cells on 
 | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | [docs/usage.md](docs/usage.md)                                                   | Run config, batch generation, CV, training, visualizations              |
 | [docs/architecture.md](docs/architecture.md)                                     | Pipeline diagram, design decisions, tradeoffs                           |
-| [docs/hardening_checklist.md](docs/hardening_checklist.md)                       | 1–2 day plan for library-style tooling (pre-commit, format, public API) |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                                               | Setup, checks, conventional commits, PR checklist                       |
 | [docs/data_and_results.md](docs/data_and_results.md)                             | Data layout, sample cohort, output paths                                |
 | [data/README.md](data/README.md)                                                 | Bundled VMR seed inputs + gen_loss demo JSONs                           |
