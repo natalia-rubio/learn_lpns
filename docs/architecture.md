@@ -6,6 +6,7 @@
 - **Geometry-level CV splits** — Train/validation splits assign whole geometries, not individual junction rows, so validation measures generalization to unseen vasculatures.
 - **Canonical `--run_config` paths** — Underscore tokens (e.g. `gen_loss`, `quadratic_resistor`) compose a single on-disk suffix under `data/` and `results/`, keeping physics variants and training modes reproducible without ad-hoc folder names (`run_config_canonical.py`).
 - **Generate only missing prerequisites** — Cross-validation checks for absent cohort files (calibrated zeroD, ml_inputs, jax pickles) and generates only what is missing before trials run, reducing rerun cost.
+- **Inferred training cohort size** — `learn-lpns-train` discovers `--num_geos` from `jax_arrays_num_geos_*.pkl` and matching `split_indices` when not passed explicitly (largest matching cohort wins).
 
 
 

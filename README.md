@@ -63,7 +63,7 @@ flowchart LR
   - Tabulated geometry (neural network features) and lumped parameter (neural network target) data, saved in human-readable csvs (`data/ml_inputs`)and pickled dictionaries of jax arrays (`data/jax_arrays`).  Train-validation splits also generated.  (Can be generated independently with `learn-lpns-data-processing`, run `learn-lpns-batch-zerod` first.)
   - Learned 0D input files: contains neural-network predicted resistances and inductances (saved in `data/zeroD`).  Generated only if trained neural networks are available (`learn-lpns-train` has been run).
   - Forward 0D simulation results:  Flow and pressure results generated for standard, calibrated, and learned input files, as available.  csv files containing results for each 0D node at each timestep, plots of each solution (compared to the 3D solution) in time at a specified (generally inlet) node.  Printed table listing inlet pressure MSE with respect to 3D simulation.
-- `learn-lpns-train`: Trained neural networks.
+- `learn-lpns-train`: Trained neural networks (saved under `results/models/`). Requires `--set_name`; `--num_geos` is optional and inferred from `jax_arrays` when omitted.
 - `learn-lpns-cv`: k-fold cross-validation; summary CSVs and barcharts saved to `results/cross_validation`. Before trials run, generates any missing prerequisite files for the cohort (calibrated zeroD JSONs, `ml_inputs`, `jax_arrays`, train/val splits). Each trial trains NNs and runs inference on held-out geometries, producing the forward-simulation and MSE outputs above where applicable.
 
 ## Requirements
@@ -95,6 +95,14 @@ After [Setup](#setup), run cross-validation on the sample cohort:
 ```bash
 learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2 --run_config gen_loss
 ```
+
+After [data processing](docs/usage.md#data-processing) (or once CV prerequisites exist), train junction NNs standalone:
+
+```bash
+learn-lpns-train --set_name VMR_aortas --run_config gen_loss
+```
+
+(`bifurcations_EL` and cohort size are inferred from `data/jax_arrays/` and `data/split_indices/`.)
 
 ```bash
 pytest -v    # unit tests, no C++ solver required
@@ -171,12 +179,14 @@ See [data/README.md](data/README.md) for provided sample cohort paths.
 ## Console entry points
 
 
-| Command                      | Purpose                        |
-| ---------------------------- | ------------------------------ |
-| `learn-lpns-cv`              | k-fold cross-validation        |
-| `learn-lpns-batch-zerod`     | Batch 0D generation            |
-| `learn-lpns-data-processing` | Build ml_inputs and jax arrays |
-| `learn-lpns-train`           | Train junction/vessel NNs      |
+| Command                      | Purpose                                                                 |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `learn-lpns-cv`              | k-fold cross-validation                                                 |
+| `learn-lpns-batch-zerod`     | Batch 0D generation                                                     |
+| `learn-lpns-data-processing` | Build `ml_inputs`, `jax_arrays`, and `split_indices`                    |
+| `learn-lpns-train`           | Train junction/vessel NNs (`--set_name` required; `--num_geos` optional) |
+
+Example: `learn-lpns-train --set_name VMR_aortas --run_config gen_loss`. All commands use keyword flags — see [docs/usage.md](docs/usage.md).
 
 
 ## Configuration

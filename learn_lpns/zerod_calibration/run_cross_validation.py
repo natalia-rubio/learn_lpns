@@ -710,8 +710,11 @@ def run_cross_validation(
             cmd_train = [
                 sys.executable,
                 launch_training_script,
+                "--set_name",
                 set_name,
+                "--num_geos",
                 str(num_geos),
+                "--geometry_variant",
                 geometry_variant,
                 "--split_path",
                 split_path,
@@ -748,8 +751,11 @@ def run_cross_validation(
                 cmd_vessel = [
                     sys.executable,
                     launch_training_script,
+                    "--set_name",
                     set_name,
+                    "--num_geos",
                     str(num_geos),
+                    "--geometry_variant",
                     geometry_variant,
                     "--vessel",
                     "--split_path",

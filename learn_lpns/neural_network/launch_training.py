@@ -1,4 +1,6 @@
+import glob
 import os
+import re
 
 from learn_lpns.config import TrainingConfig, get_pipeline_config
 from learn_lpns.data_processing.generate_split_indices import (
@@ -12,6 +14,110 @@ from learn_lpns.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
     run_config_suffix_to_flags,
 )
+
+GEOMETRY_VARIANT_NAMES = frozenset({"bifurcations", "bifurcations_EL", "all"})
+DEFAULT_GEOMETRY_VARIANT = "bifurcations_EL"
+
+
+def _num_geos_from_path(path: str) -> int | None:
+    match = re.search(r"num_geos_(\d+)", os.path.basename(path))
+    return int(match.group(1)) if match else None
+
+
+def _jax_arrays_dir(
+    data_root: str,
+    set_name: str,
+    geometry_variant: str,
+    set_type: str,
+    run_config_suffix: str | None,
+) -> str:
+    parts = [data_root, "jax_arrays", set_name]
+    if run_config_suffix:
+        parts.append(run_config_suffix)
+    parts.extend([geometry_variant, set_type])
+    return os.path.join(*parts)
+
+
+def _discover_num_geos_from_jax_arrays(
+    data_root: str,
+    set_name: str,
+    geometry_variant: str,
+    set_type: str,
+    run_config_suffix: str | None,
+    *,
+    vessel: bool,
+) -> list[int]:
+    directory = _jax_arrays_dir(data_root, set_name, geometry_variant, set_type, run_config_suffix)
+    pattern = "jax_arrays_vessel_num_geos_*.pkl" if vessel else "jax_arrays_num_geos_*.pkl"
+    nums: list[int] = []
+    for path in glob.glob(os.path.join(directory, pattern)):
+        num_geos = _num_geos_from_path(path)
+        if num_geos is not None:
+            nums.append(num_geos)
+    return sorted(set(nums))
+
+
+def _infer_num_geos(
+    *,
+    data_root: str,
+    set_name: str,
+    geometry_variant: str,
+    set_type: str,
+    run_config_suffix: str | None,
+    vessel: bool,
+    explicit_num_geos: int | None,
+    split_path: str | None,
+) -> int:
+    if explicit_num_geos is not None:
+        return explicit_num_geos
+
+    if split_path is not None:
+        from_split = _num_geos_from_path(split_path)
+        if from_split is not None:
+            return from_split
+
+    junction_candidates = _discover_num_geos_from_jax_arrays(
+        data_root,
+        set_name,
+        geometry_variant,
+        set_type,
+        run_config_suffix,
+        vessel=False,
+    )
+    if vessel:
+        vessel_candidates = set(
+            _discover_num_geos_from_jax_arrays(
+                data_root,
+                set_name,
+                geometry_variant,
+                set_type,
+                run_config_suffix,
+                vessel=True,
+            )
+        )
+        junction_candidates = [n for n in junction_candidates if n in vessel_candidates]
+
+    if not junction_candidates:
+        directory = _jax_arrays_dir(data_root, set_name, geometry_variant, set_type, run_config_suffix)
+        raise SystemExit(
+            f"Could not infer num_geos: no jax arrays under {directory!r}. "
+            "Run data processing or pass num_geos explicitly."
+        )
+
+    if split_path is not None:
+        return max(junction_candidates)
+
+    with_split = [
+        n
+        for n in junction_candidates
+        if os.path.isfile(_default_split_path(data_root, set_name, geometry_variant, set_type, n, run_config_suffix))
+    ]
+    if not with_split:
+        raise SystemExit(
+            f"Could not infer num_geos: found jax arrays for num_geos={junction_candidates} "
+            "but no matching split_indices files. Run data processing or pass num_geos / --split_path."
+        )
+    return max(with_split)
 
 
 def _jax_arrays_path(
@@ -33,6 +139,7 @@ def _jax_arrays_path(
 
 
 def _default_split_path(
+    data_root: str,
     set_name: str,
     geometry_variant: str,
     set_type: str,
@@ -41,10 +148,13 @@ def _default_split_path(
 ) -> str:
     if run_config_suffix:
         return (
-            f"data/split_indices/{set_name}/{run_config_suffix}/"
+            f"{data_root}/split_indices/{set_name}/{run_config_suffix}/"
             f"{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
         )
-    return f"data/split_indices/{set_name}/{geometry_variant}/{set_type}/train_val_ind_{set_name}_num_geos_{num_geos}"
+    return (
+        f"{data_root}/split_indices/{set_name}/{geometry_variant}/{set_type}/"
+        f"train_val_ind_{set_name}_num_geos_{num_geos}"
+    )
 
 
 def _build_training_params_for_modality(
@@ -173,22 +283,17 @@ def main():
 
     training_defaults = get_pipeline_config().training
     parser = argparse.ArgumentParser(description="Launch NN training")
-    parser.add_argument("set_name", help="Set name (e.g., VMR)")
-    parser.add_argument("num_geos", type=int, help="Number of geometries")
+    parser.add_argument("--set_name", required=True, help="Set name (e.g., VMR_aortas)")
     parser.add_argument(
-        "geometry_variant",
-        nargs="?",
+        "--num_geos",
+        type=int,
         default=None,
-        help=(
-            "Geometry variant: bifurcations, bifurcations_EL, or all (default: all). "
-            "Can also be set via --geometry_variant."
-        ),
+        help="Number of geometries (default: infer from jax_arrays / split_indices).",
     )
     parser.add_argument(
         "--geometry_variant",
-        dest="geometry_variant_flag",
         default=None,
-        help="Geometry variant (overrides positional if set). Use this when passing --vessel so order does not matter.",
+        help=(f"Geometry variant: {', '.join(sorted(GEOMETRY_VARIANT_NAMES))} (default: {DEFAULT_GEOMETRY_VARIANT})."),
     )
     parser.add_argument(
         "--split_path",
@@ -265,10 +370,13 @@ def main():
 
     training_cfg = get_pipeline_config(set_name=cli_args.set_name).training
     set_name = cli_args.set_name
-    num_geos = cli_args.num_geos
-    print(f"num_geos: {num_geos}")
 
-    geometry_variant_arg = getattr(cli_args, "geometry_variant_flag", None) or cli_args.geometry_variant or "all"
+    geometry_variant_arg = cli_args.geometry_variant or DEFAULT_GEOMETRY_VARIANT
+    if geometry_variant_arg not in GEOMETRY_VARIANT_NAMES:
+        parser.error(
+            f"Invalid --geometry_variant {geometry_variant_arg!r}. "
+            f"Expected one of: {', '.join(sorted(GEOMETRY_VARIANT_NAMES))}."
+        )
     run_config_raw = (cli_args.run_config or "").strip() or None
     data_paths_suffix = run_config_raw
     if run_config_raw:
@@ -281,6 +389,8 @@ def main():
     output_type = "rri"
     set_type = "all"
     data_root = "data"
+    explicit_num_geos = cli_args.num_geos
+    vessel = bool(cli_args.vessel)
 
     if geometry_variant_arg == "all":
         geometry_variants_to_process = ["bifurcations", "bifurcations_EL"]
@@ -295,6 +405,17 @@ def main():
     }
 
     for geometry_variant in geometry_variants_to_process:
+        num_geos = _infer_num_geos(
+            data_root=data_root,
+            set_name=set_name,
+            geometry_variant=geometry_variant,
+            set_type=set_type,
+            run_config_suffix=data_paths_suffix,
+            vessel=vessel,
+            explicit_num_geos=explicit_num_geos,
+            split_path=cli_args.split_path,
+        )
+        print(f"num_geos: {num_geos}")
         print(f"\n{'=' * 80}")
         print(f"Training {'vessel' if cli_args.vessel else 'junction'} models for geometry variant: {geometry_variant}")
         if asymmetric_loss_eff:
@@ -309,7 +430,7 @@ def main():
         print(f"{'=' * 80}")
 
         split_path = cli_args.split_path or _default_split_path(
-            set_name, geometry_variant, set_type, num_geos, data_paths_suffix
+            data_root, set_name, geometry_variant, set_type, num_geos, data_paths_suffix
         )
         split_dict = load_split_for_training(split_path)
 

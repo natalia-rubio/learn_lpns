@@ -31,7 +31,7 @@ git lfs pull           # download LFS objects for this repo
 These stay **gitignored** — the pipeline or notebook writes them under `data/` on your machine:
 
 - `bifurcations_EL_geometric_input.json` and other files under `zeroD/VMR_aortas/gen_loss/` (beyond the calibrated JSON above)
-- `ml_inputs/`, `jax_arrays/`, `split_indices/`
+- `ml_inputs/`, `jax_arrays/`, `split_indices/` — run `learn-lpns-data-processing`, then train with `learn-lpns-train --set_name VMR_aortas --run_config gen_loss` (`num_geos` inferred from the jax pickle names)
 - `results/`
 
 ## Local edits vs Git

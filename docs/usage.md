@@ -2,7 +2,9 @@
 
 Run from the **repository root** (or use console entry points after `pip install -e ".[dev]"`).
 
-The provided sample cohort is `**VMR_aortas`** (5 geometries). See [data/README.md](../data/README.md).
+The provided sample cohort is **VMR_aortas** (5 geometries). See [data/README.md](../data/README.md).
+
+All four console entry points use **keyword flags** with underscores (e.g. `--set_name`, `--run_config`, `--geometry_variant`).
 
 ## Quick start (cross-validation)
 
@@ -16,7 +18,7 @@ learn-lpns-cv \
   --run_config gen_loss
 ```
 
-Defaults: `geometry_variant=bifurcations_EL`, `num_trials=5`, `run_config=gen_loss`. All pipeline flags use **keyword-only** underscores (e.g. `--set_name`, `--no_redo`).
+Defaults: `geometry_variant=bifurcations_EL`, `num_trials=5`, `run_config=gen_loss`.
 
 ## Run config (`--run_config`)
 
@@ -126,18 +128,33 @@ Checkpoints: `rri_{set_name}_pred_{0,1,2}_model` (one scalar-output network per 
 
 Each RRI coefficient (R, S, L) is a **separate single-output network** against one column of `output_rri`. Hyperparameters: `training.rri_coefficients` in `config/defaults.yaml`.
 
+All arguments are **keyword flags** (e.g. `--set_name`, `--run_config`), consistent with the other pipeline CLIs.
+
 ```bash
-learn-lpns-train VMR_aortas 5 bifurcations_EL \
+# Minimal: defaults to bifurcations_EL; num_geos inferred from jax_arrays + split_indices
+learn-lpns-train --set_name VMR_aortas --run_config gen_loss
+
+# Override output directory (e.g. CV trial or notebook demo)
+learn-lpns-train --set_name VMR_aortas \
   --run_config gen_loss \
   --model_dir results/models/VMR_aortas/bifurcations_EL_trial_0
+
+# Explicit cohort size and/or geometry variant
+learn-lpns-train --set_name VMR_aortas --num_geos 5
+learn-lpns-train --set_name VMR_aortas --geometry_variant all
 ```
 
-Positional args: `set_name`, `num_geos`, optional `geometry_variant` (default `all` → both `bifurcations` and `bifurcations_EL`).
+**Defaults:** `geometry_variant=bifurcations_EL`, `run_config=gen_loss`. If `--num_geos` is omitted, it is inferred from `data/jax_arrays/{set_name}/{run_config}/bifurcations_EL/all/jax_arrays_num_geos_*.pkl`, choosing the **largest** cohort size that also has a matching file under `data/split_indices/...`. Pass `--split_path` (as CV does for trial splits) to take `num_geos` from that path instead.
+
+**Note on `all`:** The string `all` appears in two unrelated places today. As `--geometry_variant all`, it means train **both** `bifurcations` and `bifurcations_EL`. As the **`set_type`** path segment under `jax_arrays/` and `split_indices/` (e.g. `.../bifurcations_EL/all/...`), it labels a cohort folder tier—the default tier used by training and data processing (other tiers such as `forward` exist for per-geometry inference pickles). This is confusing; naming will be revised in a future release to separate geometry-variant “train both” from path-tier labels.
 
 
 | Flag                               | Purpose                                                                 |
 | ---------------------------------- | ----------------------------------------------------------------------- |
+| `--set_name`                       | Cohort name (required)                                                  |
 | `--run_config`                     | Path suffix for jax_arrays and split_indices                            |
+| `--num_geos`                       | Cohort size (overrides inference from jax_arrays / split_indices)       |
+| `--geometry_variant`               | `bifurcations`, `bifurcations_EL`, or `all` (default: `bifurcations_EL`) |
 | `--asymmetric_loss`                | Per-coefficient overestimate weights                                    |
 | `--generation_weighted_loss`       | Enable generation-weighted loss                                         |
 | `--generation_weighted_loss_scale` | Multiplier for generation weights (default from `config/defaults.yaml`) |
@@ -157,7 +174,7 @@ Bifurcation **generation** is stored in the jax pickle (not an NN input) and use
 2. **Geometric pre-processing** — for all five geometries, build `bifurcations_EL_geometric_input.json` in Python via `materialize_bifurcations_el_from_base` (bifurcation split + entrance-length adjustment from standard-0d + VTP; no svZeroDPlus).
 3. **Calibration** — skipped; uses the provided calibrated JSON as ground truth.
 4. **Training data** — run `learn-lpns-data-processing` to build `ml_inputs`, `jax_arrays`, and geometry-level split indices.
-5. **Training** — train junction and vessel NNs with `learn-lpns-train` (six models: R, S, L for junctions and vessels).
+5. **Training** — train junction and vessel NNs with `learn-lpns-train` (six models: R, S, L for junctions and vessels). After step 4, `learn-lpns-train --set_name VMR_aortas --run_config gen_loss` is enough (`bifurcations_EL` and `num_geos=5` are inferred from the generated data).
 6. **Inference** — predict R, S, L on the held-out geometry and write learned 0D JSON configs (`bifurcations_EL_NN_JunctionOnly.json`, etc.).
 7. **Parameter comparison plot** — bar chart of standard, calibrated, and learned R/S/L per element on the validation geometry.
 8. **Forward simulation** — skipped; notebook shows a reference inlet comparison figure (requires `svzerodsolver` to reproduce).
@@ -222,9 +239,9 @@ Most accept `--run_config`, `--set_name`, and `--geometry_variant`. See each mod
 ## Console entry points
 
 
-| Command                      | Script                                                            |
-| ---------------------------- | ----------------------------------------------------------------- |
-| `learn-lpns-cv`              | `learn_lpns/zerod_calibration/run_cross_validation.py`            |
-| `learn-lpns-batch-zerod`     | `learn_lpns/zerod_calibration/batch_generate_zerod_inputs_vmr.py` |
-| `learn-lpns-data-processing` | `learn_lpns/data_processing/run_data_processing.py`               |
-| `learn-lpns-train`           | `learn_lpns/neural_network/launch_training.py`                    |
+| Command                      | Script                                                            | Notes                                                                 |
+| ---------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `learn-lpns-cv`              | `learn_lpns/zerod_calibration/run_cross_validation.py`            | `--set_name` required; default `geometry_variant=bifurcations_EL`     |
+| `learn-lpns-batch-zerod`     | `learn_lpns/zerod_calibration/batch_generate_zerod_inputs_vmr.py` | Per-geometry 0D pipeline over a cohort                                |
+| `learn-lpns-data-processing` | `learn_lpns/data_processing/run_data_processing.py`               | Builds `ml_inputs`, `jax_arrays`, `split_indices`                     |
+| `learn-lpns-train`           | `learn_lpns/neural_network/launch_training.py`                    | `--set_name` required; infers `--num_geos` when omitted               |
