@@ -96,14 +96,6 @@ After [Setup](#setup), run cross-validation on the sample cohort:
 learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2 --run_config gen_loss
 ```
 
-After [data processing](docs/usage.md#data-processing) (or once CV prerequisites exist), train junction NNs standalone:
-
-```bash
-learn-lpns-train --set_name VMR_aortas --run_config gen_loss
-```
-
-(`bifurcations_EL` and cohort size are inferred from `data/jax_arrays/` and `data/split_indices/`.)
-
 ```bash
 pytest -v    # unit tests, no C++ solver required
 ```
