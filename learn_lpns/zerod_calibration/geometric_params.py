@@ -31,6 +31,11 @@ import numpy as np
 from learn_lpns.zerod_calibration.tools.file_io import read_centerline_vtp
 
 
+def _gprint(verbose: bool, *args, **kwargs) -> None:
+    if verbose:
+        print(*args, **kwargs)
+
+
 def get_angle_diff(vec1, vec2):
     """
     Compute the angle difference between two 3D vectors (in radians).
@@ -55,7 +60,7 @@ def get_angle_diff(vec1, vec2):
     return float(np.arccos(dot))
 
 
-def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
+def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path, verbose=False):
     """
     Extract inlet and outlet areas for all vessels and junctions from centerline solution.
 
@@ -86,9 +91,9 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             }
         }
     """
-    print(f"Reading centerline solution from: {centerline_soln_path}")
+    if verbose:
+        _gprint(verbose, f"Reading centerline solution from: {centerline_soln_path}")
     centerline_data, _ = read_centerline_vtp(centerline_soln_path)
-    verbose = False
     # Read geometric input to understand vessel/junction structure
     with open(geometric_input_path) as f:
         geometric_input = json.load(f)
@@ -157,7 +162,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             return None
         if len(matches) > 1:
             # If multiple matches, use the first one (shouldn't happen, but handle gracefully)
-            print(f"    Warning: Multiple centerline points found with GID {gid_value}, using first match")
+            _gprint(verbose, f"    Warning: Multiple centerline points found with GID {gid_value}, using first match")
         return int(matches[0])
 
     # Helper to get inlet/outlet point indices from vessel's centerline_node_ids (GlobalNodeId) when present
@@ -471,16 +476,17 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                 "max_inscribed_radius_max": misr_max,
             }
 
-        print(
-            f"  {vessel_name}: inlet_area={inlet_area:.6f}, outlet_area={outlet_area:.6f}, "
-            f"path_length={path_length:.6f}, tortuosity={tortuosity:.6f}, "
-            f"angle_diff={angle_diff:.6f}"
-            + (
-                f", MISR inlet={inlet_misr:.6f} outlet={outlet_misr:.6f} min={misr_min:.6f} max={misr_max:.6f}"
-                if not is_connector
-                else ""
+        if verbose:
+            _gprint(verbose, 
+                f"  {vessel_name}: inlet_area={inlet_area:.6f}, outlet_area={outlet_area:.6f}, "
+                f"path_length={path_length:.6f}, tortuosity={tortuosity:.6f}, "
+                f"angle_diff={angle_diff:.6f}"
+                + (
+                    f", MISR inlet={inlet_misr:.6f} outlet={outlet_misr:.6f} min={misr_min:.6f} max={misr_max:.6f}"
+                    if not is_connector
+                    else ""
+                )
             )
-        )
 
     # Pre-compute inlet/outlet points and indices for each branch (used by junction metrics)
     branch_inlet_point = {}
@@ -545,18 +551,18 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
         if not np.any(junction_mask):
             # No junction region found - this can happen for simple pass-through junctions
             # Return empty metrics dict (caller will handle gracefully)
-            print(f"    Debug: No centerline points found with BifurcationId={junction_bif_id}")
+            _gprint(verbose, f"    Debug: No centerline points found with BifurcationId={junction_bif_id}")
             if bifurcation_id_array is not None:
                 avail_ids = np.unique(bifurcation_id_array[~np.isnan(bifurcation_id_array)])
             else:
                 avail_ids = "None"
-            print(f"    Debug: Available BifurcationIds in centerline: {avail_ids}")
+            _gprint(verbose, f"    Debug: Available BifurcationIds in centerline: {avail_ids}")
             return metrics
 
         num_junction_points = np.sum(junction_mask)
-        print(f"    Debug: Found {num_junction_points} centerline points with BifurcationId={junction_bif_id}")
+        _gprint(verbose, f"    Debug: Found {num_junction_points} centerline points with BifurcationId={junction_bif_id}")
         # Additional debug context for matching failures
-        print(
+        _gprint(verbose, 
             f"    Debug: compute_junction_outlet_metrics context: "
             f"inlet_branch_id={inlet_branch_id}, outlet_branch_ids={outlet_branch_ids}"
         )
@@ -611,8 +617,8 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             # Debug: print segment info
             try:
                 if verbose:
-                    print(f"    Debug: segment {seg_start}-{seg_end}, segment_path_length={segment_path_length:.6f}")
-                    print(f"      startpoint={startpoint}, endpoint={endpoint}")
+                    _gprint(verbose, f"    Debug: segment {seg_start}-{seg_end}, segment_path_length={segment_path_length:.6f}")
+                    _gprint(verbose, f"      startpoint={startpoint}, endpoint={endpoint}")
             except Exception:
                 pass
             for outlet_branch_id in outlet_branch_ids:
@@ -623,7 +629,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     )
                 outlet_inlet = branch_inlet_point[outlet_branch_id]
                 distance = float(np.linalg.norm(endpoint - outlet_inlet))
-                print(
+                _gprint(verbose, 
                     f"      Debug: distance from segment endpoint to outlet branch "
                     f"{outlet_branch_id} inlet: {distance:.6f}"
                 )
@@ -633,29 +639,29 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
 
             if best_outlet is None:
                 if verbose:
-                    print(
+                    _gprint(verbose, 
                         f"    Debug: Could not match segment to any outlet branch (best_distance={best_distance:.6f})"
                     )
-                    print(f"    Debug: Available outlet branch IDs: {outlet_branch_ids}")
-                    print(f"    Debug: Segment endpoint: {endpoint}")
+                    _gprint(verbose, f"    Debug: Available outlet branch IDs: {outlet_branch_ids}")
+                    _gprint(verbose, f"    Debug: Segment endpoint: {endpoint}")
                 continue  # Skip this segment instead of raising error
             threshold = 10
             if best_distance >= threshold:
                 if verbose:
-                    print(
+                    _gprint(verbose, 
                         f"    Debug: Best outlet match distance {best_distance:.6f} exceeds "
                         f"threshold of {threshold} for outlet {best_outlet}"
                     )
                 if best_outlet is not None and best_outlet in branch_inlet_point:
                     if verbose:
-                        print(
+                        _gprint(verbose, 
                             f"    Debug: Segment endpoint: {endpoint}, outlet inlet: {branch_inlet_point[best_outlet]}"
                         )
                 else:
                     if verbose:
-                        print(f"    Debug: Segment endpoint: {endpoint}, no valid best_outlet to show inlet coords")
+                        _gprint(verbose, f"    Debug: Segment endpoint: {endpoint}, no valid best_outlet to show inlet coords")
                 if verbose:
-                    print(f"    Debug: Skipping segment {seg_start}-{seg_end} (no reliable match)")
+                    _gprint(verbose, f"    Debug: Skipping segment {seg_start}-{seg_end} (no reliable match)")
                 continue  # Skip this segment instead of raising error
 
             # Collect radius extrema for this segment (we'll add inlet/outlet points below)
@@ -723,7 +729,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             # Use GID directly to find the junction inlet point
             inlet_pt_idx = find_point_from_gid(inlet_gid)
             if inlet_pt_idx is None:
-                print(
+                _gprint(verbose, 
                     f"    Warning: Could not find centerline point with GID {inlet_gid} "
                     f"for junction {junc_name} inlet, falling back to vessel lookup"
                 )
@@ -833,19 +839,19 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
 
             # Extract branch ID even for connectors (needed for junction-level metrics)
             b_id = get_branch_id_from_name(vessel_name)
-            print(f"Outlet vessel {vessel_name} branch ID: {b_id}")
+            _gprint(verbose, f"Outlet vessel {vessel_name} branch ID: {b_id}")
 
             # Get outlet GID for this vessel (if available)
             outlet_gid = outlet_id_to_gid.get(vessel_id)
-            print(f"Outlet GID for vessel {vessel_name}: {outlet_gid}")
+            _gprint(verbose, f"Outlet GID for vessel {vessel_name}: {outlet_gid}")
             outlet_pt_idx = None
 
             if outlet_gid is not None:
                 # Use GID directly to find the outlet point
                 outlet_pt_idx = find_point_from_gid(outlet_gid)
-                print(f"Outlet point index for vessel {vessel_name}: {outlet_pt_idx} from GID {outlet_gid}")
+                _gprint(verbose, f"Outlet point index for vessel {vessel_name}: {outlet_pt_idx} from GID {outlet_gid}")
                 if outlet_pt_idx is None:
-                    print(
+                    _gprint(verbose, 
                         f"    Warning: Could not find centerline point with GID {outlet_gid} "
                         f"for outlet vessel {vessel_name} in junction {junc_name}, "
                         f"falling back to vessel lookup"
@@ -1033,7 +1039,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
 
         if outlet_branch_ids:
             if verbose:
-                print(
+                _gprint(verbose, 
                     f"  Computing in-junction metrics for {junc_name} "
                     f"(inlet branch {inlet_branch_id}, outlets {outlet_branch_ids})"
                 )
@@ -1043,27 +1049,27 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             try:
                 keys = list(outlet_metrics.keys())
                 if verbose:
-                    print(f"    Debug: outlet_metrics keys: {keys}")
+                    _gprint(verbose, f"    Debug: outlet_metrics keys: {keys}")
                 for k in keys:
                     v = outlet_metrics.get(k, {})
                     pl = v.get("path_length", None)
-                    print(f"      Debug: outlet_metrics[{k}] -> path_length={pl}")
+                    _gprint(verbose, f"      Debug: outlet_metrics[{k}] -> path_length={pl}")
             except Exception:
-                print(f"    Debug: outlet_metrics (raw): {outlet_metrics}")
+                _gprint(verbose, f"    Debug: outlet_metrics (raw): {outlet_metrics}")
         else:
             if verbose:
-                print(f"  Warning: {junc_name} has no outlet branch IDs (all outlets may be connectors or invalid)")
-                print(f"    Outlet vessel IDs: {outlet_vessel_ids}")
+                _gprint(verbose, f"  Warning: {junc_name} has no outlet branch IDs (all outlets may be connectors or invalid)")
+                _gprint(verbose, f"    Outlet vessel IDs: {outlet_vessel_ids}")
                 outlet_names = [
                     vessels[vid].get("vessel_name", "unknown") for vid in outlet_vessel_ids if vid < len(vessels)
                 ]
-                print(f"    Outlet vessel names: {outlet_names}")
+                _gprint(verbose, f"    Outlet vessel names: {outlet_names}")
             outlet_metrics = {}  # Initialize to empty dict when no outlet branch IDs
 
             # If no metrics were computed (e.g., no BifurcationId region in centerline),
             # we skip junction-level metrics but still have basic metrics (areas, tangents, local radius)
             if not outlet_metrics:
-                print(
+                _gprint(verbose, 
                     f"    Warning: No junction region found for {junc_name} (BifurcationId={junction_bif_id}), "
                     f"skipping junction-level metrics (path lengths, tortuosities, radius min/max on path)"
                 )
@@ -1081,11 +1087,11 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             # Handle connector vessels - set path_length and tortuosity to 0
             b_id = get_branch_id_from_name(vessel_name)
             if verbose:
-                print(f"Got branch id for vessel {vessel_name}: {b_id}")
+                _gprint(verbose, f"Got branch id for vessel {vessel_name}: {b_id}")
 
             outlet_gid = outlet_id_to_gid.get(vessel_id)
             if verbose:
-                print(f"Outlet GID for vessel {vessel_name}: {outlet_gid}")
+                _gprint(verbose, f"Outlet GID for vessel {vessel_name}: {outlet_gid}")
             outlet_pt_idx = find_point_from_gid(outlet_gid)
 
             is_connector = "connector" in vessel_name
@@ -1101,7 +1107,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                 if numbered_conn:
                     # Splitting-created connector: keep previous behavior (inherit inlet/tangent, zero-length)
                     if verbose:
-                        print(f"Splitting-created connector: {vessel_name}")
+                        _gprint(verbose, f"Splitting-created connector: {vessel_name}")
                     outlet_path_lengths[vessel_name] = 0.0
                     outlet_tortuosities[vessel_name] = 0.0
 
@@ -1169,11 +1175,11 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     conn_idx = outlet_pt_idx
                     if conn_idx is None and b_id is not None and b_id in branch_inlet_idx:
                         conn_idx = branch_inlet_idx[b_id]
-                        print(
+                        _gprint(verbose, 
                             f"    Warning: GID lookup failed for connectorEL {vessel_name}, "
                             f"falling back to branch_inlet_idx[{b_id}] = {conn_idx}"
                         )
-                    print(f"Adjustment created connector: {vessel_name}, conn_idx: {conn_idx}")
+                    _gprint(verbose, f"Adjustment created connector: {vessel_name}, conn_idx: {conn_idx}")
 
                     # Path length = in-junction portion + EL extension along the outlet branch.
                     # The in-junction portion is already computed by compute_junction_outlet_metrics
@@ -1196,7 +1202,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
 
                     outlet_path_lengths[vessel_name] = float(in_junction_path + el_extension)
                     if verbose:
-                        print(
+                        _gprint(verbose, 
                             f"    connectorEL {vessel_name}: in_junction_path={in_junction_path:.4f}, "
                             f"el_extension={el_extension:.4f}, total={in_junction_path + el_extension:.4f}"
                         )
@@ -1227,7 +1233,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                                     if nrm > 0.0:
                                         out_tan = (v / nrm).tolist()
                     if out_tan is None:
-                        print(
+                        _gprint(verbose, 
                             f"    Warning: Could not compute tangent for connectorEL {vessel_name} "
                             f"in junction {junc_name}, using inlet tangent as fallback"
                         )
@@ -1256,8 +1262,8 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     r_inlet = float(max_inscribed_radius[inlet_pt_idx])
                     path_radii.append(r_inlet)
                     if verbose:
-                        print(f"    MIR_on_path debug for {vessel_name}:")
-                        print(f"      inlet_pt_idx={inlet_pt_idx}, MIR={r_inlet:.6f}")
+                        _gprint(verbose, f"    MIR_on_path debug for {vessel_name}:")
+                        _gprint(verbose, f"      inlet_pt_idx={inlet_pt_idx}, MIR={r_inlet:.6f}")
                     # 2) Points in the BifurcationId junction region on the
                     #    segment matched to this outlet branch, filtered to only
                     #    include points on the inlet or outlet branch centerline
@@ -1271,7 +1277,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                             r_si = float(max_inscribed_radius[si])
                             path_radii.append(r_si)
                             if verbose:
-                                print(
+                                _gprint(verbose, 
                                     f"      junction seg idx={si}, GID={int(gid[si]) if gid is not None else '?'}, "
                                     f"BranchId={si_branch}, Path={float(path_arr_np[si]):.4f}, MIR={r_si:.6f}"
                                 )
@@ -1281,7 +1287,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                         r_conn = float(max_inscribed_radius[conn_idx])
                         path_radii.append(r_conn)
                         if verbose:
-                            print(f"      conn_idx={conn_idx}, MIR={r_conn:.6f}")
+                            _gprint(verbose, f"      conn_idx={conn_idx}, MIR={r_conn:.6f}")
                         if b_id is not None and b_id in branch_inlet_idx:
                             branch_mask = branch_id == b_id
                             b_indices = np.where(branch_mask)[0]
@@ -1294,7 +1300,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                                     path_radii.append(r_bi)
                                     if verbose:
                                         gid_val = int(gid[bi]) if gid is not None else "?"
-                                        print(
+                                        _gprint(verbose, 
                                             f"      branch pt idx={bi}, GID={gid_val}, "
                                             f"Path={pt_path:.4f}, MIR={r_bi:.6f}"
                                         )
@@ -1302,7 +1308,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                         outlet_max_inscribed_radius_min_on_path[vessel_name] = min(path_radii)
                         outlet_max_inscribed_radius_max_on_path[vessel_name] = max(path_radii)
                         if verbose:
-                            print(f"      => min={min(path_radii):.6f}, max={max(path_radii):.6f}")
+                            _gprint(verbose, f"      => min={min(path_radii):.6f}, max={max(path_radii):.6f}")
                     else:
                         outlet_max_inscribed_radius_min_on_path[vessel_name] = inlet_radius_val
                         outlet_max_inscribed_radius_max_on_path[vessel_name] = inlet_radius_val
@@ -1312,7 +1318,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                         outlet_angle_diffs[vessel_name] = get_angle_diff(inlet_tangent, out_tan)
                     else:
                         outlet_angle_diffs[vessel_name] = 0.0
-                    # print(f"Got outlet angle diff for connector: {vessel_name}: {outlet_angle_diffs[vessel_name]}")
+                    # _gprint(verbose, f"Got outlet angle diff for connector: {vessel_name}: {outlet_angle_diffs[vessel_name]}")
 
                     # Build ordered list of GIDs on the path from inlet to connector
                     if gid is not None:
@@ -1354,22 +1360,22 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             if b_id not in outlet_metrics:
                 # If outlet_metrics is empty or this branch wasn't matched, emit debug info
                 if verbose:
-                    print(
+                    _gprint(verbose, 
                         f"    Warning: Branch {b_id} (vessel {vessel_name}) not found in "
                         f"outlet_metrics for {junc_name}, setting default path length to 0.0"
                     )
 
                 if verbose:
-                    print(f"      Debug: outlet_metrics keys: {list(outlet_metrics.keys())}")
+                    _gprint(verbose, f"      Debug: outlet_metrics keys: {list(outlet_metrics.keys())}")
                 if verbose:
-                    print(f"      Debug: branch_inlet_idx contains b_id? {b_id in branch_inlet_idx}")
+                    _gprint(verbose, f"      Debug: branch_inlet_idx contains b_id? {b_id in branch_inlet_idx}")
                 if b_id in branch_inlet_idx:
                     bi = branch_inlet_idx[b_id]
                     if verbose:
-                        print(f"      Debug: branch_inlet_idx[{b_id}] = {bi}")
+                        _gprint(verbose, f"      Debug: branch_inlet_idx[{b_id}] = {bi}")
                     if b_id in branch_inlet_point:
                         if verbose:
-                            print(f"      Debug: branch_inlet_point[{b_id}] = {branch_inlet_point[b_id]}")
+                            _gprint(verbose, f"      Debug: branch_inlet_point[{b_id}] = {branch_inlet_point[b_id]}")
 
                 outlet_path_lengths[vessel_name] = 0.0
                 outlet_tortuosities[vessel_name] = 0.0
@@ -1404,7 +1410,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                 else:
                     outlet_path_gids[vessel_name] = []
                 continue
-            print(f"Got outlet metrics for branch {b_id}: {outlet_metrics[b_id]}")
+            _gprint(verbose, f"Got outlet metrics for branch {b_id}: {outlet_metrics[b_id]}")
             m = outlet_metrics[b_id]
             path_len_val = m["path_length"]
 
@@ -1416,9 +1422,9 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
 
             # Check if this is an EL-adjusted geometry by looking at the vessel's centerline_node_ids
             # In EL-adjusted geometries, the vessel's inlet is at the new junction boundary (EL distance down)
-            print(f"Checking vessel {vessel_name} for EL extension")
+            _gprint(verbose, f"Checking vessel {vessel_name} for EL extension")
             vessel = next((v for v in vessels if v.get("vessel_name") == vessel_name), None)
-            print(f"Checking vessel {vessel_name}: {vessel}")
+            _gprint(verbose, f"Checking vessel {vessel_name}: {vessel}")
             if vessel is not None:
                 centerline_node_ids = vessel.get("centerline_node_ids", {})
                 vessel_inlet_gid = centerline_node_ids.get("inlet")
@@ -1453,7 +1459,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                                 el_extension = 0.0
 
                             if el_extension > 0.0:
-                                print(
+                                _gprint(verbose, 
                                     f"    Adding EL extension {el_extension:.6f} cm to path length "
                                     f"for {vessel_name} in {junc_name}"
                                 )
@@ -1562,7 +1568,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
                     if pt_idx is not None:
                         outlet_radius_val[vessel_name] = float(max_inscribed_radius[pt_idx])
                     else:
-                        print(
+                        _gprint(verbose, 
                             f"    Warning: Could not find point for connector {vessel_name} "
                             f"GID {connector_gid}, using inlet_radius_val"
                         )
@@ -1596,7 +1602,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
             "outlet_path_gids": outlet_path_gids,
         }
 
-        print(
+        _gprint(verbose, 
             f"  {junc_name}: {len(inlet_vessel_areas)} inlet vessels, "
             f"{len(outlet_vessel_areas)} outlet vessels, "
             f"{len(outlet_path_lengths)} outlet path-length entries"
@@ -1605,7 +1611,7 @@ def extract_vessel_junction_areas(centerline_soln_path, geometric_input_path):
     return {"vessels": vessel_areas, "junctions": junction_areas}
 
 
-def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, output_path=None):
+def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, output_path=None, verbose=False):
     """
     Add geometric_params field to each vessel and junction in the 0D config file.
 
@@ -1613,11 +1619,13 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
         zerod_config_path: Path to 0D configuration JSON file
         geometric_areas_dict: Dictionary returned by extract_vessel_junction_areas()
         output_path: Optional output path. If None, overwrites input file.
+        verbose: If True, print detailed progress information.
 
     Returns:
         Modified config dictionary
     """
-    print(f"Reading 0D config from: {zerod_config_path}")
+    if verbose:
+        print(f"Reading 0D config from: {zerod_config_path}")
     with open(zerod_config_path) as f:
         config = json.load(f)
 
@@ -1654,7 +1662,8 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
             "max_inscribed_radius_min": _num(areas.get("max_inscribed_radius_min")),
             "max_inscribed_radius_max": _num(areas.get("max_inscribed_radius_max")),
         }
-        print(f"  Added geometric_params to vessel {vessel_name}")
+        if verbose:
+            print(f"  Added geometric_params to vessel {vessel_name}")
 
     # Add geometric_params to junctions
     for junc in junctions:
@@ -1698,7 +1707,8 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
         }
         existing_gp.update(new_gp)
         junc["geometric_params"] = existing_gp
-        print(f"  Added geometric_params to junction {junc_name}")
+        if verbose:
+            print(f"  Added geometric_params to junction {junc_name}")
 
     # Write output: ensure no JSON null so the 0D solver (nlohmann) never sees type_error.305
     if output_path is None:
@@ -1714,14 +1724,15 @@ def add_geometric_params_to_config(zerod_config_path, geometric_areas_dict, outp
         return obj
 
     config_clean = _no_none(config)
-    print(f"Writing updated config to: {output_path}")
+    if verbose:
+        print(f"Writing updated config to: {output_path}")
     with open(output_path, "w") as f:
         json.dump(config_clean, f, indent=2)
 
     return config
 
 
-def extract_and_add_geometric_params(centerline_soln_path, config_path, output_path=None):
+def extract_and_add_geometric_params(centerline_soln_path, config_path, output_path=None, verbose=False):
     """
     Extract centerline areas and write geometric_params onto a 0D geometric config.
 
@@ -1730,24 +1741,32 @@ def extract_and_add_geometric_params(centerline_soln_path, config_path, output_p
         config_path: Geometric 0D input JSON whose vessel/junction topology defines
             centerline sampling (e.g. bifurcations or bifurcations_EL variant).
         output_path: Optional output path. If None, overwrites config_path.
+        verbose: If True, print detailed progress information.
 
     Returns:
         Modified config dictionary
     """
-    print("=" * 60)
-    print("Extracting geometric parameters (inlet/outlet areas)")
-    print("=" * 60)
+    if verbose:
+        print("=" * 60)
+        print("Extracting geometric parameters (inlet/outlet areas)")
+        print("=" * 60)
 
-    geometric_areas_dict = extract_vessel_junction_areas(centerline_soln_path, config_path)
+    geometric_areas_dict = extract_vessel_junction_areas(
+        centerline_soln_path, config_path, verbose=verbose
+    )
 
-    print("\n" + "=" * 60)
-    print("Adding geometric parameters to 0D config")
-    print("=" * 60)
+    if verbose:
+        print("\n" + "=" * 60)
+        print("Adding geometric parameters to 0D config")
+        print("=" * 60)
 
-    config = add_geometric_params_to_config(config_path, geometric_areas_dict, output_path)
+    config = add_geometric_params_to_config(
+        config_path, geometric_areas_dict, output_path, verbose=verbose
+    )
 
-    print("\n" + "=" * 60)
-    print("Done!")
-    print("=" * 60)
+    if verbose:
+        print("\n" + "=" * 60)
+        print("Done!")
+        print("=" * 60)
 
     return config

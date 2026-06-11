@@ -10,7 +10,7 @@ The workflow has two modes:
 
 **Training** — Extract geometric features from the centerline geomtry (neural net inputs).  Use the calibrator to extract optimal (ground-truth) resistances and inductances (R, S, L) values for the 0D cirucit analog model from 3D solution (via `svzerodcalibrator`).  Train a neural network to learn the relationship between the two.
 
-**Inference** — Aapply trained networks to an unseen geometry, run 0D forward simulation on the "learned" 0D model, and compare the results to the 3D reference, as well as the 0D simulation results for the standard model (baseline) and calibrated model (best possible).
+**Inference** — Use trained networks to predict resistances and inductances (R, S, L) values for an unseen geometry, run 0D forward simulation on the "learned" 0D model, and compare the results to the 3D reference, as well as the 0D simulation results for the standard model (baseline) and calibrated model (best possible).
 
 $k$-fold cross-validation splits geometries into train/validation sets across multiple trials. Visualization scripts summarize metrics and diagnostics.
 

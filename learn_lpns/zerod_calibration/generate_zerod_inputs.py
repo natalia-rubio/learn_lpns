@@ -209,13 +209,18 @@ def main():
             geometric_centerline_input_path = geometric_input_path.replace(
                 "geometric_input", "geometric_centerline_input"
             )
-            process_geometric_input(centerline_path, geometric_input_path, geometric_centerline_input_path)
+            process_geometric_input(
+                centerline_path, geometric_input_path, geometric_centerline_input_path, verbose=verbose
+            )
             print(f"  Centerline parameters added to geometric input saved to: {geometric_centerline_input_path}")
 
             # Generate bifurcations-only version of the geometric input
             print("\n  Creating bifurcations-only geometric input...")
             split_junctions_from_files(
-                geometric_centerline_input_path, centerline_path, bifurcations_geometric_input_path
+                geometric_centerline_input_path,
+                centerline_path,
+                bifurcations_geometric_input_path,
+                verbose=verbose,
             )
             generated_files.append(bifurcations_geometric_input_path)
             print(f"  Bifurcations-only geometric input saved to: {bifurcations_geometric_input_path}")
@@ -246,7 +251,7 @@ def main():
         if check_and_track_file(path, f"geometric params extraction for {geo_variant_name}"):
             continue
 
-        extract_and_add_geometric_params(centerline_path, path)
+        extract_and_add_geometric_params(centerline_path, path, verbose=verbose)
         print(f"  Geometric parameters extracted and added to {path}")
 
         if geo_variant_name == "bifurcations":

@@ -77,13 +77,22 @@ def materialize_bifurcations_el_from_base(
     with open(geometric_input_path, "w") as f:
         json.dump(cfg, f, indent=4)
 
-    process_geometric_input(centerline_path, geometric_input_path, geometric_centerline_path)
-    split_junctions_from_files(geometric_centerline_path, centerline_path, bifurcations_path)
+    geo_label = os.path.basename(out_dir)
+
+    process_geometric_input(
+        centerline_path, geometric_input_path, geometric_centerline_path, verbose=verbose
+    )
+    split_junctions_from_files(
+        geometric_centerline_path, centerline_path, bifurcations_path, verbose=verbose
+    )
 
     if extract_geometric_params:
-        extract_and_add_geometric_params(centerline_path, bifurcations_path)
+        extract_and_add_geometric_params(centerline_path, bifurcations_path, verbose=verbose)
     if convert_bifurcations_junctions:
         _convert_bifurcations_junctions_in_place(bifurcations_path)
+
+    if not verbose:
+        print(f"  {geo_label}: wrote bifurcations_geometric_input.json")
 
     os.makedirs(out_dir, exist_ok=True)
     adjust_junction_boundaries_by_entrance_length_from_files(
@@ -93,7 +102,12 @@ def materialize_bifurcations_el_from_base(
         verbose=verbose,
     )
     if extract_geometric_params:
-        extract_and_add_geometric_params(centerline_path, output_bifurcations_el_path)
+        extract_and_add_geometric_params(
+            centerline_path, output_bifurcations_el_path, verbose=verbose
+        )
+
+    if not verbose:
+        print(f"  {geo_label}: wrote bifurcations_EL_geometric_input.json")
 
     if not verbose:
         shutil.rmtree(work_dir, ignore_errors=True)
