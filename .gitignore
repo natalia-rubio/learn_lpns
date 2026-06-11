@@ -1,6 +1,10 @@
 results/*
 *.egg-info/
 __pycache__/
+.venv/
+.coverage
+.pytest_cache/
+.ruff_cache/
 .DS_Store
 **/.DS_Store
 data2/*
@@ -17,6 +21,13 @@ data/zeroD/*
 data/zeroD/VMR_aortas/*
 !data/zeroD/VMR_aortas/standard-0d/
 !data/zeroD/VMR_aortas/standard-0d/**
+
+# gen_loss: bundled calibrated JSON (1 file × 5 geos); geometric bifurcations_EL built in notebook
+!data/zeroD/VMR_aortas/gen_loss/
+data/zeroD/VMR_aortas/gen_loss/*
+!data/zeroD/VMR_aortas/gen_loss/*/
+data/zeroD/VMR_aortas/gen_loss/*/*
+!data/zeroD/VMR_aortas/gen_loss/*/bifurcations_EL_calibrated_output_BloodVesselJunction.json
 
 # oneD: bundled VMR centerline / projected solutions
 !data/oneD/

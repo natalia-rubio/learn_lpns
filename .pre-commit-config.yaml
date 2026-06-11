@@ -1,0 +1,23 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^\.venv/
+      - id: end-of-file-fixer
+        exclude: ^\.venv/
+      - id: check-yaml
+        exclude: ^\.venv/
+      - id: check-toml
+        exclude: ^\.venv/
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(learn_lpns|tests)/
+        exclude: ^\.venv/
+      - id: ruff-format
+        files: ^(learn_lpns|tests)/
+        exclude: ^\.venv/

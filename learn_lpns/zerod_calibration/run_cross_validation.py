@@ -283,10 +283,7 @@ def _ml_inputs_geometries_for_cohort(
         return geometries
     dropped = sorted(set(geometries) - set(filtered))
     if dropped:
-        print(
-            f"  Ignoring {len(dropped)} stale ml_inputs geometries not in "
-            f"{STANDARD_0D_SUBDIR}/: {dropped}"
-        )
+        print(f"  Ignoring {len(dropped)} stale ml_inputs geometries not in {STANDARD_0D_SUBDIR}/: {dropped}")
     return filtered
 
 

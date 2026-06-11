@@ -33,30 +33,8 @@ pytest -m "not integration" -v
 
 CI (GitHub Actions) runs `ruff format --check`, `ruff check`, and unit tests with coverage on Python 3.10 and 3.12. Unit tests do **not** require building svZeroDPlus.
 
-Optional local smoke tests:
 
-```bash
-learn-lpns-cv --help
-learn-lpns-train --help
-```
-
-## Commit messages
-
-Use [Conventional Commits](https://www.conventionalcommits.org/) prefixes:
-
-| Prefix | Use for |
-|--------|---------|
-| `feat` | New user-facing behavior |
-| `fix` | Bug fixes |
-| `docs` | Documentation only |
-| `ci` | CI / workflow changes |
-| `refactor` | Code changes without behavior change |
-| `test` | Tests only |
-| `chore` | Tooling, deps, formatting |
-
-Example: `refactor: remove sys.path hacks from entry points`
-
-## PR checklist
+## Commit checklist
 
 - [ ] `pre-commit run --all-files` passes
 - [ ] `pytest -m "not integration"` passes

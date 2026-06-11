@@ -59,7 +59,10 @@ def split_junctions(geometric_input, centerline_data, verbose=False):
     gid_array = centerline_data.get("GlobalNodeId", None)
 
     if branch_id_array is None or path_array is None or points_array is None:
-        _vprint(verbose, "  Warning: BranchId, Path, or Points not found in centerline data, cannot determine bifurcation order")
+        _vprint(
+            verbose,
+            "  Warning: BranchId, Path, or Points not found in centerline data, cannot determine bifurcation order",
+        )
         return result
 
     if bifurcation_id_array is None:
@@ -335,9 +338,10 @@ def split_junctions(geometric_input, centerline_data, verbose=False):
 
             if best_outlet is not None and best_distance < 2.0:  # Matching threshold
                 # Only keep the longest path if we already have one for this outlet
-                _vprint(verbose, 
+                _vprint(
+                    verbose,
                     f"    Best outlet: {best_outlet}, path length: {path_length:.4f} "
-                    f"(segment: {segment_path_length:.4f} + inlet dist: {distance_to_inlet:.4f})"
+                    f"(segment: {segment_path_length:.4f} + inlet dist: {distance_to_inlet:.4f})",
                 )
                 if best_outlet not in outlet_path_lengths or path_length > outlet_path_lengths[best_outlet]:
                     outlet_path_lengths[best_outlet] = path_length
@@ -400,9 +404,10 @@ def split_junctions(geometric_input, centerline_data, verbose=False):
             new_junctions.append(junc)
             continue
 
-        _vprint(verbose, 
+        _vprint(
+            verbose,
             f"  Splitting junction {junc_name}: inlet={inlet_vessel['vessel_name']} "
-            f"(branch {inlet_branch_id}), {len(outlet_vessels)} outlets"
+            f"(branch {inlet_branch_id}), {len(outlet_vessels)} outlets",
         )
 
         # Get branch IDs for all outlets
@@ -488,9 +493,10 @@ def split_junctions(geometric_input, centerline_data, verbose=False):
             if main_outlet_id is not None:
                 main_vessel = vessel_by_id.get(main_outlet_id)
                 main_branch_id = outlet_id_to_branch.get(main_outlet_id)
-                _vprint(verbose, 
+                _vprint(
+                    verbose,
                     f"    Main outlet (longest path): {main_vessel['vessel_name']} "
-                    f"(branch {main_branch_id}, path length: {max_path_length:.4f})"
+                    f"(branch {main_branch_id}, path length: {max_path_length:.4f})",
                 )
         else:
             # Fallback: use branchId = inlet_branch_id + 1
@@ -502,7 +508,10 @@ def split_junctions(geometric_input, centerline_data, verbose=False):
                 outlet_branch_id = get_branch_id(outlet_vessel["vessel_name"])
                 if outlet_branch_id == inlet_branch_id + 1:
                     main_outlet_id = outlet_id
-                    _vprint(verbose, f"    Main outlet (by branchId): {outlet_vessel['vessel_name']} (branch {outlet_branch_id})")
+                    _vprint(
+                        verbose,
+                        f"    Main outlet (by branchId): {outlet_vessel['vessel_name']} (branch {outlet_branch_id})",
+                    )
                 else:
                     side_outlets.append(outlet_id)
         # If no main outlet found, use the first outlet as main
@@ -510,7 +519,10 @@ def split_junctions(geometric_input, centerline_data, verbose=False):
             main_outlet_id = outlet_vessels[0]
             side_outlets = outlet_vessels[1:]
             main_vessel = vessel_by_id.get(main_outlet_id)
-            _vprint(verbose, f"    Warning: Could not determine main outlet, using {main_vessel['vessel_name']} as main outlet")
+            _vprint(
+                verbose,
+                f"    Warning: Could not determine main outlet, using {main_vessel['vessel_name']} as main outlet",
+            )
 
         # Sort side outlets by their in-junction path length (shortest first = branches off first)
         def get_in_junction_path_length(
@@ -616,9 +628,10 @@ def split_junctions(geometric_input, centerline_data, verbose=False):
                         if outlet_vid_map:
                             new_junc["centerline_node_ids"]["outlet_vessel_ids"] = outlet_vid_map
 
-                _vprint(verbose, 
+                _vprint(
+                    verbose,
                     f"    Created {new_junc_name}: inlet={current_inlet_id}, "
-                    f"outlets=[{side_outlet_id}, {main_outlet_id}] (final)"
+                    f"outlets=[{side_outlet_id}, {main_outlet_id}] (final)",
                 )
             else:
                 # Create connector vessel to next bifurcation
@@ -694,9 +707,10 @@ def split_junctions(geometric_input, centerline_data, verbose=False):
                         if outlet_vid_map:
                             new_junc["centerline_node_ids"]["outlet_vessel_ids"] = outlet_vid_map
 
-                _vprint(verbose, 
+                _vprint(
+                    verbose,
                     f"    Created {new_junc_name}: inlet={current_inlet_id}, "
-                    f"outlets=[{side_outlet_id}, {next_vessel_id}] (connector: {connector_name})"
+                    f"outlets=[{side_outlet_id}, {next_vessel_id}] (connector: {connector_name})",
                 )
 
                 current_inlet_id = next_vessel_id
@@ -1177,8 +1191,9 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
         return result
 
     if max_inscribed_radius is None:
-        _vprint(verbose, 
-            "  Warning: MaximumInscribedSphereRadius not found in centerline data, skipping entrance length adjustment"
+        _vprint(
+            verbose,
+            "  Warning: MaximumInscribedSphereRadius not found in centerline data, skipping entrance length adjustment",
         )
         return result
 
@@ -1342,11 +1357,12 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
         gp = junc.setdefault("geometric_params", {})
         zvals = vessel.get("zero_d_element_values", {})
         jname = junc.get("junction_name", "?")
-        _vprint(verbose, 
+        _vprint(
+            verbose,
             f"    _absorb_vessel_params: junc={jname}, outlet={outlet_vessel_name}, "
             f"fraction={fraction}, zvals_L={zvals.get('L', 'MISSING')}, "
             f"zvals_R={zvals.get('R_poiseuille', 'MISSING')}, "
-            f"zvals_S={zvals.get('stenosis_coefficient', 'MISSING')}"
+            f"zvals_S={zvals.get('stenosis_coefficient', 'MISSING')}",
         )
         for key in _EL_PARAM_KEYS:
             outlet_dict = gp.setdefault(f"outlet_{key}", {})
@@ -1372,7 +1388,9 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 outlet_dict[new_name] = outlet_dict.pop(old_name)
                 _vprint(verbose, f"      Renamed outlet_{key}[{old_name}] -> outlet_{key}[{new_name}]")
             else:
-                _vprint(verbose, f"      WARNING: outlet_{key} has no key '{old_name}', keys={list(outlet_dict.keys())}")
+                _vprint(
+                    verbose, f"      WARNING: outlet_{key} has no key '{old_name}', keys={list(outlet_dict.keys())}"
+                )
 
     # Track vessels that need to be removed (if any - currently not used for EL adjustment)
     vessels_to_remove = []
@@ -1397,9 +1415,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
         # Junctions with 1 outlet are just straight connections and don't need entrance length adjustment
         if len(outlet_vessels) < 2:
             if verbose:
-                _vprint(verbose, 
+                _vprint(
+                    verbose,
                     f"  Skipping {junction_name}: only {len(outlet_vessels)} outlet(s), "
-                    f"need at least 2 for entrance length adjustment"
+                    f"need at least 2 for entrance length adjustment",
                 )
             continue
 
@@ -1427,9 +1446,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
 
             if is_bifurcation_split_connector_vessel(outlet_vessel_name):
                 if verbose:
-                    _vprint(verbose, 
+                    _vprint(
+                        verbose,
                         f"\n    Skipping outlet vessel (bifurcation-split connector, EL not applied): "
-                        f"{outlet_vessel_name}"
+                        f"{outlet_vessel_name}",
                     )
                 continue
 
@@ -1496,9 +1516,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # Check if downstream junction exists and has only 1 outlet
                     if downstream_junction is None:
                         if verbose:
-                            _vprint(verbose, 
+                            _vprint(
+                                verbose,
                                 f"      → No downstream junction found for {merged_vessel_name}, "
-                                f"stopping chain extension"
+                                f"stopping chain extension",
                             )
                         break
 
@@ -1506,9 +1527,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     if len(downstream_outlet_vessels) != 1:
                         if verbose:
                             ds_junc_name = downstream_junction.get("junction_name", "unknown")
-                            _vprint(verbose, 
+                            _vprint(
+                                verbose,
                                 f"      → Downstream junction {ds_junc_name} has "
-                                f"{len(downstream_outlet_vessels)} outlets, stopping chain extension"
+                                f"{len(downstream_outlet_vessels)} outlets, stopping chain extension",
                             )
                         break
 
@@ -1518,7 +1540,9 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
 
                     if next_vessel is None:
                         if verbose:
-                            _vprint(verbose, f"      → Next vessel ID {next_vessel_id} not found, stopping chain extension")
+                            _vprint(
+                                verbose, f"      → Next vessel ID {next_vessel_id} not found, stopping chain extension"
+                            )
                         break
 
                     next_vessel_name = next_vessel.get("vessel_name", "")
@@ -1530,9 +1554,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
 
                     if next_vessel_outlet_bc is not None:
                         if verbose:
-                            _vprint(verbose, 
+                            _vprint(
+                                verbose,
                                 f"      → Next vessel {next_vessel_name} has outlet boundary "
-                                f"condition: {next_vessel_outlet_bc}"
+                                f"condition: {next_vessel_outlet_bc}",
                             )
                             _vprint(verbose, "      → Stopping chain extension and transferring BC to merged vessel")
 
@@ -1609,9 +1634,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                             vessels_merged = True
 
                             if verbose:
-                                _vprint(verbose, 
+                                _vprint(
+                                    verbose,
                                     f"      → Merged vessel: {merged_vessel_name} (ID: {merged_vessel_id}), "
-                                    f"total length: {merged_length:.6f} cm"
+                                    f"total length: {merged_length:.6f} cm",
                                 )
                                 _vprint(verbose, f"      → Applied outlet boundary condition: {next_vessel_outlet_bc}")
 
@@ -1643,9 +1669,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                         # (same as single-vessel path)
                                         if new_merged_length <= length_epsilon:
                                             if verbose:
-                                                _vprint(verbose, 
+                                                _vprint(
+                                                    verbose,
                                                     "      → New merged vessel length is ~0, converting to "
-                                                    "connector (fully absorbed into junction)"
+                                                    "connector (fully absorbed into junction)",
                                                 )
                                             old_name = merged_vessel.get("vessel_name", "")
                                             connector_name = (
@@ -1672,9 +1699,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                             set_vessel_node_ids(merged_vessel, merged_outlet_idx, merged_outlet_idx)
                                             new_connector_vessels.append(merged_vessel)
                                             merged_names = ", ".join(merged_vessel_names)
-                                            _vprint(verbose, 
+                                            _vprint(
+                                                verbose,
                                                 f"  Junction {junction_name}: Merged vessels {merged_names} "
-                                                f"fully absorbed by EL, converted to {connector_name}"
+                                                f"fully absorbed by EL, converted to {connector_name}",
                                             )
                                             extension_successful = True
                                             break
@@ -1702,57 +1730,64 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                         set_vessel_node_ids(merged_vessel, target_centerline_idx, merged_outlet_idx)
 
                                         if verbose:
-                                            _vprint(verbose, 
+                                            _vprint(
+                                                verbose,
                                                 f"      → Shortened merged vessel to reach EL: "
-                                                f"{merged_length:.6f} → {new_merged_length:.6f} cm"
+                                                f"{merged_length:.6f} → {new_merged_length:.6f} cm",
                                             )
 
                                         merged_names = ", ".join(merged_vessel_names)
-                                        _vprint(verbose, 
+                                        _vprint(
+                                            verbose,
                                             f"  Junction {junction_name}: Merged vessels {merged_names} "
                                             f"into {merged_vessel_name} and extended to reach EL={EL:.4f} "
-                                            f"with outlet BC {next_vessel_outlet_bc}"
+                                            f"with outlet BC {next_vessel_outlet_bc}",
                                         )
                                         extension_successful = True
                                         break
                                 # If we couldn't find a suitable centerline point, fall through and
                                 # let step 4a convert to a connector.
                                 if verbose and not extension_successful:
-                                    _vprint(verbose, 
+                                    _vprint(
+                                        verbose,
                                         "      → Could not find suitable centerline point to shorten "
-                                        "merged vessel to EL, will fall back to connector conversion"
+                                        "merged vessel to EL, will fall back to connector conversion",
                                     )
                             else:
                                 # Merged length is still less than EL, but we hit a BC so we stop
                                 # This will trigger step 4a (convert to connector)
                                 if verbose:
-                                    _vprint(verbose, 
+                                    _vprint(
+                                        verbose,
                                         f"      → Merged length ({merged_length:.6f} cm) still less than "
-                                        f"EL ({EL:.6f} cm), but hit BC, stopping"
+                                        f"EL ({EL:.6f} cm), but hit BC, stopping",
                                     )
                                 break
                         else:
                             if verbose:
-                                _vprint(verbose, 
+                                _vprint(
+                                    verbose,
                                     f"      → Could not find centerline points for {next_vessel_name}, "
-                                    f"stopping chain extension"
+                                    f"stopping chain extension",
                                 )
                             break
 
                     if verbose:
                         ds_name = downstream_junction.get("junction_name", "unknown")
-                        _vprint(verbose, 
+                        _vprint(
+                            verbose,
                             f"      → Chain extension: merging {merged_vessel_name} with "
-                            f"{next_vessel_name} (via {ds_name})"
+                            f"{next_vessel_name} (via {ds_name})",
                         )
 
                     # Find centerline points for next vessel
                     next_inlet_idx, next_outlet_idx = find_vessel_centerline_points(next_vessel_name)
                     if next_inlet_idx is None:
                         if verbose:
-                            _vprint(verbose, 
+                            _vprint(
+                                verbose,
                                 f"      → Could not find centerline points for {next_vessel_name}, "
-                                f"stopping chain extension"
+                                f"stopping chain extension",
                             )
                         break
 
@@ -1841,7 +1876,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     if downstream_junction in junctions:
                         junctions.remove(downstream_junction)
                         if verbose:
-                            _vprint(verbose, f"      → Removed junction: {downstream_junction.get('junction_name', 'unknown')}")
+                            _vprint(
+                                verbose,
+                                f"      → Removed junction: {downstream_junction.get('junction_name', 'unknown')}",
+                            )
 
                     if next_vessel_downstream_junction is not None:
                         # Update the downstream junction to use merged_vessel_id instead of next_vessel_id
@@ -1852,9 +1890,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                 inlet_vessel_ids.append(merged_vessel_id)
                             if verbose:
                                 ds_name = next_vessel_downstream_junction.get("junction_name", "unknown")
-                                _vprint(verbose, 
+                                _vprint(
+                                    verbose,
                                     f"      → Updated downstream junction {ds_name}: "
-                                    f"replaced vessel ID {next_vessel_id} with merged vessel ID {merged_vessel_id}"
+                                    f"replaced vessel ID {next_vessel_id} with merged vessel ID {merged_vessel_id}",
                                 )
 
                     if verbose:
@@ -1864,9 +1903,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     vessels_merged = True  # Mark that merging occurred
 
                     if verbose:
-                        _vprint(verbose, 
+                        _vprint(
+                            verbose,
                             f"      → Merged vessel: {merged_vessel_name} (ID: {merged_vessel_id}), "
-                            f"total length: {merged_length:.6f} cm"
+                            f"total length: {merged_length:.6f} cm",
                         )
 
                     # Check if merged vessel is now long enough
@@ -1913,14 +1953,16 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                     merged_outlet_idx = target_centerline_idx  # Update tracked outlet index
 
                                     if verbose:
-                                        _vprint(verbose, 
+                                        _vprint(
+                                            verbose,
                                             f"      → Shortened merged vessel to reach EL: "
-                                            f"{merged_length:.6f} → {new_merged_length:.6f} cm"
+                                            f"{merged_length:.6f} → {new_merged_length:.6f} cm",
                                         )
 
-                                    _vprint(verbose, 
+                                    _vprint(
+                                        verbose,
                                         f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
-                                        f"into {merged_vessel_name} and extended to reach EL={EL:.4f}"
+                                        f"into {merged_vessel_name} and extended to reach EL={EL:.4f}",
                                     )
                                     extension_successful = True
                                     break
@@ -1932,10 +1974,13 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                                 _rename_outlet_in_gp(junc, outlet_vessel_name, merged_vessel_name)
 
                             if verbose:
-                                _vprint(verbose, f"      → Merged vessel length exactly equals EL: {merged_length:.6f} cm")
-                            _vprint(verbose, 
+                                _vprint(
+                                    verbose, f"      → Merged vessel length exactly equals EL: {merged_length:.6f} cm"
+                                )
+                            _vprint(
+                                verbose,
                                 f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
-                                f"into {merged_vessel_name} (length={merged_length:.4f} = EL={EL:.4f})"
+                                f"into {merged_vessel_name} (length={merged_length:.4f} = EL={EL:.4f})",
                             )
                             extension_successful = True
                             break
@@ -1955,14 +2000,20 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 # Handles chain extension stopped due to multi-outlet junction, boundary condition, etc.
                 if vessels_merged:
                     if verbose:
-                        _vprint(verbose, "      → Vessels were merged but didn't reach EL, converting merged vessel to connector")
+                        _vprint(
+                            verbose,
+                            "      → Vessels were merged but didn't reach EL, converting merged vessel to connector",
+                        )
 
                     # Convert the merged vessel to a connector
                     old_name = merged_vessel.get("vessel_name", "")
                     if "connector" in old_name.lower():
                         connector_name = old_name
                         if verbose:
-                            _vprint(verbose, f"      → Merged vessel already contains 'connector', keeping name: {connector_name}")
+                            _vprint(
+                                verbose,
+                                f"      → Merged vessel already contains 'connector', keeping name: {connector_name}",
+                            )
                     else:
                         connector_name = f"{old_name}_connectorEL"
                         merged_vessel["vessel_name"] = connector_name
@@ -1992,9 +2043,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                         _vprint(verbose, "      → Set merged vessel length to 0.0 cm")
                         _vprint(verbose, "      → Set parameters: R=0, C=1e-10, L=0 (minimal resistance)")
 
-                    _vprint(verbose, 
+                    _vprint(
+                        verbose,
                         f"  Junction {junction_name}: Merged vessels {', '.join(merged_vessel_names)} "
-                        f"into {connector_name} but didn't reach EL={EL:.4f}, converted to connector"
+                        f"into {connector_name} but didn't reach EL={EL:.4f}, converted to connector",
                     )
 
                     new_connector_vessels.append(merged_vessel)
@@ -2005,10 +2057,11 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 if verbose:
                     _vprint(verbose, "      → Converting vessel to connector (standard case)")
 
-                _vprint(verbose, 
+                _vprint(
+                    verbose,
                     f"  Junction {junction_name}: Outlet vessel {outlet_vessel_name} "
                     f"(length={outlet_vessel_length:.4f}) is shorter than EL={EL:.4f}, "
-                    f"converting to connector vessel"
+                    f"converting to connector vessel",
                 )
 
                 # Append "_connector" to vessel name (if not already a connector)
@@ -2065,9 +2118,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 target_path = outlet_vessel_path_start + EL
 
                 if verbose:
-                    _vprint(verbose, 
+                    _vprint(
+                        verbose,
                         f"      → Target path coordinate: {target_path:.6f} cm "
-                        f"(start={outlet_vessel_path_start:.6f} + EL={EL:.6f})"
+                        f"(start={outlet_vessel_path_start:.6f} + EL={EL:.6f})",
                     )
 
                 # Find the centerline point closest to target_path
@@ -2083,7 +2137,9 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                 branch_paths = path_array[branch_indices]
 
                 if verbose:
-                    _vprint(verbose, f"      → Found {len(branch_indices)} centerline points for branch {outlet_branch_id}")
+                    _vprint(
+                        verbose, f"      → Found {len(branch_indices)} centerline points for branch {outlet_branch_id}"
+                    )
 
                 # Find the first centerline point at or beyond the target path
                 # This point marks the new junction boundary
@@ -2113,9 +2169,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     # convert to connectorEL (same as "vessel shorter than EL" case).
                     if new_vessel_length <= length_epsilon:
                         if verbose:
-                            _vprint(verbose, 
+                            _vprint(
+                                verbose,
                                 "      → New vessel length is ~0, converting to connector "
-                                "(fully absorbed into junction)"
+                                "(fully absorbed into junction)",
                             )
                         old_name = outlet_vessel.get("vessel_name", "")
                         connector_name = old_name if "connector" in old_name.lower() else f"{old_name}_connectorEL"
@@ -2132,9 +2189,10 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                         outlet_vessel["zero_d_element_values"]["stenosis_coefficient"] = 0.0
                         set_vessel_node_ids(outlet_vessel, outlet_outlet_idx, outlet_outlet_idx)
                         new_connector_vessels.append(outlet_vessel)
-                        _vprint(verbose, 
+                        _vprint(
+                            verbose,
                             f"  Junction {junction_name}: Outlet {outlet_vessel_name} fully absorbed by EL, "
-                            f"converted to {connector_name}"
+                            f"converted to {connector_name}",
                         )
                         continue
 
@@ -2150,32 +2208,37 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
                     outlet_vessel["vessel_length"] = float(new_vessel_length)
 
                     if verbose:
-                        _vprint(verbose, f"      → Updated vessel length: {old_length:.6f} → {new_vessel_length:.6f} cm")
+                        _vprint(
+                            verbose, f"      → Updated vessel length: {old_length:.6f} → {new_vessel_length:.6f} cm"
+                        )
 
                     # Update node IDs for this vessel:
                     # - New inlet is at target_centerline_idx
                     # - Outlet remains at original outlet_outlet_idx
                     set_vessel_node_ids(outlet_vessel, target_centerline_idx, outlet_outlet_idx)
 
-                    _vprint(verbose, 
+                    _vprint(
+                        verbose,
                         f"  Junction {junction_name}: Extended boundary by EL={EL:.4f} "
                         f"for outlet {outlet_vessel_name}, "
-                        f"new vessel length={new_vessel_length:.4f}"
+                        f"new vessel length={new_vessel_length:.4f}",
                     )
                 else:
                     # Edge case: EL extends beyond the vessel (shouldn't happen if logic is correct)
                     # This means target_path > outlet_vessel_path_end
                     if verbose:
-                        _vprint(verbose, 
+                        _vprint(
+                            verbose,
                             f"      → Warning: EL={EL:.6f} extends beyond vessel end "
-                            f"(path={outlet_vessel_path_end:.6f})"
+                            f"(path={outlet_vessel_path_end:.6f})",
                         )
                         _vprint(verbose, "      → This should not happen if vessel length >= EL")
                         _vprint(verbose, "      → Treating as full vessel inclusion")
 
-                    _vprint(verbose, 
+                    _vprint(
+                        verbose,
                         f"  Warning: EL={EL:.4f} extends beyond vessel {outlet_vessel_name} "
-                        f"(length={outlet_vessel_length:.4f}), treating as full vessel inclusion"
+                        f"(length={outlet_vessel_length:.4f}), treating as full vessel inclusion",
                     )
                     _absorb_vessel_params(junc, outlet_vessel_name, outlet_vessel, fraction=1.0)
                     _reduce_vessel_params(outlet_vessel, 0.0)
@@ -2217,8 +2280,9 @@ def adjust_junction_boundaries_by_entrance_length(geometric_input, centerline_da
         if len(cleaned_inlets) > 0 and len(cleaned_outlets) > 0:
             cleaned_junctions.append(junc)
         elif verbose:
-            _vprint(verbose, 
-                f"  Warning: Removed junction {junc.get('junction_name', 'unknown')} - no valid vessels after cleanup"
+            _vprint(
+                verbose,
+                f"  Warning: Removed junction {junc.get('junction_name', 'unknown')} - no valid vessels after cleanup",
             )
 
     result["junctions"] = cleaned_junctions

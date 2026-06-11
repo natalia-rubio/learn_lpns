@@ -79,12 +79,8 @@ def materialize_bifurcations_el_from_base(
 
     geo_label = os.path.basename(out_dir)
 
-    process_geometric_input(
-        centerline_path, geometric_input_path, geometric_centerline_path, verbose=verbose
-    )
-    split_junctions_from_files(
-        geometric_centerline_path, centerline_path, bifurcations_path, verbose=verbose
-    )
+    process_geometric_input(centerline_path, geometric_input_path, geometric_centerline_path, verbose=verbose)
+    split_junctions_from_files(geometric_centerline_path, centerline_path, bifurcations_path, verbose=verbose)
 
     if extract_geometric_params:
         extract_and_add_geometric_params(centerline_path, bifurcations_path, verbose=verbose)
@@ -102,9 +98,7 @@ def materialize_bifurcations_el_from_base(
         verbose=verbose,
     )
     if extract_geometric_params:
-        extract_and_add_geometric_params(
-            centerline_path, output_bifurcations_el_path, verbose=verbose
-        )
+        extract_and_add_geometric_params(centerline_path, output_bifurcations_el_path, verbose=verbose)
 
     if not verbose:
         print(f"  {geo_label}: wrote bifurcations_EL_geometric_input.json")

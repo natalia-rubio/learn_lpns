@@ -47,7 +47,7 @@ flowchart LR
   I --> G
   J --> G
   K --> G
-  
+
 ```
 
 
@@ -59,14 +59,14 @@ flowchart LR
 
 ### Outputs:
 
-- `**learn-lpns-batch-zerod`**:
+- `learn-lpns-batch-zerod`:
   - Augmented 0D input files: contain extra geometric information and modified junction-vessel discretization (saved in `data/zeroD`)
   - Calibrated 0D input files: contains the optimal (ground truth) resistances and inductances (saved in `data/zeroD`)
   - Tabulated geometry (neural network features) and lumped parameter (neural network target) data, saved in human-readable csvs (`data/ml_inputs`)and pickled dictionaries of jax arrays (`data/jax_arrays`).  Train-validation splits also generated.  (Can be generated independently with `learn-lpns-data-processing`, run `learn-lpns-batch-zerod` first.)
   - Learned 0D input files: contains neural-network predicted resistances and inductances (saved in `data/zeroD`).  Generated only if trained neural networks are available (`learn-lpns-train` has been run).
   - Forward 0D simulation results:  Flow and pressure results generated for standard, calibrated, and learned input files, as available.  csv files containing results for each 0D node at each timestep, plots of each solution (compared to the 3D solution) in time at a specified (generally inlet) node.  Printed table listing inlet pressure MSE with respect to 3D simulation.
-- `**learn-lpns-train**`: Trained neural networks.
-- `**learn-lpns-cv**`: Results of k-fold validation in csv and barchart visualization (saved to **results/cross-validation**).  Also generates all the above outputs in the proceess.
+- `learn-lpns-train`: Trained neural networks.
+- `learn-lpns-cv`: Results of k-fold validation in csv and barchart visualization (saved to `results/cross-validation`).  Also generates all the above outputs in the proceess.
 
 ## Requirements
 
@@ -110,18 +110,16 @@ source scripts/cv_env.sh
 learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2 --run_config gen_loss
 ```
 
-Bundled sample: `**VMR_aortas**` (5 geometries, ~30–60 min on CPU). Outputs: `results/cross_validation/VMR_aortas/gen_loss/bifurcations_EL_cv_summary.csv` and barchart PDFs.
-
 ```bash
 pytest -v    # unit tests, no C++ solver required
 ```
 
 ## Examples
 
-**[examples/nn_parameter_comparison.ipynb](examples/nn_parameter_comparison.ipynb)** — train junction and vessel NNs on 4 of 5 VMR aortas (`0129_0000`, `0154_0001`, `0174_0000`, `0175_0000`, `0176_0000`; 80% split), run inference on the held-out geometry, and plot zero-D parameter bar charts. Bundles standard-0d seed, bifurcations_EL calibrated JSON, and 1D VTP; derives geometric bifurcations_EL input in-notebook. **No svZeroDPlus required** for the topology step.
+**[examples/nn_parameter_comparison.ipynb](examples/nn_parameter_comparison.ipynb)** — This notebook demonstrates a smaller, but representative workflow that does not include the calibration or forward simulation steps, which require the external binaries `svzerodcalibrator` and `svzerodsolver`.
 
 ```bash
-make notebook    # venv + deps + open Jupyter (~15–30 min to run all cells on CPU)
+make notebook
 ```
 
 ## Documentation
@@ -202,3 +200,9 @@ The repo uses two related config layers:
 **Pipeline defaults (YAML)** — physics, solver tolerances, calibration penalties, train/val splits, and NN training hyperparameters live in `config/defaults.yaml`. Load them in code with `get_pipeline_config()` (optionally pass `set_name` to deep-merge `config/sets/<set_name>.yaml` when present). Override the base file with the `LEARN_LPNS_CONFIG` environment variable, or pass a dict of patches in tests.
 
 **Run config (CLI)** — experiment variants are selected with `--run_config` on the console entry points (default: `gen_loss`). Tokens such as `quadratic_resistor`, `penalty_on`, and `asymmetric_loss` are underscore-separated and order-independent; they resolve to a canonical suffix under `data/` and `results/` (e.g. `data/zeroD/VMR_aortas/gen_loss/`). See [docs/usage.md](docs/usage.md) (`Run config`) and `learn_lpns/zerod_calibration/run_config_canonical.py`.
+
+**Imports** — Small top-level API for notebooks and downstream tools:
+
+```python
+from learn_lpns import get_pipeline_config, resolve_run_config_suffix, modality_table_header
+```
