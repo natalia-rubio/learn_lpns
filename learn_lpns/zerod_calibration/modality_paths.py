@@ -17,7 +17,7 @@ MODALITY_DISPLAY: dict[str, str] = {
     "BloodVesselJunction": "Calibrated",
     "BloodVesselJunction_NN": "Learned Junctions",
     "BloodVesselJunction_NN_plus_Vessel_NN": "Learned Junctions and Vessels",
-    "NN_vessel": "Learned Vessels",
+    "NN_vessel": "Learned Vessel",
 }
 
 DEFAULT_MODALITY_ORDER: tuple[str, ...] = (

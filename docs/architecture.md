@@ -1,31 +1,6 @@
 # Architecture
 
-## Pipeline
 
-```mermaid
-flowchart LR
-  A[0D geometry JSON] --> B[Geometry preprocessing]
-  B --> C[Geometric features]
-  D[3D solution on centerline] --> E[Calibration]
-  B --> E
-  E --> F[Ground-truth lumped params]
-  C --> G[NN training]
-  F --> G
-  G --> H[Learned params]
-  H --> I[0D forward simulation]
-  I --> J[MSE vs 3D reference]
-  G --> K[k-fold CV]
-  J --> K
-```
-
-The central workflow:
-
-1. Pre-process 0D geometry and extract geometric features
-2. Find ground-truth lumped parameters by calibration to 3D simulation data
-3. Train neural networks to predict lumped parameters from geometric features
-4. Test forward-simulation performance of 0D models with NN-predicted parameters
-
-$k$-fold cross-validation splits geometries into train/validation sets across multiple trials. Visualization scripts summarize metrics and diagnostics.
 
 ## Design decisions
 

@@ -149,6 +149,29 @@ Positional args: `set_name`, `num_geos`, optional `geometry_variant` (default `a
 
 Bifurcation **generation** is stored in the jax pickle (not an NN input) and used only with generation-weighted loss.
 
+## Notebook example (no C++ solver)
+
+[examples/nn_parameter_comparison.ipynb](../examples/nn_parameter_comparison.ipynb) walks through:
+
+1. Verify bundled inputs per geometry: `standard-0d/<geo>.json`, `gen_loss/<geo>/bifurcations_EL_calibrated_output_BloodVesselJunction.json`, and `oneD/VMR/<geo>/unsteady_soln.vtp`
+2. Build `bifurcations_EL_geometric_input.json` in Python from standard-0d + VTP (bifurcation split + entrance length)
+3. Build `ml_inputs`, `jax_arrays`, and a geometry-level train/val split (4 train / 1 val; change `SEED` in the notebook)
+4. Train junction and vessel NNs and run inference on the held-out geometry
+5. Plot zero-D parameter bar charts and print MAE vs calibrated
+
+```bash
+make notebook    # one-shot: venv, JAX, [dev,notebook], open Jupyter
+```
+
+Manual install:
+
+```bash
+pip install -e ".[dev,notebook]"
+jupyter notebook examples/nn_parameter_comparison.ipynb
+```
+
+Bundled inputs: two bifurcations_EL JSONs per geometry (geometric + calibrated). See [data/README.md](../data/README.md).
+
 ## MSE modalities
 
 Display names for console tables, CSV headers, and LaTeX exports: `learn_lpns/zerod_calibration/modality_paths.py`.
@@ -158,7 +181,7 @@ Display names for console tables, CSV headers, and LaTeX exports: `learn_lpns/ze
 | `geometric` | Standard |
 | `BloodVesselJunction` | Calibrated |
 | `BloodVesselJunction_NN` | Learned Junctions |
-| `NN_vessel` | Learned Vessels |
+| `NN_vessel` | Learned Vessel |
 | `BloodVesselJunction_NN_plus_Vessel_NN` | Learned Junctions and Vessels |
 
 ## Data processing

@@ -260,6 +260,36 @@ def _ensure_cv_prerequisites(
     )
 
 
+def _ml_inputs_geometries_for_cohort(
+    ml_inputs_root: str,
+    data_root: str,
+    set_name: str,
+    geometry_variant: str,
+    run_config_suffix: str | None,
+) -> list[str]:
+    """Return ml_inputs geometry folders, restricted to standard-0d when that layout exists."""
+    geometries = list_ml_input_geometries(
+        ml_inputs_root, set_name, geometry_variant, run_config_suffix=run_config_suffix
+    )
+    std_0d = standard_0d_dir(data_root, set_name)
+    if not os.path.isdir(std_0d):
+        return geometries
+    try:
+        std_geos = set(get_vmr_geometries(std_0d))
+    except FileNotFoundError:
+        return geometries
+    filtered = [g for g in geometries if g in std_geos]
+    if not filtered:
+        return geometries
+    dropped = sorted(set(geometries) - set(filtered))
+    if dropped:
+        print(
+            f"  Ignoring {len(dropped)} stale ml_inputs geometries not in "
+            f"{STANDARD_0D_SUBDIR}/: {dropped}"
+        )
+    return filtered
+
+
 def _load_cv_jax_cohort(
     ml_inputs_root,
     data_root,
@@ -269,8 +299,8 @@ def _load_cv_jax_cohort(
     set_type,
 ):
     """Locate jax pickles and load cohort metadata from the pickle (no CSV fallbacks)."""
-    geometries_for_path = list_ml_input_geometries(
-        ml_inputs_root, set_name, geometry_variant, run_config_suffix=run_config_suffix
+    geometries_for_path = _ml_inputs_geometries_for_cohort(
+        ml_inputs_root, data_root, set_name, geometry_variant, run_config_suffix
     )
     num_geos = len(geometries_for_path)
     if num_geos == 0:

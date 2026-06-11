@@ -7,20 +7,31 @@ Thanks for improving **learn_lpns**. This repo is a research pipeline with libra
 ```bash
 git clone <repo-url>
 cd learn_lpns
+./scripts/setup_git_lfs.sh    # sample data under data/ (Git LFS)
 pip install -e ".[dev]"
-pre-commit install
+pre-commit install            # optional but recommended
 ```
 
 Always use an editable install before running CLIs or `python -m learn_lpns...` modules. Do not rely on `sys.path` hacks.
 
 ## Checks before opening a PR
 
+With pre-commit installed:
+
 ```bash
 pre-commit run --all-files
 pytest -m "not integration" -v
 ```
 
-CI runs the same lint/format/unit-test suite on Python 3.10 and 3.12. Unit tests do **not** require building svZeroDPlus.
+Or run the same checks manually:
+
+```bash
+ruff format learn_lpns tests
+ruff check learn_lpns tests
+pytest -m "not integration" -v
+```
+
+CI (GitHub Actions) runs `ruff format --check`, `ruff check`, and unit tests with coverage on Python 3.10 and 3.12. Unit tests do **not** require building svZeroDPlus.
 
 Optional local smoke tests:
 

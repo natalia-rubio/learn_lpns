@@ -179,22 +179,26 @@ build_svzerod() {
 
 verify_sample_data() {
   local root="$1"
-  local missing=0
-  local check
-  for check in \
-    "$root/data/README.md" \
-    "$root/data/zeroD/VMR_aortas/standard-0d/0076_1001.json" \
-    "$root/data/oneD/VMR/0076_1001/unsteady_soln.vtp"
-  do
-    if [[ ! -f "$check" ]]; then
-      printf '  missing: %s\n' "$check" >&2
-      missing=1
+  if [[ -x "$root/scripts/setup_git_lfs.sh" ]]; then
+    "$root/scripts/setup_git_lfs.sh"
+  else
+    local missing=0
+    local check
+    for check in \
+      "$root/data/README.md" \
+      "$root/data/zeroD/VMR_aortas/standard-0d/0129_0000.json" \
+      "$root/data/oneD/VMR/0129_0000/unsteady_soln.vtp"
+    do
+      if [[ ! -f "$check" ]]; then
+        printf '  missing: %s\n' "$check" >&2
+        missing=1
+      fi
+    done
+    if [[ "$missing" -ne 0 ]]; then
+      die "Bundled sample data not found under $root/data/. Run: ./scripts/setup_git_lfs.sh"
     fi
-  done
-  if [[ "$missing" -ne 0 ]]; then
-    die "Bundled sample data not found under $root/data/. Ensure learn_lpns was cloned with tracked data/ files (branch $LEARN_LPNS_BRANCH)."
+    log "Sample data present under $root/data/"
   fi
-  log "Sample data present under $root/data/"
 }
 
 write_cv_env() {

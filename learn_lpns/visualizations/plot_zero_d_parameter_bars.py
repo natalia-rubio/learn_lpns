@@ -6,18 +6,20 @@ import os
 import numpy as np
 
 from learn_lpns.visualizations.matplotlib_tex import configure_matplotlib_latex
+from learn_lpns.zerod_calibration.modality_paths import MODALITY_DISPLAY
 
 _STYLE_MAP = {
-    "geometric": {"color": "green", "label": "0D Poiseuille"},
-    "NORMAL_JUNCTION": {"color": "red", "label": "0D $\\Delta P = 0$ Junction (Calibrated)"},
-    "BloodVesselJunction": {"color": "orange", "label": "0D RRI Junction (Calibrated)"},
-    "BloodVesselJunction_NN": {"color": "dodgerblue", "label": "0D RRI Junction (NN)"},
-    "BloodVesselJunction_NN_plus_Vessel_NN": {
-        "color": "orchid",
-        "label": "0D RRI Junction (NN + Vessel NN)",
-    },
-    "NN_vessel": {"color": "chartreuse", "label": "0D NN Vessel Only"},
+    "geometric": {"color": "green"},
+    "NORMAL_JUNCTION": {"color": "red"},
+    "BloodVesselJunction": {"color": "orange"},
+    "BloodVesselJunction_NN": {"color": "dodgerblue"},
+    "BloodVesselJunction_NN_plus_Vessel_NN": {"color": "orchid"},
+    "NN_vessel": {"color": "chartreuse"},
 }
+
+
+def _modality_label(modality: str) -> str:
+    return MODALITY_DISPLAY.get(modality, modality)
 
 
 def _is_non_el_connector(vessel_name):
@@ -31,8 +33,8 @@ def plot_zero_d_parameter_bars(
     modality_json_paths, output_dir=None, output_name="zero_d_parameter_bars.png", verbose=False
 ):
     """
-    Create grouped bar charts comparing R_poiseuille, stenosis_coefficient, and L
-    across multiple modalities (e.g., geometric, NORMAL_JUNCTION, BloodVesselJunction).
+    Create grouped bar charts comparing R_poiseuille, stenosis_coefficient (quadratic
+    resistance S), and L across multiple modalities (e.g., geometric, BloodVesselJunction).
 
     Args:
         modality_json_paths: dict mapping modality name -> path to calibrated JSON
@@ -121,9 +123,9 @@ def plot_zero_d_parameter_bars(
         return None
 
     params = [
-        ("R_poiseuille", "Poiseuille resistance"),
-        ("stenosis_coefficient", "Stenosis coefficient"),
-        ("L", "Inductance"),
+        ("R_poiseuille", r"$R$"),
+        ("stenosis_coefficient", r"$S$"),
+        ("L", r"$L$"),
     ]
     modalities = list(modality_json_paths.keys())
     data_by_param = {p[0]: {mod: [] for mod in modalities} for p in params}
@@ -195,8 +197,8 @@ def plot_zero_d_parameter_bars(
         cycle_colors = [_STYLE_MAP.get(mod, {"color": "gray"})["color"] for mod in modalities]
         legend_patches = [
             mpatches.Patch(
-                color=_STYLE_MAP.get(mod, {"color": "gray", "label": mod})["color"],
-                label=_STYLE_MAP.get(mod, {"color": "gray", "label": mod})["label"],
+                color=_STYLE_MAP.get(mod, {"color": "gray"})["color"],
+                label=_modality_label(mod),
             )
             for mod in modalities
         ]
@@ -220,7 +222,12 @@ def plot_zero_d_parameter_bars(
                 ncol=max(1, len(legend_patches)),
                 bbox_to_anchor=(0.5, 0.995),
             )
-        fig.suptitle(r"Zero-D parameter comparison: $R$, $S$, and $L$", y=1.005, fontsize=18)
+        fig.suptitle(
+            r"Zero-D parameter comparison ($R$: Poiseuille resistance, "
+            r"$S$: quadratic resistance, $L$: inductance)",
+            y=1.005,
+            fontsize=16,
+        )
         axes[-1].set_xticks(x)
         axes[-1].set_xticklabels(vessel_names_extended, rotation=90, fontsize=8)
         plt.subplots_adjust(top=0.88)
