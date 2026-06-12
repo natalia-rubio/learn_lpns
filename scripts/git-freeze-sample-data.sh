@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
-# Mark tracked files under data/ as skip-worktree so local pipeline reruns do not
-# appear in git status. Safe to run after clone; does not affect untracked files.
+# Hide local edits to tracked seed files under data/ from git status.
+#
+# Sets git skip-worktree on every tracked path under data/ (bundled LFS samples).
+# Pipeline outputs under data/ are usually gitignored and are not affected.
+# Use after clone if you rerun batch/CV and do not want modified seeds in status.
+#
+# Usage (from repo root):
+#   ./scripts/git-freeze-sample-data.sh
+#   ./scripts/git-freeze-sample-data.sh --unfreeze
+#
+# See data/README.md and scripts/README.md.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"

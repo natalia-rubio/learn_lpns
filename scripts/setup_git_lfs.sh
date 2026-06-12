@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Ensure Git LFS is installed and sample data files are materialized (not pointer stubs).
+# Materialize Git LFS sample data (VTP centerlines + 0D JSON under data/).
+#
+# Does:
+#   1. Require git-lfs on PATH
+#   2. git lfs install + git lfs pull (unless --check)
+#   3. Verify 5 notebook geos × 3 files exist and are not LFS pointer stubs
 #
 # Usage (from repo root):
-#   ./scripts/setup_git_lfs.sh          # install hooks + git lfs pull
-#   ./scripts/setup_git_lfs.sh --check  # verify only (no pull)
+#   ./scripts/setup_git_lfs.sh          # pull + verify
+#   ./scripts/setup_git_lfs.sh --check  # verify only
+#   make lfs
 #
-# Fresh clone:
-#   git clone <repo>
-#   cd learn_lpns
-#   ./scripts/setup_git_lfs.sh
+# Also invoked from setup_notebook.sh. See scripts/README.md.
 
 set -euo pipefail
 
