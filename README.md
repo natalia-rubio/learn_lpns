@@ -17,7 +17,7 @@ $k$-fold cross-validation splits geometries into train/validation sets across mu
 ```mermaid
 flowchart LR
   C[Centerline Geometry] --> D[Geometric features]
-  A[Standard 0D Model] --> E[Calibration]
+  A[Standard 0D Model] --> E([Calibration])
   B[3D -> 1D reference] --> E
   E --> F[Ground-truth R, S, L]
   D --> G[NN training]
@@ -31,7 +31,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  H[Calibrated 0D Model] --> E[0D forward simulation]
+  H[Calibrated 0D Model] --> E([0D forward simulation])
   A[Standard 0D Model] --> B[NN inference]
   C[Geometric Features] --> B
   B --> D[Learned 0D Model]
