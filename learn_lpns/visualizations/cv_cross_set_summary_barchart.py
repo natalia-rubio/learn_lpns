@@ -29,23 +29,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
 from learn_lpns.visualizations.plot_location_comparison import get_line_style
 from learn_lpns.zerod_calibration.modality_paths import read_cv_metric_from_row
-
-SET_NAMES_DEFAULT = ["VMR_rigid_aorta_adults_all", "VMR_abdo", "VMR_pulmo_healthy", "VMR_all"]
-
-# X-axis labels for each set_name (internal folder name -> plot text). Use "\n" for a line break.
-# Names not listed here fall back to _format_set_label default (VMR_… split or raw set_name).
-SET_DISPLAY_NAME = {
-    "VMR_rigid_aorta_adults_all": "Aortic",
-    # "VMR_rigid_aorta_adults": "Rigid aorta\n(adults)",
-    "VMR_abdo": "Aortofemoral ",
-    "VMR_pulmo": "Pulmonary",
-    "VMR_pulmo_healthy": "Pulmonary",
-    "VMR_all": "All",
-    "VMR_all_balanced": "Mixed",
-}
 
 RUN_CONFIG_FALLBACK_ORDER = [
     "gen_loss",
@@ -147,11 +134,7 @@ def _modality_color(modality):
 
 
 def _format_set_label(set_name):
-    if set_name in SET_DISPLAY_NAME:
-        return SET_DISPLAY_NAME[set_name]
-    if set_name.startswith("VMR_"):
-        return set_name.replace("VMR_", "VMR\n", 1)
-    return set_name
+    return get_pipeline_config().cohorts.format_display_label(set_name)
 
 
 def _format_bar_label(mean, metric_key):
@@ -194,12 +177,17 @@ def _resolve_csv_path(data_root, set_name, run_config, geometry_variant, csv_suf
 
 
 def main():
+    default_set_names = list(get_pipeline_config().cohorts.default_cv_set_names)
     parser = argparse.ArgumentParser(description="Grouped bar chart: CV averages across set names, with 95% CI.")
     parser.add_argument(
         "--set_names",
         nargs="+",
-        default=SET_NAMES_DEFAULT,
-        help="Set names to include (default: VMR_rigid_aorta_adults_all VMR_abdo VMR_pulmo)",
+        default=None,
+        help=(
+            "Set names to include (default: "
+            + " ".join(default_set_names)
+            + ")."
+        ),
     )
     parser.add_argument(
         "--geometry_variant",
@@ -247,13 +235,14 @@ def main():
         help="Font size (pt) for y-axis tick labels (default: 9)",
     )
     args = parser.parse_args()
+    set_names = args.set_names or default_set_names
 
     mcfg = METRIC_CONFIG[args.metric]
     means = {}
     cis = {}
     missing = []
 
-    for set_name in args.set_names:
+    for set_name in set_names:
         csv_path, used_config = _resolve_csv_path(
             args.data_root,
             set_name,
@@ -287,7 +276,7 @@ def main():
             means[set_name].append(mean_val * mcfg["scale"])
             cis[set_name].append(ci_val * mcfg["scale"])
 
-    valid_sets = [s for s in args.set_names if s in means]
+    valid_sets = [s for s in set_names if s in means]
     if not valid_sets:
         raise SystemExit("No valid CSV files were found for the requested set names.\n" + "\n".join(missing))
 

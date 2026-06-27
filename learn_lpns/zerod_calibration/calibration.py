@@ -34,7 +34,7 @@ def create_calibration_input(
         quadratic_resistor: If True, calibrate stenosis (quadratic resistor) coefficient
         penalty_on: If True (requires quadratic_resistor), use set-specific L2 penalties
             on R_poiseuille and stenosis_coefficient during calibration
-        set_name: Optional set name (e.g. VMR_abdo) used to look up set-specific L2 penalties
+        set_name: Optional set name (e.g. VMR_abdo) used to look up cohort-specific overrides in config
     """
     print(f"Reading geometric input from: {geometric_input_path}")
     with open(geometric_input_path) as f:
@@ -100,9 +100,15 @@ def create_calibration_input(
         )
 
     cfg = get_pipeline_config(set_name=set_name)
-    if quadratic_resistor and penalty_on and set_name and set_name in cfg.calibration.set_l2_penalties:
-        l2_r, l2_stenosis = cfg.calibration.l2_penalties_for_set(set_name)
-        print(f"  Set-specific L2 penalties for {set_name}: R={l2_r}, stenosis={l2_stenosis}")
+    if (
+        quadratic_resistor
+        and penalty_on
+        and set_name
+        and set_name in cfg.cohorts.sets
+        and cfg.cohorts.sets[set_name].calibration is not None
+    ):
+        l2_r, l2_stenosis = cfg.cohorts.l2_penalties_for_set(set_name, cfg.calibration)
+        print(f"  Cohort-specific L2 penalties for {set_name}: R={l2_r}, stenosis={l2_stenosis}")
     elif quadratic_resistor and not penalty_on:
         print("  Penalty-on not enabled: L2_penalty_R_poiseuille and L2_penalty_stenosis_coefficient set to 0")
 
@@ -111,6 +117,7 @@ def create_calibration_input(
         quadratic_resistor=quadratic_resistor,
         penalty_on=penalty_on,
         set_name=set_name,
+        cohorts=cfg.cohorts,
     )
 
     inp["simulation_parameters"]["number_of_time_pts_per_cardiac_cycle"] = len(bc_time)

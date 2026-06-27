@@ -23,15 +23,6 @@ class SolverConfig(BaseModel):
     steady_initial: bool = False
 
 
-class SetL2Penalty(BaseModel):
-    """Per-cohort L2 regularization for calibration (R_poiseuille, stenosis_coefficient)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    l2_r: float = Field(gt=0)
-    l2_stenosis: float = Field(gt=0)
-
-
 class CalibrationConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -40,14 +31,54 @@ class CalibrationConfig(BaseModel):
     maximum_iterations: int = Field(default=20, gt=0)
     default_l2_r: float = Field(default=1e5, gt=0)
     default_l2_stenosis: float = Field(default=1e10, gt=0)
-    set_l2_penalties: dict[str, SetL2Penalty] = Field(default_factory=dict)
 
-    def l2_penalties_for_set(self, set_name: str | None) -> tuple[float, float]:
-        """Return (L2_penalty_R_poiseuille, L2_penalty_stenosis_coefficient) for a cohort."""
-        if set_name and set_name in self.set_l2_penalties:
-            entry = self.set_l2_penalties[set_name]
-            return entry.l2_r, entry.l2_stenosis
-        return self.default_l2_r, self.default_l2_stenosis
+
+class CohortCalibrationOverrides(BaseModel):
+    """Optional per-cohort calibration overrides (future use under cohorts.sets.<name>)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    l2_r: float = Field(gt=0)
+    l2_stenosis: float = Field(gt=0)
+
+
+class CohortEntry(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    display_label: str
+    calibration: CohortCalibrationOverrides | None = None
+
+
+class CohortsConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    default_cv_set_names: tuple[str, ...] = Field(default_factory=tuple)
+    sets: dict[str, CohortEntry] = Field(default_factory=dict)
+
+    def display_label_for(self, set_name: str) -> str | None:
+        entry = self.sets.get(set_name)
+        return entry.display_label if entry else None
+
+    def format_display_label(self, set_name: str) -> str:
+        """Plot/LaTeX label from config, with VMR_ fallback for unknown sets."""
+        label = self.display_label_for(set_name)
+        if label:
+            return label
+        if set_name.startswith("VMR_"):
+            return set_name.replace("VMR_", "VMR\n", 1)
+        return set_name
+
+    def l2_penalties_for_set(
+        self,
+        set_name: str | None,
+        calibration: CalibrationConfig,
+    ) -> tuple[float, float]:
+        """Return L2 penalties, using cohort calibration overrides when present."""
+        if set_name and set_name in self.sets:
+            overrides = self.sets[set_name].calibration
+            if overrides is not None:
+                return overrides.l2_r, overrides.l2_stenosis
+        return calibration.default_l2_r, calibration.default_l2_stenosis
 
 
 class SplitConfig(BaseModel):
@@ -162,6 +193,7 @@ class PipelineConfig(BaseModel):
     physics: PhysicsConfig = Field(default_factory=PhysicsConfig)
     solver: SolverConfig = Field(default_factory=SolverConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
+    cohorts: CohortsConfig = Field(default_factory=CohortsConfig)
     split: SplitConfig = Field(default_factory=SplitConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
 
@@ -179,11 +211,15 @@ def build_calibration_parameters(
     *,
     quadratic_resistor: bool,
     penalty_on: bool,
-    set_name: str | None,
+    set_name: str | None = None,
+    cohorts: CohortsConfig | None = None,
 ) -> dict:
     """Build svzerodcalibrator calibration_parameters dict from config and run flags."""
     if quadratic_resistor and penalty_on:
-        l2_r, l2_stenosis = calibration.l2_penalties_for_set(set_name)
+        if cohorts is not None:
+            l2_r, l2_stenosis = cohorts.l2_penalties_for_set(set_name, calibration)
+        else:
+            l2_r, l2_stenosis = calibration.default_l2_r, calibration.default_l2_stenosis
     else:
         l2_r = 0.0
         l2_stenosis = 0.0

@@ -7,8 +7,7 @@ Legacy folder names under ``data/zeroD/`` are mapped to the ``Name`` column in
 ``data/dataset-svprojects.csv`` (via ``Legacy Name``); the table lists only those names,
 one cohort per column (Aortic, Aortofemoral, Pulmonary).
 
-Display labels for cohorts match ``SET_DISPLAY_NAME`` in
-``learn_lpns.visualizations.cv_cross_set_summary_barchart.py`` (internal set_name -> short label).
+Display labels for cohorts come from ``cohorts.sets.<set_name>.display_label`` in ``config/defaults.yaml``.
 
 Requires in the LaTeX preamble::
     \\usepackage{booktabs}
@@ -25,27 +24,24 @@ import csv
 import os
 from collections.abc import Sequence
 
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.tools.paths import repo_root
 from learn_lpns.zerod_calibration.tools.file_io import STANDARD_0D_SUBDIR
-
-# Internal folder names used under data/zeroD/ and results/
-DEFAULT_SET_ORDER: Sequence[str] = (
-    "VMR_rigid_aorta_adults_all",
-    "VMR_abdo",
-    "VMR_pulmo_healthy",
-)
-
-# Display names (aligned with cv_cross_set_summary_barchart.SET_DISPLAY_NAME); strip() applied when writing.
-SET_DISPLAY_NAME: dict[str, str] = {
-    "VMR_rigid_aorta_adults_all": "Aortic",
-    "VMR_abdo": "Aortofemoral ",
-    "VMR_pulmo_healthy": "Pulmonary",
-}
 
 # Alternate spellings -> canonical set_name under data/zeroD/
 SET_NAME_ALIASES: dict[str, str] = {
     "VMR_pulmonary_healthy": "VMR_pulmo_healthy",
 }
+
+
+def _default_latex_set_names() -> list[str]:
+    """Default table columns: configured CV cohorts except the mixed ``VMR_all`` set."""
+    return [name for name in get_pipeline_config().cohorts.default_cv_set_names if name != "VMR_all"]
+
+
+def _cohort_display_label(set_name: str) -> str:
+    label = get_pipeline_config().cohorts.display_label_for(set_name)
+    return (label or set_name).strip()
 
 # Prefer run-config subfolders that contain per-geometry directories (not only standard-0d JSON).
 RUN_CONFIG_DIR_PREFERENCE: Sequence[str] = (
@@ -130,7 +126,7 @@ def build_latex_table(
 
     for set_name in set_order:
         canonical = _resolve_set_name(set_name)
-        display = SET_DISPLAY_NAME.get(canonical, canonical).strip()
+        display = _cohort_display_label(canonical)
         headers.append(display)
         geos = discover_geometry_legacy_names(canonical, zero_d_root)
         missing = [g for g in geos if g not in legacy_to_name]
@@ -204,12 +200,12 @@ def main() -> None:
     parser.add_argument(
         "sets",
         nargs="*",
-        default=list(DEFAULT_SET_ORDER),
-        help="Set names (default: VMR_rigid_aorta_adults_all VMR_abdo VMR_pulmo_healthy). "
+        default=None,
+        help="Set names (default: cohorts.default_cv_set_names from config, excluding VMR_all). "
         "VMR_pulmonary_healthy is accepted as an alias for VMR_pulmo_healthy.",
     )
     args = parser.parse_args()
-    resolved = [_resolve_set_name(s) for s in args.sets]
+    resolved = [_resolve_set_name(s) for s in (args.sets or _default_latex_set_names())]
     tex = build_latex_table(
         resolved,
         zero_d_root=args.zero_d_root,

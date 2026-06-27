@@ -31,6 +31,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
 
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
 from learn_lpns.zerod_calibration.modality_paths import read_cv_metric_from_row
 
@@ -77,11 +78,9 @@ CONFIG_DISPLAY_NAME = {
     ],
 }
 
-# Optional: CV set names (under results/cross_validation/<set_name>/) when no set names are passed
-# on the command line. None = require at least one set name as a positional argument.
-# DEFAULT_SET_NAMES = None
-# Example:
-DEFAULT_SET_NAMES = ["VMR_rigid_aorta_adults_all", "VMR_abdo", "VMR_pulmo_healthy", "VMR_all"]
+# Optional: CV set names when no set names are passed on the command line.
+# None = require at least one set name as a positional argument.
+DEFAULT_SET_NAMES = None
 
 # Optional: run config subfolders to plot when --configs is not passed on the command line.
 # None = auto-discover every config under results/cross_validation/<first_set_name>/ that has the geometry CSV.
@@ -96,25 +95,9 @@ DEFAULT_RUN_CONFIGS = [
     "gen_loss:bifurcations",
 ]
 
-# Legend labels for each set_name (internal folder name -> plot text). Use "\n" for a line break.
-# Names not listed fall back to _format_set_label (VMR_… split or raw set_name).
-SET_DISPLAY_NAME = {
-    "VMR_rigid_aorta_adults_all": "Aortic",
-    "VMR_abdo": "Aortofemoral ",
-    "VMR_pulmo": "Pulmonary",
-    "VMR_pulmo_healthy": "Pulmonary",
-    "VMR_all": "All",
-    "VMR_all_balanced": "Mixed",
-}
-
-
 def _format_set_label(set_name):
     """Same rules as learn_lpns.visualizations.cv_cross_set_summary_barchart."""
-    if set_name in SET_DISPLAY_NAME:
-        return SET_DISPLAY_NAME[set_name]
-    if set_name.startswith("VMR_"):
-        return set_name.replace("VMR_", "VMR\n", 1)
-    return set_name
+    return get_pipeline_config().cohorts.format_display_label(set_name)
 
 
 # Bar colors per CV set when multiple sets are plotted (cycles if more than four).
@@ -219,7 +202,7 @@ def main():
         metavar="SET_NAME",
         help=(
             "CV set name(s) under results/cross_validation/ (e.g. VMR_rigid_aorta_adults VMR_abdo). "
-            "If omitted, uses DEFAULT_SET_NAMES in this module."
+            "If omitted, uses cohorts.default_cv_set_names from config/defaults.yaml."
         ),
     )
     parser.add_argument(
@@ -293,9 +276,9 @@ def main():
     elif DEFAULT_SET_NAMES is not None:
         set_names = [str(s).strip() for s in DEFAULT_SET_NAMES if str(s).strip()]
     else:
-        set_names = []
+        set_names = list(get_pipeline_config().cohorts.default_cv_set_names)
     if not set_names:
-        raise SystemExit("Provide at least one set name (positional), or set DEFAULT_SET_NAMES in this module.")
+        raise SystemExit("Provide at least one set name (positional), or configure cohorts.default_cv_set_names.")
     geometry_variant = args.geometry
 
     # Resolve list of configs: each entry is "config_suffix" or "config_suffix:variant" (variant override for that bar)

@@ -18,13 +18,22 @@ calibration:
   maximum_iterations: 20                  # max Levenberg–Marquardt iterations per calibration
   default_l2_r: 1.0e5                     # L2 penalty on Poiseuille R when --run_config includes penalty_on + quadratic_resistor
   default_l2_stenosis: 1.0e10             # L2 penalty on stenosis coefficient S under the same run_config flags
-  set_l2_penalties:                       # per-cohort overrides for default_l2_r / default_l2_stenosis (key = set_name)
+
+cohorts:
+  default_cv_set_names:                   # default batch for learn-lpns-cv-all-sets and cross-set plots
+    - VMR_aorta
+    - VMR_abdo
+    - VMR_pulmo
+    - VMR_all
+  sets:                                   # per-cohort metadata; optional overrides (e.g. calibration) may be added here
+    VMR_aorta:
+      display_label: Aortic
     VMR_abdo:
-      l2_r: 1.0e2                         # abdominal cohort: weaker R regularization
-      l2_stenosis: 1.0e5
-    VMR_rigid_aorta_adults:
-      l2_r: 1.0e5
-      l2_stenosis: 1.0e10
+      display_label: Aortofemoral
+    VMR_pulmo:
+      display_label: Pulmonary
+    VMR_all:
+      display_label: All
 
 split:
   percent_train: 0.9                      # default train fraction for learn-lpns-cv geometry splits

@@ -4,12 +4,12 @@
 #   source scripts/cv_env.sh
 #   learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2
 
-export SVZEROD_INSTALL_DIR="/Users/natalia/cursor_access/svZeroDPlus/Release"
+export SVZEROD_INSTALL_DIR="/Users/projects/svZeroDPlus/Release"
 export PATH="$SVZEROD_INSTALL_DIR:$PATH"
 
-if [[ -f "/Users/natalia/cursor_access/learn_lpns/.venv/bin/activate" ]]; then
+if [[ -f "/Users/projects/learn_lpns/.venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
-  source "/Users/natalia/cursor_access/learn_lpns/.venv/bin/activate"
+  source "/Users/projects/learn_lpns/.venv/bin/activate"
 fi
 
-cd "/Users/natalia/cursor_access/learn_lpns"
+cd "/Users/projects/learn_lpns"

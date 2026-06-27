@@ -37,6 +37,13 @@ def test_load_pipeline_config_defaults():
     assert cfg.solver.steady_initial is False
     assert cfg.calibration.tolerance_gradient == pytest.approx(1e-4)
     assert cfg.calibration.default_l2_r == pytest.approx(1e5)
+    assert cfg.cohorts.default_cv_set_names == (
+        "VMR_rigid_aorta_adults_all",
+        "VMR_abdo",
+        "VMR_pulmo_healthy",
+        "VMR_all",
+    )
+    assert cfg.cohorts.sets["VMR_abdo"].display_label == "Aortofemoral"
     assert cfg.split.percent_train == pytest.approx(0.9)
     assert cfg.split.data_processing_percent_train == pytest.approx(0.8)
     assert cfg.split.cv_num_trials == 5
@@ -53,13 +60,14 @@ def test_training_batch_size_for_n_train():
     assert cfg.training.batch_size_for_n_train(1) == 1
 
 
-def test_l2_penalties_for_set():
+def test_cohorts_l2_penalties_for_set():
     cfg = load_pipeline_config()
-    assert cfg.calibration.l2_penalties_for_set("VMR_abdo") == (pytest.approx(100), pytest.approx(1e5))
-    assert cfg.calibration.l2_penalties_for_set("unknown_set") == (
+    assert cfg.cohorts.l2_penalties_for_set("VMR_abdo", cfg.calibration) == (
         pytest.approx(1e5),
         pytest.approx(1e10),
     )
+    assert cfg.cohorts.format_display_label("VMR_abdo") == "Aortofemoral"
+    assert cfg.cohorts.format_display_label("VMR_unknown") == "VMR\nunknown"
 
 
 def test_build_calibration_parameters_penalty_on():
@@ -69,12 +77,13 @@ def test_build_calibration_parameters_penalty_on():
         quadratic_resistor=True,
         penalty_on=True,
         set_name="VMR_abdo",
+        cohorts=cfg.cohorts,
     )
     assert params["tolerance_gradient"] == pytest.approx(1e-4)
     assert params["maximum_iterations"] == 20
     assert params["calibrate_stenosis_coefficient"] is True
-    assert params["L2_penalty_R_poiseuille"] == pytest.approx(100)
-    assert params["L2_penalty_stenosis_coefficient"] == pytest.approx(1e5)
+    assert params["L2_penalty_R_poiseuille"] == pytest.approx(1e5)
+    assert params["L2_penalty_stenosis_coefficient"] == pytest.approx(1e10)
 
 
 def test_build_calibration_parameters_penalty_off():
@@ -117,13 +126,32 @@ def test_load_pipeline_config_set_name_layer(tmp_path, monkeypatch):
         yaml.dump(
             {
                 "calibration": {"default_l2_r": 1.0e5, "default_l2_stenosis": 1.0e10},
+                "cohorts": {
+                    "sets": {
+                        "VMR_custom": {
+                            "display_label": "Custom",
+                            "calibration": {"l2_r": 42, "l2_stenosis": 99},
+                        }
+                    }
+                },
             }
         )
     )
     sets_dir = tmp_path / "config" / "sets"
     sets_dir.mkdir(parents=True)
     (sets_dir / "VMR_custom.yaml").write_text(
-        yaml.dump({"calibration": {"set_l2_penalties": {"VMR_custom": {"l2_r": 42, "l2_stenosis": 99}}}})
+        yaml.dump(
+            {
+                "cohorts": {
+                    "sets": {
+                        "VMR_custom": {
+                            "display_label": "Custom merged",
+                            "calibration": {"l2_r": 42, "l2_stenosis": 99},
+                        }
+                    }
+                }
+            }
+        )
     )
 
     monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
@@ -132,7 +160,8 @@ def test_load_pipeline_config_set_name_layer(tmp_path, monkeypatch):
         lambda: tmp_path,
     )
     cfg = load_pipeline_config(set_name="VMR_custom")
-    assert cfg.calibration.l2_penalties_for_set("VMR_custom") == (pytest.approx(42), pytest.approx(99))
+    assert cfg.cohorts.sets["VMR_custom"].display_label == "Custom merged"
+    assert cfg.cohorts.l2_penalties_for_set("VMR_custom", cfg.calibration) == (pytest.approx(42), pytest.approx(99))
 
 
 def test_apply_solver_parameters_writes_expected_fields():

@@ -21,6 +21,7 @@ from learn_lpns.tools.paths import repo_root
 
 CLI_SCRIPT_NAMES = (
     "learn-lpns-cv",
+    "learn-lpns-cv-all-sets",
     "learn-lpns-batch-zerod",
     "learn-lpns-data-processing",
     "learn-lpns-train",

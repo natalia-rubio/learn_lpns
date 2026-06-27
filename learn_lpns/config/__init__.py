@@ -8,11 +8,12 @@ from learn_lpns.config.load import (
 )
 from learn_lpns.config.models import (
     CalibrationConfig,
+    CohortEntry,
+    CohortsConfig,
     OptimizerConfig,
     PhysicsConfig,
     PipelineConfig,
     RriCoefficientConfig,
-    SetL2Penalty,
     SolverConfig,
     SplitConfig,
     TrainingConfig,
@@ -23,11 +24,12 @@ from learn_lpns.config.models import (
 
 __all__ = [
     "CalibrationConfig",
+    "CohortEntry",
+    "CohortsConfig",
     "OptimizerConfig",
     "PhysicsConfig",
     "PipelineConfig",
     "RriCoefficientConfig",
-    "SetL2Penalty",
     "SolverConfig",
     "SplitConfig",
     "TrainingConfig",
