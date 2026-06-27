@@ -113,7 +113,7 @@ def test_readme_setup_artifacts_exist():
 def test_standard_zero_d_seed_json_present():
     """Bundled JSON seeds ship in git (no LFS); required for notebook/CV demos."""
     root = repo_root()
-    seed_dir = root / "data" / "zeroD" / "VMR_aortas" / "standard-0d"
+    seed_dir = root / "data" / "zeroD" / "VMR_aorta_starter" / "standard-0d"
     assert seed_dir.is_dir(), f"Missing {seed_dir.relative_to(root)}"
     for geo in ("0129_0000", "0154_0001", "0174_0000", "0175_0000", "0176_0000"):
         assert (seed_dir / f"{geo}.json").is_file()

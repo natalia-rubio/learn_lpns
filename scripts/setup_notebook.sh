@@ -102,11 +102,11 @@ verify_notebook_data() {
   local missing=0
   local geo name
   for geo in 0129_0000 0154_0001 0174_0000 0175_0000 0176_0000; do
-    if [[ ! -f "$root/data/zeroD/VMR_aortas/standard-0d/$geo.json" ]]; then
-      printf '  missing: %s\n' "$root/data/zeroD/VMR_aortas/standard-0d/$geo.json" >&2
+    if [[ ! -f "$root/data/zeroD/VMR_aorta_starter/standard-0d/$geo.json" ]]; then
+      printf '  missing: %s\n' "$root/data/zeroD/VMR_aorta_starter/standard-0d/$geo.json" >&2
       missing=1
     fi
-    local cal_el="$root/data/zeroD/VMR_aortas/gen_loss/$geo/bifurcations_EL_calibrated_output_BloodVesselJunction.json"
+    local cal_el="$root/data/zeroD/VMR_aorta_starter/gen_loss/$geo/bifurcations_EL_calibrated_output_BloodVesselJunction.json"
     if [[ ! -f "$cal_el" ]]; then
       printf '  missing: %s\n' "$cal_el" >&2
       missing=1

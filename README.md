@@ -93,7 +93,7 @@ source scripts/cv_env.sh
 After [Setup](#setup), run cross-validation on the sample cohort:
 
 ```bash
-learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2 --run_config gen_loss
+learn-lpns-cv --set_name VMR_aorta_starter --geometry_variant bifurcations_EL --num_trials 2 --run_config gen_loss
 ```
 
 ```bash
@@ -117,7 +117,7 @@ make notebook
 | [docs/architecture.md](docs/architecture.md)                                     | Design decisions                                                                                                    |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                                               | Setup, checks                                                                                                       |
 | [docs/data_and_results.md](docs/data_and_results.md)                             | Data layout, sample cohort, output paths                                                                            |
-| [data/README.md](data/README.md)                                                 | Provided VMR_aortas cohort, inputs needed for example notebook                                                      |
+| [data/README.md](data/README.md)                                                 | Provided VMR_aorta_starter cohort, inputs needed for example notebook                                                      |
 | [examples/nn_parameter_comparison.ipynb](examples/nn_parameter_comparison.ipynb) | Notebook: Representative workflow skipping steps that require external svzerodsolver and svzerodcalibrator binaries |
 
 
@@ -178,7 +178,7 @@ See [data/README.md](data/README.md) for provided sample cohort paths.
 | `learn-lpns-data-processing` | Build `ml_inputs`, `jax_arrays`, and `split_indices`                    |
 | `learn-lpns-train`           | Train junction/vessel NNs (`--set_name` required; `--num_geos` optional) |
 
-Example: `learn-lpns-train --set_name VMR_aortas --run_config gen_loss`. All commands use keyword flags — see [docs/usage.md](docs/usage.md).
+Example: `learn-lpns-train --set_name VMR_aorta_starter --run_config gen_loss`. All commands use keyword flags — see [docs/usage.md](docs/usage.md).
 
 
 ## Configuration
@@ -187,7 +187,7 @@ The repo uses two related config layers:
 
 **Pipeline defaults (YAML)** — physics, solver tolerances, calibration penalties, train/val splits, and NN training hyperparameters live in `config/defaults.yaml`. Load them in code with `get_pipeline_config()` (optionally pass `set_name` to deep-merge `config/sets/<set_name>.yaml` when present). Override the base file with the `LEARN_LPNS_CONFIG` environment variable, or pass a dict of patches in tests.
 
-**Run config (CLI)** — experiment variants are selected with `--run_config` on the console entry points (default: `gen_loss`). Tokens such as `quadratic_resistor`, `penalty_on`, and `asymmetric_loss` are underscore-separated and order-independent; they resolve to a canonical suffix under `data/` and `results/` (e.g. `data/zeroD/VMR_aortas/gen_loss/`). See [docs/usage.md](docs/usage.md) (`Run config`) and `learn_lpns/zerod_calibration/run_config_canonical.py`.
+**Run config (CLI)** — experiment variants are selected with `--run_config` on the console entry points (default: `gen_loss`). Tokens such as `quadratic_resistor`, `penalty_on`, and `asymmetric_loss` are underscore-separated and order-independent; they resolve to a canonical suffix under `data/` and `results/` (e.g. `data/zeroD/VMR_aorta_starter/gen_loss/`). See [docs/usage.md](docs/usage.md) (`Run config`) and `learn_lpns/zerod_calibration/run_config_canonical.py`.
 
 **Imports** — Small top-level API for notebooks and downstream tools:
 

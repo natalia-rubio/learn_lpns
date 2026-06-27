@@ -183,11 +183,7 @@ def main():
         "--set_names",
         nargs="+",
         default=None,
-        help=(
-            "Set names to include (default: "
-            + " ".join(default_set_names)
-            + ")."
-        ),
+        help=("Set names to include (default: " + " ".join(default_set_names) + ")."),
     )
     parser.add_argument(
         "--geometry_variant",

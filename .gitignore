@@ -14,20 +14,20 @@ data2/*
 data/*
 !data/README.md
 
-# zeroD: VMR_aortas reference solver JSONs only — not per-run_config geometry trees
+# zeroD: VMR_aorta_starter reference solver JSONs only — not per-run_config geometry trees
 !data/zeroD/
 data/zeroD/*
-!data/zeroD/VMR_aortas/
-data/zeroD/VMR_aortas/*
-!data/zeroD/VMR_aortas/standard-0d/
-!data/zeroD/VMR_aortas/standard-0d/**
+!data/zeroD/VMR_aorta_starter/
+data/zeroD/VMR_aorta_starter/*
+!data/zeroD/VMR_aorta_starter/standard-0d/
+!data/zeroD/VMR_aorta_starter/standard-0d/**
 
 # gen_loss: bundled calibrated JSON (1 file × 5 geos); geometric bifurcations_EL built in notebook
-!data/zeroD/VMR_aortas/gen_loss/
-data/zeroD/VMR_aortas/gen_loss/*
-!data/zeroD/VMR_aortas/gen_loss/*/
-data/zeroD/VMR_aortas/gen_loss/*/*
-!data/zeroD/VMR_aortas/gen_loss/*/bifurcations_EL_calibrated_output_BloodVesselJunction.json
+!data/zeroD/VMR_aorta_starter/gen_loss/
+data/zeroD/VMR_aorta_starter/gen_loss/*
+!data/zeroD/VMR_aorta_starter/gen_loss/*/
+data/zeroD/VMR_aorta_starter/gen_loss/*/*
+!data/zeroD/VMR_aorta_starter/gen_loss/*/bifurcations_EL_calibrated_output_BloodVesselJunction.json
 
 # oneD: bundled VMR centerline / projected solutions
 !data/oneD/

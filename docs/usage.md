@@ -2,7 +2,7 @@
 
 Run from the **repository root** (or use console entry points after `pip install -e ".[dev]"`).
 
-The provided sample cohort is **VMR_aortas** (5 geometries). See [data/README.md](../data/README.md).
+The provided sample cohort is **`VMR_aorta_starter`** (5 geometries for notebook/CV demos). The full aortic cohort is **`VMR_aorta`**. See [data/README.md](../data/README.md).
 
 All four console entry points use **keyword flags** with underscores (e.g. `--set_name`, `--run_config`, `--geometry_variant`).
 
@@ -12,7 +12,7 @@ Exercises prerequisite checks, k-fold training (junction + vessel NNs), NN deplo
 
 ```bash
 learn-lpns-cv \
-  --set_name VMR_aortas \
+  --set_name VMR_aorta_starter \
   --geometry_variant bifurcations_EL \
   --num_trials 2 \
   --run_config gen_loss
@@ -72,7 +72,7 @@ Runs `generate_zerod_inputs.py` over VMR geometries from `data/zeroD/<set_name>/
 
 ```bash
 learn-lpns-batch-zerod \
-  --set_name VMR_aortas \
+  --set_name VMR_aorta_starter \
   --run_config gen_loss \
   --skip_steps calibration_forward \
   --geometries 0076_1001
@@ -132,16 +132,16 @@ All arguments are **keyword flags** (e.g. `--set_name`, `--run_config`), consist
 
 ```bash
 # Minimal: defaults to bifurcations_EL; num_geos inferred from jax_arrays + split_indices
-learn-lpns-train --set_name VMR_aortas --run_config gen_loss
+learn-lpns-train --set_name VMR_aorta_starter --run_config gen_loss
 
 # Override output directory (e.g. CV trial or notebook demo)
-learn-lpns-train --set_name VMR_aortas \
+learn-lpns-train --set_name VMR_aorta_starter \
   --run_config gen_loss \
-  --model_dir results/models/VMR_aortas/bifurcations_EL_trial_0
+  --model_dir results/models/VMR_aorta_starter/bifurcations_EL_trial_0
 
 # Explicit cohort size and/or geometry variant
-learn-lpns-train --set_name VMR_aortas --num_geos 5
-learn-lpns-train --set_name VMR_aortas --geometry_variant all
+learn-lpns-train --set_name VMR_aorta_starter --num_geos 5
+learn-lpns-train --set_name VMR_aorta_starter --geometry_variant all
 ```
 
 **Defaults:** `geometry_variant=bifurcations_EL`, `run_config=gen_loss`. If `--num_geos` is omitted, it is inferred from `data/jax_arrays/{set_name}/{run_config}/bifurcations_EL/all/jax_arrays_num_geos_*.pkl`, choosing the **largest** cohort size that also has a matching file under `data/split_indices/...`. Pass `--split_path` (as CV does for trial splits) to take `num_geos` from that path instead.
@@ -168,13 +168,13 @@ Bifurcation **generation** is stored in the jax pickle (not an NN input) and use
 
 ## Notebook example (no C++ solver)
 
-[examples/nn_parameter_comparison.ipynb](../examples/nn_parameter_comparison.ipynb) walks through a five-geometry demo (`VMR_aortas`: `0129_0000`, `0154_0001`, `0174_0000`, `0175_0000`, `0176_0000`) without running calibration or forward simulation:
+[examples/nn_parameter_comparison.ipynb](../examples/nn_parameter_comparison.ipynb) walks through a five-geometry demo (`VMR_aorta_starter`: `0129_0000`, `0154_0001`, `0174_0000`, `0175_0000`, `0176_0000`) without running calibration or forward simulation:
 
 1. **Setup** — verify provided inputs per geometry (`standard-0d/<geo>.json`, `gen_loss/<geo>/bifurcations_EL_calibrated_output_BloodVesselJunction.json`, `oneD/VMR/<geo>/unsteady_soln.vtp`); set `SEED` for an 80% geometry-level train/val split (4 train / 1 val).
 2. **Geometric pre-processing** — for all five geometries, build `bifurcations_EL_geometric_input.json` in Python via `materialize_bifurcations_el_from_base` (bifurcation split + entrance-length adjustment from standard-0d + VTP; no svZeroDPlus).
 3. **Calibration** — skipped; uses the provided calibrated JSON as ground truth.
 4. **Training data** — run `learn-lpns-data-processing` to build `ml_inputs`, `jax_arrays`, and geometry-level split indices.
-5. **Training** — train junction and vessel NNs with `learn-lpns-train` (six models: R, S, L for junctions and vessels). After step 4, `learn-lpns-train --set_name VMR_aortas --run_config gen_loss` is enough (`bifurcations_EL` and `num_geos=5` are inferred from the generated data).
+5. **Training** — train junction and vessel NNs with `learn-lpns-train` (six models: R, S, L for junctions and vessels). After step 4, `learn-lpns-train --set_name VMR_aorta_starter --run_config gen_loss` is enough (`bifurcations_EL` and `num_geos=5` are inferred from the generated data).
 6. **Inference** — predict R, S, L on the held-out geometry and write learned 0D JSON configs (`bifurcations_EL_NN_JunctionOnly.json`, etc.).
 7. **Parameter comparison plot** — bar chart of standard, calibrated, and learned R/S/L per element on the validation geometry.
 8. **Forward simulation** — skipped; notebook shows a reference inlet comparison figure (requires `svzerodsolver` to reproduce).
@@ -212,7 +212,7 @@ After zeroD outputs exist, build ml_inputs and jax stacks:
 
 ```bash
 learn-lpns-data-processing \
-  --set_name VMR_aortas \
+  --set_name VMR_aorta_starter \
   --geometry_variant bifurcations_EL \
   --run_config gen_loss
 ```

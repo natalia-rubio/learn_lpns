@@ -43,6 +43,7 @@ def _cohort_display_label(set_name: str) -> str:
     label = get_pipeline_config().cohorts.display_label_for(set_name)
     return (label or set_name).strip()
 
+
 # Prefer run-config subfolders that contain per-geometry directories (not only standard-0d JSON).
 RUN_CONFIG_DIR_PREFERENCE: Sequence[str] = (
     "gen_loss",

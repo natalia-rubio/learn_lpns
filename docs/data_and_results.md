@@ -12,13 +12,13 @@ The `data/` directory is organized by `set_name` (cohort of vascular geometries)
 | `jax_arrays/` | Stacked arrays for JAX training/inference; includes vessel-mode arrays when enabled. Junction pickles are named `jax_arrays_num_geos_{N}.pkl` (vessel: `jax_arrays_vessel_num_geos_{N}.pkl`) where `N` is the cohort size. |
 | `split_indices/` | Train/validation geometry splits for reproducible CV trials. Files are named `train_val_ind_{set_name}_num_geos_{N}` (CV trials append `_trial_{k}`). |
 
-## Provided sample cohort (`VMR_aortas`)
+## Provided sample cohort (`VMR_aorta_starter`)
 
-Five adult aortic geometries from the [Vascular Model Repository](https://www.vascularmodel.com/) ship with the repo for local testing:
+Five adult aortic geometries from the [Vascular Model Repository](https://www.vascularmodel.com/) ship with the repo for local testing and the example notebook:
 
-`0075_1001`, `0076_1001`, `0094_0001`, `0095_0001`, `0105_0001`
+`0129_0000`, `0154_0001`, `0174_0000`, `0175_0000`, `0176_0000`
 
-See [data/README.md](../data/README.md) for paths and `scripts/git-freeze-sample-data.sh` to ignore local edits to tracked seed files.
+This is separate from the full **`VMR_aorta`** cohort (more geometries), used for cross-validation and production experiments. See [data/README.md](../data/README.md) for paths.
 
 ## Results layout
 

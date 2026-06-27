@@ -18,7 +18,7 @@ def _touch(path: str) -> None:
 
 def test_infer_num_geos_prefers_largest_with_matching_split(tmp_path):
     data_root = tmp_path / "data"
-    set_name = "VMR_aortas"
+    set_name = "VMR_aorta_starter"
     geometry_variant = "bifurcations_EL"
     set_type = "all"
     run_config = "gen_loss"
@@ -49,12 +49,12 @@ def test_infer_num_geos_prefers_largest_with_matching_split(tmp_path):
 
 
 def test_infer_num_geos_from_split_path(tmp_path):
-    split_path = tmp_path / "train_val_ind_VMR_aortas_num_geos_7_trial_0"
+    split_path = tmp_path / "train_val_ind_VMR_aorta_starter_num_geos_7_trial_0"
     _touch(str(split_path))
 
     inferred = _infer_num_geos(
         data_root=str(tmp_path),
-        set_name="VMR_aortas",
+        set_name="VMR_aorta_starter",
         geometry_variant="bifurcations_EL",
         set_type="all",
         run_config_suffix="gen_loss",
@@ -68,13 +68,13 @@ def test_infer_num_geos_from_split_path(tmp_path):
 def test_infer_num_geos_requires_matching_split_when_not_explicit(tmp_path):
     data_root = tmp_path / "data"
     _touch(
-        data_root / "jax_arrays" / "VMR_aortas" / "gen_loss" / "bifurcations_EL" / "all" / "jax_arrays_num_geos_5.pkl"
+        data_root / "jax_arrays" / "VMR_aorta_starter" / "gen_loss" / "bifurcations_EL" / "all" / "jax_arrays_num_geos_5.pkl"
     )
 
     with pytest.raises(SystemExit, match="no matching split_indices"):
         _infer_num_geos(
             data_root=str(data_root),
-            set_name="VMR_aortas",
+            set_name="VMR_aorta_starter",
             geometry_variant="bifurcations_EL",
             set_type="all",
             run_config_suffix="gen_loss",

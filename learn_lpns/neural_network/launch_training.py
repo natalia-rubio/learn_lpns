@@ -283,7 +283,7 @@ def main():
 
     training_defaults = get_pipeline_config().training
     parser = argparse.ArgumentParser(description="Launch NN training")
-    parser.add_argument("--set_name", required=True, help="Set name (e.g., VMR_aortas)")
+    parser.add_argument("--set_name", required=True, help="Set name (e.g., VMR_aorta_starter)")
     parser.add_argument(
         "--num_geos",
         type=int,

@@ -125,21 +125,14 @@ def main():
     split_defaults = get_pipeline_config().split
     default_set_names = list(get_pipeline_config().cohorts.default_cv_set_names)
     parser = argparse.ArgumentParser(
-        description=(
-            "Run cross-validation for all default VMR set names, "
-            "then an optional cross-set summary barchart."
-        )
+        description=("Run cross-validation for all default VMR set names, then an optional cross-set summary barchart.")
     )
     parser.add_argument(
         "--set_names",
         nargs="+",
         default=None,
         metavar="SET_NAME",
-        help=(
-            "Set names to run (default: "
-            + " ".join(default_set_names)
-            + ")."
-        ),
+        help=("Set names to run (default: " + " ".join(default_set_names) + ")."),
     )
     parser.add_argument(
         "--geometry_variant",
@@ -169,10 +162,7 @@ def main():
         "--run_config",
         default=DEFAULT_CLI_RUN_CONFIG,
         metavar="TOKENS",
-        help=(
-            "Run-config tokens in any order, underscore-separated "
-            f"(default: {DEFAULT_CLI_RUN_CONFIG})."
-        ),
+        help=(f"Run-config tokens in any order, underscore-separated (default: {DEFAULT_CLI_RUN_CONFIG})."),
     )
     parser.add_argument(
         "--Vessel_NN",
@@ -197,9 +187,7 @@ def main():
         type=float,
         default=split_defaults.percent_train,
         metavar="P",
-        help=(
-            f"Fraction of geometries for training (default: {split_defaults.percent_train} from config)."
-        ),
+        help=(f"Fraction of geometries for training (default: {split_defaults.percent_train} from config)."),
     )
     parser.add_argument(
         "--metrics_only",

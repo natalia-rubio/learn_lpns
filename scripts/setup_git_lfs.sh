@@ -65,8 +65,8 @@ verify_sample_files() {
 
   for geo in 0129_0000 0154_0001 0174_0000 0175_0000 0176_0000; do
     for path in \
-      "data/zeroD/VMR_aortas/standard-0d/${geo}.json" \
-      "data/zeroD/VMR_aortas/gen_loss/${geo}/bifurcations_EL_calibrated_output_BloodVesselJunction.json" \
+      "data/zeroD/VMR_aorta_starter/standard-0d/${geo}.json" \
+      "data/zeroD/VMR_aorta_starter/gen_loss/${geo}/bifurcations_EL_calibrated_output_BloodVesselJunction.json" \
       "data/oneD/VMR/${geo}/unsteady_soln.vtp"
     do
       if [[ ! -f "$path" ]]; then

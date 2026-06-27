@@ -2,7 +2,7 @@
 # Activates .venv, points SVZEROD_INSTALL_DIR at built solvers, cds to repo.
 #
 #   source scripts/cv_env.sh
-#   learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2
+#   learn-lpns-cv --set_name VMR_aorta_starter --geometry_variant bifurcations_EL --num_trials 2
 
 export SVZEROD_INSTALL_DIR="/Users/projects/svZeroDPlus/Release"
 export PATH="$SVZEROD_INSTALL_DIR:$PATH"

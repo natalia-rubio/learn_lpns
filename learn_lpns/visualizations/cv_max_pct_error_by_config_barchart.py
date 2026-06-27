@@ -95,6 +95,7 @@ DEFAULT_RUN_CONFIGS = [
     "gen_loss:bifurcations",
 ]
 
+
 def _format_set_label(set_name):
     """Same rules as learn_lpns.visualizations.cv_cross_set_summary_barchart."""
     return get_pipeline_config().cohorts.format_display_label(set_name)

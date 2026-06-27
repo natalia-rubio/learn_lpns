@@ -24,7 +24,7 @@ BUNDLED_CALIBRATED_JSON = (
     repo_root()
     / "data"
     / "zeroD"
-    / "VMR_aortas"
+    / "VMR_aorta_starter"
     / "gen_loss"
     / "0176_0000"
     / "bifurcations_EL_calibrated_output_BloodVesselJunction.json"

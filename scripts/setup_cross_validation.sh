@@ -71,7 +71,7 @@ Prerequisites (checked before clone/build):
 
 After setup:
   source scripts/cv_env.sh
-  learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2
+  learn-lpns-cv --set_name VMR_aorta_starter --geometry_variant bifurcations_EL --num_trials 2
 
 Sample data ships in learn_lpns (5 VMR geometries). Pipeline outputs under data/
 and results/ are generated on first run.
@@ -191,7 +191,7 @@ verify_sample_data() {
     local check
     for check in \
       "$root/data/README.md" \
-      "$root/data/zeroD/VMR_aortas/standard-0d/0129_0000.json" \
+      "$root/data/zeroD/VMR_aorta_starter/standard-0d/0129_0000.json" \
       "$root/data/oneD/VMR/0129_0000/unsteady_soln.vtp"
     do
       if [[ ! -f "$check" ]]; then
@@ -215,7 +215,7 @@ write_cv_env() {
 # Activates .venv, points SVZEROD_INSTALL_DIR at built solvers, cds to repo.
 #
 #   source scripts/cv_env.sh
-#   learn-lpns-cv --set_name VMR_aortas --geometry_variant bifurcations_EL --num_trials 2
+#   learn-lpns-cv --set_name VMR_aorta_starter --geometry_variant bifurcations_EL --num_trials 2
 
 export SVZEROD_INSTALL_DIR="$svzerod_install"
 export PATH="\$SVZEROD_INSTALL_DIR:\$PATH"
@@ -316,7 +316,7 @@ Setup complete.
   source $LEARN_LPNS_DIR/scripts/cv_env.sh
 
   learn-lpns-cv \\
-    --set_name VMR_aortas \\
+    --set_name VMR_aorta_starter \\
     --geometry_variant bifurcations_EL \\
     --num_trials 2 \\
     --run_config gen_loss
