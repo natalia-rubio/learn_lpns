@@ -174,11 +174,7 @@ def _predict_delta_p(
 ) -> np.ndarray:
     q_in = np.asarray(q_in, dtype=float)
     dq_out = np.asarray(dq_out, dtype=float)
-    return (
-        r_poiseuille * q_in
-        + stenosis * np.abs(q_in) * q_in
-        + inductance * dq_out
-    )
+    return r_poiseuille * q_in + stenosis * np.abs(q_in) * q_in + inductance * dq_out
 
 
 def _relative_fit_error(
@@ -318,11 +314,7 @@ def _save_rsl_fit_plot(
     ax.set_ylabel(r"$\Delta P$")
     ax.set_title(element_name)
     ax.grid(True, alpha=0.3)
-    param_text = (
-        f"R = {r_poiseuille:.6g}\n"
-        f"S = {stenosis:.6g}\n"
-        f"L = {inductance:.6g}"
-    )
+    param_text = f"R = {r_poiseuille:.6g}\nS = {stenosis:.6g}\nL = {inductance:.6g}"
     ax.text(
         0.02,
         0.98,
@@ -377,9 +369,7 @@ def calibrate_decoupled_ls(
     plot_dir: Path | None = None
     if plot_rsl_fits:
         if not set_name or not geo_name:
-            inferred_set, inferred_geo = infer_set_geo_from_zerod_path(
-                calibration_input_path or ""
-            )
+            inferred_set, inferred_geo = infer_set_geo_from_zerod_path(calibration_input_path or "")
             set_name = set_name or inferred_set
             geo_name = geo_name or inferred_geo
         if set_name and geo_name:

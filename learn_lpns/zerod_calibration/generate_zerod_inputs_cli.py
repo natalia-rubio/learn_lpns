@@ -6,13 +6,13 @@ import argparse
 import os
 import sys
 
+from learn_lpns.config import get_pipeline_config
 from learn_lpns.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
     parse_underscore_tokens,
     resolve_run_config_suffix,
     run_config_suffix_to_flags,
 )
-from learn_lpns.config import get_pipeline_config
 
 SKIP_STEP_TOKENS = frozenset(
     {
@@ -272,9 +272,7 @@ def namespace_to_generate_zerod_argv(
     suffix = getattr(ns, "run_config_suffix", None) or resolve_namespace_run_config(ns)
     cmd.extend(["--run_config", suffix])
     cmd.extend(["--geometry_variant", getattr(ns, "geometry_variant", DEFAULT_GEOMETRY_VARIANT)])
-    cmd.extend(
-        ["--calibration_backend", getattr(ns, "calibration_backend", DEFAULT_CALIBRATION_BACKEND)]
-    )
+    cmd.extend(["--calibration_backend", getattr(ns, "calibration_backend", DEFAULT_CALIBRATION_BACKEND)])
     if getattr(ns, "plot_rsl_fits", False):
         cmd.append("--plot_rsl_fits")
 

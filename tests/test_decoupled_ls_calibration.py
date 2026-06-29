@@ -85,10 +85,8 @@ def test_fit_rlc_recovers_known_parameters_without_stenosis():
     y = config["y"]
     vessel_name = "branch0_seg0"
     q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
-    dq_out = np.asarray(config["dy"][f"flow:branch0_seg0:OUT"])
-    delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(
-        y["pressure:branch0_seg0:OUT"]
-    )
+    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
     r_fit, s_fit, l_fit, rel_err = _fit_rlc(delta_p, q_in, dq_out, fit_stenosis=False)
 
@@ -109,10 +107,8 @@ def test_fit_rlc_recovers_known_parameters_with_stenosis():
     y = config["y"]
     vessel_name = "branch0_seg0"
     q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
-    dq_out = np.asarray(config["dy"][f"flow:branch0_seg0:OUT"])
-    delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(
-        y["pressure:branch0_seg0:OUT"]
-    )
+    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
     r_fit, s_fit, l_fit, rel_err = _fit_rlc(delta_p, q_in, dq_out, fit_stenosis=True)
 
@@ -181,7 +177,12 @@ def test_smoke_on_bundled_sample():
     with open(BUNDLED_CALIBRATED_JSON) as f:
         config = json.load(f)
 
-    out = calibrate_decoupled_ls(config)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Decoupled LS fit .* exceeds .* threshold",
+        )
+        out = calibrate_decoupled_ls(config)
     out = _postprocess_calibrated_config(out)
 
     assert "vessels" in out

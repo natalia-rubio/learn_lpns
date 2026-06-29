@@ -37,7 +37,7 @@ Implementation: `learn_lpns/zerod_calibration/decoupled_ls_calibration.py`.
 - With `quadratic_resistor_gen_loss` and **without** `penalty_on`, there is **no L2 regularization** toward geometric priors.
 - RI-only (`gen_loss`) is a **two-parameter** fit (R, L) with S fixed at 0 — usually much more stable.
 
-**Example — `VMR_pulmo` / `quadratic_resistor_gen_loss` / 5-geo summary**  
+**Example — `VMR_pulmo` / `quadratic_resistor_gen_loss` / 5-geo summary**
 (`data/feature_histograms/VMR_pulmo/quadratic_resistor_gen_loss/bifurcations_EL/all/data_summary_VMR_pulmo_num_geos_5.csv`):
 
 | Output | min | max | std |
@@ -86,7 +86,7 @@ Worse CV MSE does not by itself mean stenosis is wrong in principle — it can m
 
 1. **Calibrated baseline MSE** (forward sim with calibrated JSON, no NN): if RRI calibrated is already worse than RI calibrated, the issue is calibration/physics, not the NN. Done, calibrated RSL outperformed calibrated RL in cross validation.
 2. **Label quality**: inspect `data/ml_inputs/.../junction_lumped_parameters.csv` or feature histograms for negative or extreme **S** (and **R**). (This is happening, it is a real phenomenon.)
-3. **Decoupled fit warnings**: run calibration and watch for `UserWarning` when relative RMS fit error exceeds 10% (`decoupled_ls_calibration.py`). 
+3. **Decoupled fit warnings**: run calibration and watch for `UserWarning` when relative RMS fit error exceeds 10% (`decoupled_ls_calibration.py`).
 4. **Fit plots**: enable `--plot_rsl_fits` on `generate_zerod_inputs` / batch (or `calibration.plot_rsl_fits: true` in config) to write per-element \(\Delta P\) vs \(Q\) plots under `results/RSL_fits/<set_name>/<geo_name>/`.  done. these look ok
 5. **Try alternatives**:
    - `--calibration_backend svzerod` (global C++ calibrator; needs `SVZEROD_INSTALL_DIR`)

@@ -221,9 +221,7 @@ def run_calibration(
             json.dump(cali, f, indent=4)
         print("  ✓ Calibration completed with decoupled least squares")
     else:
-        raise ValueError(
-            f"Unknown calibration backend {backend!r}; expected 'decoupled_ls' or 'svzerod'"
-        )
+        raise ValueError(f"Unknown calibration backend {backend!r}; expected 'decoupled_ls' or 'svzerod'")
 
     print(f"Calibrated output saved to: {output_path}")
     return cali
