@@ -93,6 +93,7 @@ def get_default_include_features() -> list[str]:
         "outlet0_absorbed_L",
         "outlet0_absorbed_stenosis_coefficient",
         "flow_split_inv",
+        "speed_change",
         "outlet0_rneg4",
         "outlet0_rneg2",
         "outlet0_nd_length",
@@ -955,7 +956,7 @@ def build_data_dict_from_csvs(
         geometry_variant=geometry_variant,
         input_nan_msg=(
             "NaN found in junction input array (geometric features). "
-            "Check geometric_features.csv for all geometries (e.g. flow_split, flow_split_inv)."
+            "Check geometric_features.csv for all geometries (e.g. flow_split, flow_split_inv, speed_change)."
         ),
         output_nan_msg=(
             "NaN found in junction output array (lumped parameters). "

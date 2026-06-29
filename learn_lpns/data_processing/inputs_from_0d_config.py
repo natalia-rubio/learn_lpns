@@ -193,7 +193,8 @@ def load_junction_geometric_features(
     config_path: str,
     require_two_outlets: bool = True,
     verbose: bool = False,
-) -> tuple[np.ndarray, list[str], list[str]]:
+    geometric_results_path: str | None = None,
+) -> tuple[np.ndarray, list[str], list[str], list[str]]:
     """
     Extract a junction-level geometric feature matrix from a 0D config JSON.
 
@@ -206,6 +207,10 @@ def load_junction_geometric_features(
             If True (default), only junctions with exactly two outlets are
             used (expected case after bifurcation_splitting). If False, all
             junctions are used but may raise if outlets < 2.
+        geometric_results_path:
+            Optional path to geometric simulation results CSV (e.g.
+            ``bifurcations_EL_geometric_results.csv``). When present, appends
+            ``flow_split``, ``flow_split_inv``, and ``speed_change`` columns.
 
     Returns:
         X:
@@ -213,8 +218,10 @@ def load_junction_geometric_features(
         feature_names:
             List of length n_features describing each column of X.
         junction_names:
-            List of length n_junctions; `junction_names[i]` corresponds to
-            row `X[i, :]`.
+            List of length n_junctions; ``junction_names[i]`` corresponds to
+            row ``X[i, :]``.
+        outlet_primary_names:
+            Primary outlet vessel name for each row (used for flow_split).
     """
     with open(config_path) as f:
         cfg = json.load(f)
@@ -477,6 +484,46 @@ def load_junction_geometric_features(
     for prefix in ("outlet0", "outlet1"):
         for suffix in _all_outlet_suffixes:
             feature_names.append(f"{prefix}_{suffix}")
+
+    if geometric_results_path and os.path.exists(geometric_results_path):
+        junction_by_name = {j.get("junction_name", ""): j for j in junctions}
+        flow_splits = compute_junction_flow_splits(
+            config_path,
+            geometric_results_path,
+            require_two_outlets=require_two_outlets,
+        )
+        flow_split_col: list[float] = []
+        speed_change_col: list[float] = []
+        for i, jname in enumerate(junction_names):
+            primary = outlet_primary_names[i]
+            if jname not in flow_splits:
+                flow_split_col.append(np.nan)
+                speed_change_col.append(np.nan)
+                continue
+            (out0_name, out1_name), (fs0, fs1) = flow_splits[jname]
+            if primary == out0_name:
+                flow_split = fs0
+            elif primary == out1_name:
+                flow_split = fs1
+            else:
+                flow_split = np.nan
+            flow_split_col.append(float(flow_split))
+            speed_change_col.append(_speed_change_for_junction_row(cfg, junction_by_name, jname, primary, flow_split))
+
+        flow_split_arr = np.asarray(flow_split_col, dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            flow_split_inv = np.where(
+                np.isfinite(flow_split_arr) & (flow_split_arr > 0),
+                100.0 / flow_split_arr,
+                np.nan,
+            )
+        X = np.column_stack([X, flow_split_arr, flow_split_inv, np.asarray(speed_change_col, dtype=float)])
+        feature_names = [*feature_names, "flow_split", "flow_split_inv", "speed_change"]
+        if verbose:
+            print(f"  Added flow_split, flow_split_inv, speed_change from {geometric_results_path}")
+    elif geometric_results_path and verbose:
+        print(f"  Geometric results not found: {geometric_results_path}; skipping simulation features")
+
     return X, feature_names, junction_names, outlet_primary_names
 
 
@@ -830,6 +877,60 @@ def load_vessel_targets_from_config(
     if not rows:
         return [], [], np.zeros((0, 3), dtype=float)
     return vessel_ids, vessel_names, np.asarray(rows, dtype=float)
+
+
+def _original_inlet_area_for_junction(cfg: dict[str, Any], junction_name: str) -> float | None:
+    """Cross-sectional area at the trunk inlet used as the flow_split reference."""
+    original_inlet = _resolve_original_inlet_per_junction(cfg).get(junction_name, "")
+    if not original_inlet:
+        return None
+
+    if "_bif" in junction_name:
+        bif0_name = f"{junction_name.split('_bif')[0]}_bif0"
+    else:
+        bif0_name = junction_name
+
+    junction_by_name = {j.get("junction_name", ""): j for j in cfg.get("junctions", [])}
+    for candidate in (bif0_name, junction_name):
+        j = junction_by_name.get(candidate)
+        if not j:
+            continue
+        areas = _safe_get(j, "geometric_params", "inlet_vessel_areas", default={}) or {}
+        if original_inlet in areas and areas[original_inlet] is not None:
+            area = float(areas[original_inlet])
+            return area if area > 0.0 else None
+    return None
+
+
+def _speed_change_from_areas(flow_split_pct: float, a_in: float, a_out: float) -> float:
+    """``((100 / flow_split) / A_in)^2 - (1 / A_out)^2``; NaN when inputs are invalid."""
+    if not np.isfinite(flow_split_pct) or flow_split_pct <= 0.0:
+        return float("nan")
+    if a_in <= 0.0 or a_out <= 0.0:
+        return float("nan")
+    inv_a_in_sq = 1.0 / (a_in * a_in)
+    inv_a_out_sq = 1.0 / (a_out * a_out)
+    scale = (100.0 / flow_split_pct) ** 2
+    return scale * inv_a_in_sq - inv_a_out_sq
+
+
+def _speed_change_for_junction_row(
+    cfg: dict[str, Any],
+    junction_by_name: dict[str, dict],
+    junction_name: str,
+    primary_outlet: str,
+    flow_split_pct: float,
+) -> float:
+    """Per-row speed_change using trunk inlet area and primary-outlet junction area."""
+    a_in = _original_inlet_area_for_junction(cfg, junction_name)
+    j = junction_by_name.get(junction_name)
+    if j is None or a_in is None:
+        return float("nan")
+    outlet_areas = _safe_get(j, "geometric_params", "outlet_vessel_areas", default={}) or {}
+    a_out = outlet_areas.get(primary_outlet)
+    if a_out is None:
+        return float("nan")
+    return _speed_change_from_areas(flow_split_pct, a_in, float(a_out))
 
 
 __all__ = [

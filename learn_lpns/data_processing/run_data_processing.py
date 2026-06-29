@@ -12,8 +12,6 @@ import csv
 import glob
 import os
 
-import numpy as np
-
 from learn_lpns.config import get_pipeline_config
 from learn_lpns.data_processing.data_dict_from_csvs import (
     build_data_dict_from_csvs,
@@ -28,7 +26,6 @@ from learn_lpns.data_processing.generate_split_indices import (
     write_geometries_txt,
 )
 from learn_lpns.data_processing.inputs_from_0d_config import (
-    compute_junction_flow_splits,
     load_junction_geometric_features,
     load_vessel_geometric_features,
     load_vessel_targets_from_config,
@@ -181,44 +178,12 @@ def main():
                 geometric_input_filename = "bifurcations_geometric_input.json"
 
             geometric_input_path = os.path.join(_zero_d_base, geo, geometric_input_filename)
-            X, feature_names, junction_names, outlet_primary_names = load_junction_geometric_features(
-                geometric_input_path, verbose=args.verbose
-            )
-            # Add flow split from base geometric simulation if results CSV exists
             geometric_results_path = geometric_input_path.replace("_geometric_input.json", "_geometric_results.csv")
-            if os.path.exists(geometric_results_path):
-                flow_splits = compute_junction_flow_splits(geometric_input_path, geometric_results_path)
-                flow_split_col = []
-                for i, jname in enumerate(junction_names):
-                    if jname not in flow_splits:
-                        flow_split_col.append(np.nan)
-                        continue
-                    (out0_name, out1_name), (fs0, fs1) = flow_splits[jname]
-                    primary = outlet_primary_names[i]
-                    if primary == out0_name:
-                        val = fs0
-                    elif primary == out1_name:
-                        val = fs1
-                    else:
-                        val = np.nan
-                    flow_split_col.append(val)
-                X = np.column_stack([X, flow_split_col])
-                feature_names = [*feature_names, "flow_split"]
-                # flow_split_inv = 1 / flow_split (NaN for zero or invalid)
-                flow_split_arr = np.asarray(flow_split_col, dtype=float)
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    flow_split_inv = np.where(
-                        np.isfinite(flow_split_arr) & (flow_split_arr > 0),
-                        100.0 / flow_split_arr,  # flow_split is in %, so inv is 100/%
-                        np.nan,
-                    )
-                X = np.column_stack([X, flow_split_inv])
-                feature_names = [*feature_names, "flow_split_inv"]
-                if args.verbose:
-                    print(f"  Added flow_split, flow_split_inv from {geometric_results_path}")
-            else:
-                if args.verbose:
-                    print(f"  Geometric results not found: {geometric_results_path}; skipping flow split")
+            X, feature_names, junction_names, outlet_primary_names = load_junction_geometric_features(
+                geometric_input_path,
+                verbose=args.verbose,
+                geometric_results_path=geometric_results_path,
+            )
             print(f"Loaded {len(X)} junctions with {len(feature_names)} features")
             # Save the features to a csv file
             os.makedirs(os.path.dirname(csv_path), exist_ok=True)

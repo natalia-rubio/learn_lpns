@@ -68,8 +68,8 @@ training:
       label: "Stenosis Resistor (S)"
       target_output_column: 1
       lr_init: 0.001
-      junction_num_layers: 1
-      junction_layer_width: 2
+      junction_num_layers: 2
+      junction_layer_width: 10
       junction_asymmetric_overestimate_weight: 2000
       vessel_asymmetric_overestimate_weight: 10
     - name: L
