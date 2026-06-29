@@ -12,6 +12,7 @@ from learn_lpns.zerod_calibration.run_config_canonical import (
     resolve_run_config_suffix,
     run_config_suffix_to_flags,
 )
+from learn_lpns.config import get_pipeline_config
 
 SKIP_STEP_TOKENS = frozenset(
     {
@@ -59,6 +60,8 @@ def resolve_namespace_run_config(ns: argparse.Namespace) -> str:
 
 DEFAULT_JUNCTION_TYPES = ["BloodVesselJunction"]
 DEFAULT_GEOMETRY_VARIANT = "bifurcations_EL"
+DEFAULT_CALIBRATION_BACKEND = "decoupled_ls"
+CALIBRATION_BACKEND_CHOICES = ("decoupled_ls", "svzerod")
 BIFURCATION_GEOMETRY_VARIANTS = frozenset({"bifurcations", "bifurcations_EL"})
 
 
@@ -99,6 +102,24 @@ def add_generate_zerod_inputs_arguments(
             f"(default: {DEFAULT_GEOMETRY_VARIANT}). "
             "Steps 3.5/3.7 use this variant only; Step 1 still builds both variants "
             "for comparison when not skipped."
+        ),
+    )
+    parser.add_argument(
+        "--calibration_backend",
+        default=DEFAULT_CALIBRATION_BACKEND,
+        choices=CALIBRATION_BACKEND_CHOICES,
+        help=(
+            "Calibration backend for Step 3 (default: decoupled_ls). "
+            "Use svzerod for C++ svzerodcalibrator (requires SVZEROD_INSTALL_DIR)."
+        ),
+    )
+    parser.add_argument(
+        "--plot_rsl_fits",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Save per-element dP vs Q least-squares fit plots under results/RSL_fits/ "
+            "(decoupled_ls only; default from config calibration.plot_rsl_fits, usually false)"
         ),
     )
     parser.add_argument(
@@ -226,6 +247,8 @@ def prepare_generate_zerod_namespace(ns: argparse.Namespace) -> str:
     ns.quadratic_resistor = flags["quadratic_resistor"]
     ns.penalty_on = flags["penalty_on"]
     ns.asymmetric_loss = flags["asymmetric_loss"]
+    if getattr(ns, "plot_rsl_fits", None) is None:
+        ns.plot_rsl_fits = get_pipeline_config().calibration.plot_rsl_fits
     return suffix
 
 
@@ -249,6 +272,11 @@ def namespace_to_generate_zerod_argv(
     suffix = getattr(ns, "run_config_suffix", None) or resolve_namespace_run_config(ns)
     cmd.extend(["--run_config", suffix])
     cmd.extend(["--geometry_variant", getattr(ns, "geometry_variant", DEFAULT_GEOMETRY_VARIANT)])
+    cmd.extend(
+        ["--calibration_backend", getattr(ns, "calibration_backend", DEFAULT_CALIBRATION_BACKEND)]
+    )
+    if getattr(ns, "plot_rsl_fits", False):
+        cmd.append("--plot_rsl_fits")
 
     skip_steps_spec = (getattr(ns, "skip_steps", "") or "").strip()
     if skip_steps_spec:

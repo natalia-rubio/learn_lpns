@@ -411,7 +411,14 @@ def main():
             print(f"\n    Calibrating {geo_variant_name}/{JUNCTION_TYPE}...")
 
             try:
-                run_calibration(jtype_input_path, jtype_output_path)
+                run_calibration(
+                    jtype_input_path,
+                    jtype_output_path,
+                    backend=getattr(args, "calibration_backend", "decoupled_ls"),
+                    plot_rsl_fits=getattr(args, "plot_rsl_fits", False),
+                    set_name=args.set_name,
+                    geo_name=args.geo_name,
+                )
                 generated_files.append(jtype_output_path)
                 print(f"      ✓ Calibration completed for {geo_variant_name}/{JUNCTION_TYPE}")
             except Exception as e:

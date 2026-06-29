@@ -31,6 +31,10 @@ class CalibrationConfig(BaseModel):
     maximum_iterations: int = Field(default=20, gt=0)
     default_l2_r: float = Field(default=1e5, gt=0)
     default_l2_stenosis: float = Field(default=1e10, gt=0)
+    plot_rsl_fits: bool = Field(
+        default=False,
+        description="When using decoupled_ls, save per-element dP vs Q fit plots under results/RSL_fits/",
+    )
 
 
 class CohortCalibrationOverrides(BaseModel):
@@ -234,4 +238,5 @@ def build_calibration_parameters(
         "L2_penalty_R_poiseuille": l2_r,
         "L2_penalty_stenosis_coefficient": l2_stenosis,
         "L2_penalty_L": 0,
+        "freeze_connector_segments": True,
     }

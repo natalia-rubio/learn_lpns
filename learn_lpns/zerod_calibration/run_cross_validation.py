@@ -69,6 +69,8 @@ def _ensure_ml_inputs_and_jax_for_config(
     batch_geometries,
     all_geometries,
     reasons,
+    *,
+    no_redo=False,
 ):
     """Run batch_generate_zerod_inputs_vmr and/or run_data_processing for missing prerequisites."""
     script_dir = os.path.dirname(__file__)
@@ -94,6 +96,8 @@ def _ensure_ml_inputs_and_jax_for_config(
             "--skip_steps",
             "nn_inference",
         ]
+        if no_redo:
+            cmd_batch.append("--no_redo")
         result = subprocess.run(cmd_batch, cwd=repo_root(), text=True)
         if result.returncode != 0:
             raise RuntimeError(
@@ -189,6 +193,8 @@ def _ensure_cv_prerequisites(
     data_root,
     set_type,
     run_config_suffix,
+    *,
+    no_redo=False,
 ):
     """Run batch + data processing when ml_inputs, jax pickle, or calibrated zeroD are missing.
 
@@ -257,6 +263,7 @@ def _ensure_cv_prerequisites(
         batch_geometries=batch_geometries,
         all_geometries=geometries,
         reasons=reasons,
+        no_redo=no_redo,
     )
 
 
@@ -461,6 +468,7 @@ def _run_zerod_inputs_for_cv(
     nn_vessel=False,
     plots_only=False,
     verbose=False,
+    no_redo=False,
 ):
     """Run generate_zerod_inputs for CV deploy (NN-only) or plot refresh (--plots_only)."""
     ns = argparse.Namespace(
@@ -475,7 +483,7 @@ def _run_zerod_inputs_for_cv(
         Vessel_NN=nn_vessel,
         verbose=verbose,
         skip_steps="",
-        no_redo=False,
+        no_redo=no_redo,
     )
     prepare_generate_zerod_namespace(ns)
     cmd = namespace_to_generate_zerod_argv(ns, set_name=set_name, geo_name=geo_name)
@@ -536,6 +544,7 @@ def run_cross_validation(
     percent_train=0.9,
     run_config_suffix=None,
     skip_barchart=False,
+    no_redo=False,
 ):
     ml_inputs_root = ml_inputs_root or os.path.join(data_root, "ml_inputs")
     config = _resolve_cv_run_config(run_config_suffix)
@@ -546,7 +555,14 @@ def run_cross_validation(
     penalty_on = config["penalty_on"]
     print(f"Run config: {data_paths_suffix!r}")
 
-    _ensure_cv_prerequisites(set_name, geometry_variant, data_root, set_type, data_paths_suffix)
+    _ensure_cv_prerequisites(
+        set_name,
+        geometry_variant,
+        data_root,
+        set_type,
+        data_paths_suffix,
+        no_redo=no_redo,
+    )
     cohort = _load_cv_jax_cohort(
         ml_inputs_root,
         data_root,
@@ -791,6 +807,7 @@ def run_cross_validation(
                 trial_id=trial,
                 model_dir=model_dir,
                 nn_vessel=nn_vessel,
+                no_redo=no_redo,
             )
             if result_deploy.returncode != 0:
                 print(f"  Deploy failed for {val_geo} with return code {result_deploy.returncode}")
@@ -1019,6 +1036,14 @@ def main():
         help="Skip junction and/or vessel training for a trial if the corresponding model files already exist.",
     )
     parser.add_argument(
+        "--no_redo",
+        action="store_true",
+        help=(
+            "During prerequisite batch generation and per-trial NN deploy, skip recreating "
+            "zeroD files that already exist (passed through to batch/ generate_zerod_inputs)."
+        ),
+    )
+    parser.add_argument(
         "--percent_train",
         type=float,
         default=split_defaults.percent_train,
@@ -1095,6 +1120,7 @@ def main():
         percent_train=args.percent_train,
         run_config_suffix=run_config_suffix,
         skip_barchart=args.skip_barchart,
+        no_redo=args.no_redo,
     )
 
 

@@ -68,7 +68,13 @@ def test_infer_num_geos_from_split_path(tmp_path):
 def test_infer_num_geos_requires_matching_split_when_not_explicit(tmp_path):
     data_root = tmp_path / "data"
     _touch(
-        data_root / "jax_arrays" / "VMR_aorta_starter" / "gen_loss" / "bifurcations_EL" / "all" / "jax_arrays_num_geos_5.pkl"
+        data_root
+        / "jax_arrays"
+        / "VMR_aorta_starter"
+        / "gen_loss"
+        / "bifurcations_EL"
+        / "all"
+        / "jax_arrays_num_geos_5.pkl"
     )
 
     with pytest.raises(SystemExit, match="no matching split_indices"):

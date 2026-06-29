@@ -18,6 +18,7 @@ calibration:
   maximum_iterations: 20                  # max Levenberg–Marquardt iterations per calibration
   default_l2_r: 1.0e5                     # L2 penalty on Poiseuille R when --run_config includes penalty_on + quadratic_resistor
   default_l2_stenosis: 1.0e10             # L2 penalty on stenosis coefficient S under the same run_config flags
+  plot_rsl_fits: false                    # decoupled_ls: save dP vs Q diagnostic plots under results/RSL_fits/
 
 cohorts:
   default_cv_set_names:                   # default batch for learn-lpns-cv-all-sets and cross-set plots
@@ -43,7 +44,7 @@ split:
   cv_trial_seed_stride: 1000              # CV trial seed = trial_index * stride + resample_attempt
 
 training:
-  num_epochs: 500                         # max Optax training epochs per R/S/L network
+  num_epochs: 2000                         # max Optax training epochs per R/S/L network
   early_stop_loss_threshold: 1.0e-7       # stop training when train loss drops below this
   batch_size_divisor: 10                  # batch_size = ceil(n_train / batch_size_divisor)
   generation_weighted_loss_scale: 1.0     # sample weight = scale / 2^generation when gen_loss run_config is active
@@ -67,9 +68,9 @@ training:
       label: "Stenosis Resistor (S)"
       target_output_column: 1
       lr_init: 0.001
-      junction_num_layers: 2
-      junction_layer_width: 10
-      junction_asymmetric_overestimate_weight: 100
+      junction_num_layers: 1
+      junction_layer_width: 2
+      junction_asymmetric_overestimate_weight: 2000
       vessel_asymmetric_overestimate_weight: 10
     - name: L
       label: "Inductor (L)"

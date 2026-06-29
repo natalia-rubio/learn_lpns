@@ -153,29 +153,90 @@ def create_calibration_input(
     return inp
 
 
-def run_calibration(calibration_input_path, output_path):
+def _postprocess_calibrated_config(cali: dict) -> dict:
+    """Ensure calibrated JSON is compatible with svzerodsolver."""
+    for junc in cali.get("junctions", []):
+        if "junction_values" not in junc:
+            continue
+        if "C" in junc["junction_values"]:
+            del junc["junction_values"]["C"]
+
+        if junc.get("junction_type") == "HybridJunction":
+            if "pressure_recovery_coefficient" not in junc["junction_values"]:
+                num_outlets = len(junc.get("outlet_vessels", []))
+                junc["junction_values"]["pressure_recovery_coefficient"] = [0.0] * num_outlets
+                junc_name = junc.get("junction_name", "unknown")
+                print(f"  Added pressure_recovery_coefficient to {junc_name} (HybridJunction)")
+        elif "pressure_recovery_coefficient" in junc["junction_values"]:
+            del junc["junction_values"]["pressure_recovery_coefficient"]
+    return cali
+
+
+def run_calibration(
+    calibration_input_path,
+    output_path,
+    backend="decoupled_ls",
+    *,
+    plot_rsl_fits=False,
+    set_name=None,
+    geo_name=None,
+):
     """
-    Run svZeroDCalibrator to generate calibrated input file.
-    Uses svzerodcalibrator from SVZEROD_INSTALL_DIR or PATH (see svzerod_binaries.py).
+    Run calibration to generate calibrated input file.
+    Default backend is pure-Python decoupled least squares; pass backend='svzerod'
+    to use svzerodcalibrator from SVZEROD_INSTALL_DIR or PATH.
+
     Ensures the calibrated output preserves the inflow BC from the calibration input (3D observations).
 
     Args:
         calibration_input_path: Path to calibration input JSON
         output_path: Path to save calibrated output JSON
+        backend: 'decoupled_ls' (default) or 'svzerod'
+        plot_rsl_fits: If True and backend is decoupled_ls, write dP vs Q plots per element
+        set_name: Cohort name for plot output paths (inferred from path when omitted)
+        geo_name: Geometry id for plot output paths (inferred from path when omitted)
     """
-    import subprocess
+    print(f"Running calibration (backend={backend})...")
 
-    print("Running calibration...")
-
-    # Read calibration input
     with open(calibration_input_path) as f:
-        json.load(f)
+        config = json.load(f)
+
+    if backend == "svzerod":
+        if plot_rsl_fits:
+            print("  Note: plot_rsl_fits applies only to decoupled_ls backend; skipping plots")
+        cali = _run_svzerod_calibration(calibration_input_path, output_path)
+    elif backend == "decoupled_ls":
+        from learn_lpns.zerod_calibration.decoupled_ls_calibration import calibrate_decoupled_ls
+
+        cali = calibrate_decoupled_ls(
+            config,
+            plot_rsl_fits=plot_rsl_fits,
+            set_name=set_name,
+            geo_name=geo_name,
+            calibration_input_path=calibration_input_path,
+        )
+        cali = _postprocess_calibrated_config(cali)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(cali, f, indent=4)
+        print("  ✓ Calibration completed with decoupled least squares")
+    else:
+        raise ValueError(
+            f"Unknown calibration backend {backend!r}; expected 'decoupled_ls' or 'svzerod'"
+        )
+
+    print(f"Calibrated output saved to: {output_path}")
+    return cali
+
+
+def _run_svzerod_calibration(calibration_input_path, output_path):
+    """Run svZeroDCalibrator subprocess and post-process output."""
+    import subprocess
 
     from learn_lpns.zerod_calibration.tools.svzerod_binaries import svzerod_binary
 
     calibrator_exe = svzerod_binary("svzerodcalibrator")
 
-    # Get absolute paths
     abs_input_path = os.path.abspath(calibration_input_path)
     abs_output_path = os.path.abspath(output_path)
 
@@ -185,14 +246,12 @@ def run_calibration(calibration_input_path, output_path):
     print(f"    Output: {abs_output_path}")
 
     try:
-        # Run svzerodcalibrator: svzerodcalibrator <input.json> <output.json>
         result = subprocess.run(
             [calibrator_exe, abs_input_path, abs_output_path],
             capture_output=False,
             text=True,
             check=True,
         )
-        # import pdb; pdb.set_trace()
         print("  ✓ Calibration completed with svzerodcalibrator")
         if result.stdout:
             print(f"  STDOUT: {result.stdout}")
@@ -207,38 +266,14 @@ def run_calibration(calibration_input_path, output_path):
     except FileNotFoundError as e:
         raise RuntimeError(f"svzerodcalibrator executable not found at: {calibrator_exe}") from e
 
-    # Read the calibrated output
     try:
         with open(abs_output_path) as f:
             cali = json.load(f)
     except Exception as e:
         raise RuntimeError(f"Failed to read calibrated output from {abs_output_path}: {e}") from e
 
-    # Post-process calibrated output to ensure compatibility with svzerodsolver
-    for junc in cali.get("junctions", []):
-        if "junction_values" in junc:
-            # Remove C parameter if present (not supported by svzerodsolver)
-            if "C" in junc["junction_values"]:
-                del junc["junction_values"]["C"]
-
-            # For HybridJunction, ensure pressure_recovery_coefficient is present
-            if junc.get("junction_type") == "HybridJunction":
-                if "pressure_recovery_coefficient" not in junc["junction_values"]:
-                    # Add with default zeros matching number of outlets
-                    num_outlets = len(junc.get("outlet_vessels", []))
-                    junc["junction_values"]["pressure_recovery_coefficient"] = [0.0] * num_outlets
-                    junc_name = junc.get("junction_name", "unknown")
-                    print(f"  Added pressure_recovery_coefficient to {junc_name} (HybridJunction)")
-            else:
-                # For non-HybridJunction types, remove pressure_recovery_coefficient if present
-                if "pressure_recovery_coefficient" in junc["junction_values"]:
-                    del junc["junction_values"]["pressure_recovery_coefficient"]
-    # Replace simulation parameters with the original values
-
-    # Write calibrated output
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    cali = _postprocess_calibrated_config(cali)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(cali, f, indent=4)
-
-    print(f"Calibrated output saved to: {output_path}")
     return cali

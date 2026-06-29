@@ -82,6 +82,30 @@ learn-lpns-batch-zerod \
 
 Other flags: `--no_redo`, `--NN_only`, `--Vessel_NN`, `--skip_existing`.
 
+### Calibration backend (`--calibration_backend`)
+
+Step 3 (calibration) uses a **pure-Python decoupled least-squares fit** by default. Each vessel segment and each `BloodVesselJunction` outlet is fit independently from local 3D pressure/flow observations (`R`, `L`, and optionally stenosis `S`). Capacitance `C` stays from the geometric JSON.
+
+```bash
+learn-lpns-batch-zerod \
+  --set_name VMR_aorta_starter \
+  --run_config gen_loss \
+  --calibration_backend decoupled_ls
+```
+
+| Backend        | Requirement                         | Notes |
+| -------------- | ----------------------------------- | ----- |
+| `decoupled_ls` | NumPy only (**default**)            | Fast; no `svzerodcalibrator` binary |
+| `svzerod`      | `SVZEROD_INSTALL_DIR` + calibrator  | C++ Levenberg–Marquardt on equation residuals |
+
+**Tradeoffs (decoupled vs C++):**
+
+- Decoupled fitting ignores global network coupling; calibrated `R`/`L`/`S` generally **differ** from `svzerodcalibrator`.
+- Stenosis uses observed `Q` in the `\|Q\|Q` term (linear in `S` given `Q`).
+- If a local fit’s relative RMS pressure-drop error exceeds **10%**, a `UserWarning` is emitted (calibration still completes).
+- Optional **`--plot_rsl_fits`**: per-element \(\Delta P\) vs \(Q\) scatter + fit line under `results/RSL_fits/<set_name>/<geo_name>/` (decoupled_ls only; default off).
+- Forward simulation and MSE steps still use **svzerodsolver** unless replaced separately.
+
 ## k-fold cross-validation
 
 Each trial randomly splits geometries into train vs validation sets, trains junction (and vessel) NNs, deploys with `generate_zerod_inputs.py --NN_only` on validation geometries, and aggregates MSE from each geometry’s `mse_comparison.csv`. When CV finishes, `cv_pressure_max_pct_error_barchart` runs automatically unless `--skip_barchart`.
