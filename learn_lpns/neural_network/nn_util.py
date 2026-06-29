@@ -7,8 +7,8 @@ np.random.seed(0)
 
 
 def get_sizes(network_params):
-    """Layer shapes for a single-output network."""
-    num_output_features = 1
+    """Layer shapes for a single- or multi-output MLP."""
+    num_output_features = int(network_params.get("num_output_features", 1))
     num_input_features = network_params["num_input_features"]
     layer_width = network_params["layer_width"]
     num_layers = network_params["num_layers"]

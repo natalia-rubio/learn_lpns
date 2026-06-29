@@ -9,7 +9,7 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
-from learn_lpns.neural_network.nn_model import predict
+from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, predict
 from learn_lpns.neural_network.nn_util import dill_load
 
 
@@ -32,10 +32,35 @@ def forward_jax_pickle_path(
     )
 
 
+def rri_model_checkpoint_path(model_dir: str, set_name: str, *, vessel: bool = False) -> str:
+    """Expected checkpoint path for a single multi-output R/S/L model."""
+    base = "vessel_pred" if vessel else "pred"
+    return os.path.join(model_dir, f"rri_{set_name}_{base}_rsl_model")
+
+
+def rri_separate_model_checkpoint_paths(model_dir: str, set_name: str, *, vessel: bool = False) -> list[str]:
+    """Expected checkpoint paths for three single-output R/S/L models."""
+    base = "vessel_pred" if vessel else "pred"
+    return [os.path.join(model_dir, f"rri_{set_name}_{base}_{i}_model") for i in range(RRI_NUM_OUTPUTS)]
+
+
+def rri_models_complete(model_dir: str, set_name: str, *, vessel: bool = False, multi_output: bool) -> bool:
+    """Return True when all expected checkpoint files exist for the training mode."""
+    if multi_output:
+        return os.path.exists(rri_model_checkpoint_path(model_dir, set_name, vessel=vessel))
+    return all(os.path.exists(p) for p in rri_separate_model_checkpoint_paths(model_dir, set_name, vessel=vessel))
+
+
+def _resolve_multi_output_model_path(model_dir: str, set_name: str, *, vessel: bool = False) -> str | None:
+    path = rri_model_checkpoint_path(model_dir, set_name, vessel=vessel)
+    return path if os.path.exists(path) else None
+
+
 def _resolve_model_paths(model_dir: str, set_name: str, *, vessel: bool = False) -> list[str]:
-    suffix = "vessel_pred" if vessel else "pred"
-    model_base_name = f"rri_{set_name}_{suffix}"
-    return [os.path.join(model_dir, f"{model_base_name}_{i}_model") for i in range(3)]
+    multi_path = _resolve_multi_output_model_path(model_dir, set_name, vessel=vessel)
+    if multi_path is not None:
+        return [multi_path]
+    return rri_separate_model_checkpoint_paths(model_dir, set_name, vessel=vessel)
 
 
 def run_nn_predict(
@@ -52,13 +77,25 @@ def run_nn_predict(
             raise FileNotFoundError(f"Model not found: {model_path}")
 
     X_jax = jnp.array(X, dtype=jnp.float32)
-    raw_predictions = []
-    for i, model_path in enumerate(model_paths):
-        print(f"      Loading model {i + 1}/3: {model_path}")
+    if len(model_paths) == 1:
+        model_path = model_paths[0]
+        print(f"      Loading multi-output model: {model_path}")
         model = dill_load(model_path)
         use_leaky = getattr(model, "use_leaky_relu", False)
-        pred = predict(X_jax, model.weights, use_leaky)
-        raw_predictions.append(np.array(pred).flatten())
+        pred = np.array(predict(X_jax, model.weights, use_leaky))
+        if pred.ndim == 1:
+            pred = pred.reshape(1, -1)
+        if pred.shape[1] != RRI_NUM_OUTPUTS:
+            raise ValueError(f"Expected {RRI_NUM_OUTPUTS} outputs from {model_path}, got shape {pred.shape}.")
+        raw_predictions = [pred[:, i] for i in range(RRI_NUM_OUTPUTS)]
+    else:
+        raw_predictions = []
+        for i, model_path in enumerate(model_paths):
+            print(f"      Loading model {i + 1}/3: {model_path}")
+            model = dill_load(model_path)
+            use_leaky = getattr(model, "use_leaky_relu", False)
+            pred = predict(X_jax, model.weights, use_leaky)
+            raw_predictions.append(np.array(pred).flatten())
 
     output_names = ["R_poiseuille", "stenosis_coefficient", "L"]
     for coef_idx, pred in enumerate(raw_predictions):

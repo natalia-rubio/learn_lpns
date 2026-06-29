@@ -7,7 +7,7 @@ from learn_lpns.data_processing.generate_split_indices import (
     load_split_for_training,
     resolve_flat_indices,
 )
-from learn_lpns.neural_network.nn_model import NeuralNet
+from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, NeuralNet
 from learn_lpns.neural_network.train_nn import train_nn
 from learn_lpns.tools.basic import load_dict
 from learn_lpns.zerod_calibration.run_config_canonical import (
@@ -241,9 +241,26 @@ def _build_training_params_for_modality(
     return network_params, training_params
 
 
-def launch_training(network_params, optimizer_params, training_params, training_cfg: TrainingConfig | None = None):
-    """Train one network per RRI coefficient (R, S, L) for junction or vessel modality."""
+def launch_training(
+    network_params,
+    optimizer_params,
+    training_params,
+    training_cfg: TrainingConfig | None = None,
+    *,
+    multi_output_rri: bool | None = None,
+):
+    """Train RRI models: one network per coefficient (default) or one 3-output network."""
     training_cfg = training_cfg or get_pipeline_config().training
+    use_multi_output = training_cfg.multi_output_rri if multi_output_rri is None else multi_output_rri
+    if use_multi_output:
+        _launch_training_multi_output(
+            network_params,
+            optimizer_params,
+            training_params,
+            training_cfg,
+        )
+        return
+
     network_params["output_type"] = "rri"
     asymmetric_loss = bool(network_params["asymmetric_loss"])
     is_vessel = network_params.get("model_name_suffix") == "_vessel"
@@ -256,6 +273,7 @@ def launch_training(network_params, optimizer_params, training_params, training_
         print(f"{network_params['num_input_features']} input features")
 
         network_params["target_output_column"] = spec.target_output_column
+        network_params["num_output_features"] = 1
         optimizer_params["init"] = spec.lr_init
         training_params["num_epochs"] = training_cfg.num_epochs
 
@@ -276,6 +294,44 @@ def launch_training(network_params, optimizer_params, training_params, training_
         if shared_data_dict is None:
             shared_data_dict = model.data_dict
         train_nn(model, training_params)
+
+
+def _launch_training_multi_output(
+    network_params,
+    optimizer_params,
+    training_params,
+    training_cfg: TrainingConfig,
+):
+    network_params["output_type"] = "rri"
+    asymmetric_loss = bool(network_params["asymmetric_loss"])
+    is_vessel = network_params.get("model_name_suffix") == "_vessel"
+
+    print("Training RRI model (single network with R, S, L outputs)...")
+    print(f"{network_params['num_input_features']} input features")
+
+    network_params["num_output_features"] = RRI_NUM_OUTPUTS
+    network_params.pop("target_output_column", None)
+    optimizer_params["init"] = training_cfg.optimizer.init
+    training_params["num_epochs"] = training_cfg.num_epochs
+
+    if is_vessel:
+        network_params["num_layers"] = training_cfg.vessel.num_layers
+        network_params["layer_width"] = training_cfg.vessel.layer_width
+        overestimate_weights = [
+            spec.vessel_asymmetric_overestimate_weight if asymmetric_loss else 1.0
+            for spec in training_cfg.rri_coefficients
+        ]
+    else:
+        network_params["num_layers"] = max(spec.junction_num_layers for spec in training_cfg.rri_coefficients)
+        network_params["layer_width"] = max(spec.junction_layer_width for spec in training_cfg.rri_coefficients)
+        overestimate_weights = [
+            spec.junction_asymmetric_overestimate_weight if asymmetric_loss else 1.0
+            for spec in training_cfg.rri_coefficients
+        ]
+    network_params["asymmetric_loss_overestimate_weights"] = overestimate_weights
+
+    model = NeuralNet(network_params, optimizer_params)
+    train_nn(model, training_params)
 
 
 def main():
@@ -366,10 +422,19 @@ def main():
             f"(default: {training_defaults.generation_weighted_loss_scale} from config)."
         ),
     )
+    parser.add_argument(
+        "--multi_output_rri",
+        action="store_true",
+        help=(
+            "Train one network with R/S/L outputs instead of three separate networks. "
+            "Default follows training.multi_output_rri in config (false)."
+        ),
+    )
     cli_args = parser.parse_args()
 
     training_cfg = get_pipeline_config(set_name=cli_args.set_name).training
     set_name = cli_args.set_name
+    multi_output_rri = bool(cli_args.multi_output_rri or training_cfg.multi_output_rri)
 
     geometry_variant_arg = cli_args.geometry_variant or DEFAULT_GEOMETRY_VARIANT
     if geometry_variant_arg not in GEOMETRY_VARIANT_NAMES:
@@ -427,6 +492,8 @@ def main():
                 f"Generation-weighted loss: ON (scale={float(cli_args.generation_weighted_loss_scale):g}; "
                 f"from --generation_weighted_loss and/or --run_config ..._gen_loss)"
             )
+        if multi_output_rri:
+            print("Multi-output RRI: one network with R, S, L outputs")
         print(f"{'=' * 80}")
 
         split_path = cli_args.split_path or _default_split_path(
@@ -466,7 +533,13 @@ def main():
         training_params["print_gradients"] = getattr(cli_args, "print_gradients", False)
         training_params["verbose_epochs"] = not cli_args.quiet_epochs
 
-        launch_training(network_params, optimizer_params, training_params, training_cfg=training_cfg)
+        launch_training(
+            network_params,
+            optimizer_params,
+            training_params,
+            training_cfg=training_cfg,
+            multi_output_rri=multi_output_rri,
+        )
 
 
 if __name__ == "__main__":

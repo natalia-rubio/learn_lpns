@@ -9,9 +9,14 @@ from learn_lpns.neural_network.nn_model import loss_pure
 from learn_lpns.neural_network.nn_util import dill_save, get_batch_indices
 
 
+def _model_checkpoint_basename(model) -> str:
+    if model.num_output_features > 1:
+        return f"{model.output_type}_{model.set_name}{model.model_name_suffix}_pred_rsl"
+    return f"{model.output_type}_{model.set_name}{model.model_name_suffix}_pred_{model.target_output_column}"
+
+
 def train_nn(model, training_params):
-    output_column = model.target_output_column
-    model_name = f"{model.output_type}_{model.set_name}{model.model_name_suffix}_pred_{output_column}"
+    model_name = _model_checkpoint_basename(model)
     verbose_epochs = training_params.get("verbose_epochs", True)
     train_hist = []
     val_hist = []
@@ -62,6 +67,7 @@ def train_nn(model, training_params):
         else:
             print("\n  print_gradients: no training indices, skipping.\n")
 
+    target_output_column = model.target_output_column if model.target_output_column is not None else 0
     for epoch in range(training_params["num_epochs"]):
         start_time = time.time()
         batch_ind_list = get_batch_indices(train_inds, batch_size)
@@ -72,7 +78,8 @@ def train_nn(model, training_params):
         train_loss = loss_pure(
             input=model.input[train_inds, :],
             outputs=model.output[train_inds, :],
-            target_output_column=output_column,
+            target_output_column=target_output_column,
+            num_output_features=model.num_output_features,
             use_leaky_relu=model.use_leaky_relu,
             weights=model.weights,
         )
@@ -82,7 +89,8 @@ def train_nn(model, training_params):
             val_loss = loss_pure(
                 input=model.input[val_inds, :],
                 outputs=model.output[val_inds, :],
-                target_output_column=output_column,
+                target_output_column=target_output_column,
+                num_output_features=model.num_output_features,
                 use_leaky_relu=model.use_leaky_relu,
                 weights=model.weights,
             )

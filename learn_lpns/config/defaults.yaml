@@ -46,6 +46,7 @@ training:
   early_stop_loss_threshold: 1.0e-7       # stop training when train loss drops below this
   batch_size_divisor: 10                  # batch_size = ceil(n_train / batch_size_divisor)
   generation_weighted_loss_scale: 1.0     # sample weight = scale / 2^generation when gen_loss run_config is active
+  multi_output_rri: false                 # if true, train one 3-output network (R,S,L) instead of three separate nets
   optimizer:
     init: 0.02                            # default Adam learning rate (overridden per coefficient by lr_init)
     transition_steps: 1000                # Optax exponential decay: steps between LR multiplications

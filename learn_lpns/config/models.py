@@ -143,6 +143,10 @@ class TrainingConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     num_epochs: int = Field(default=500, gt=0)
+    multi_output_rri: bool = Field(
+        default=False,
+        description="Train one network with R/S/L outputs instead of three single-output networks.",
+    )
     early_stop_loss_threshold: float = Field(default=1e-7, gt=0)
     batch_size_divisor: int = Field(
         default=10,

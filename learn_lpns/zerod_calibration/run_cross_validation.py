@@ -45,6 +45,7 @@ from learn_lpns.zerod_calibration.generate_zerod_inputs_cli import (
     prepare_generate_zerod_namespace,
 )
 from learn_lpns.zerod_calibration.modality_paths import modality_csv_paths
+from learn_lpns.zerod_calibration.nn_inference import rri_models_complete
 from learn_lpns.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
     resolve_run_config_suffix,
@@ -545,6 +546,7 @@ def run_cross_validation(
     run_config_suffix=None,
     skip_barchart=False,
     no_redo=False,
+    multi_output_rri=None,
 ):
     ml_inputs_root = ml_inputs_root or os.path.join(data_root, "ml_inputs")
     config = _resolve_cv_run_config(run_config_suffix)
@@ -553,6 +555,8 @@ def run_cross_validation(
     quadratic_resistor = config["quadratic_resistor"]
     asymmetric_loss = config["asymmetric_loss"]
     penalty_on = config["penalty_on"]
+    training_cfg = get_pipeline_config(set_name=set_name).training
+    use_multi_output_rri = training_cfg.multi_output_rri if multi_output_rri is None else bool(multi_output_rri)
     print(f"Run config: {data_paths_suffix!r}")
 
     _ensure_cv_prerequisites(
@@ -594,6 +598,8 @@ def run_cross_validation(
         trials_to_run = list(range(num_trials))
     if nn_vessel:
         print("Vessel_NN: will train vessel NN per trial and include vessel-predicted modality in MSE")
+    if use_multi_output_rri:
+        print("Multi-output RRI: one network with R, S, L outputs")
     if asymmetric_loss:
         print("Asymmetric loss: per-model overestimate weights")
     if quadratic_resistor:
@@ -716,8 +722,9 @@ def run_cross_validation(
         os.makedirs(model_dir, exist_ok=True)
 
         # Junction model file names (must match launch_training / train_nn output)
-        junction_model_files = [os.path.join(model_dir, f"rri_{set_name}_pred_{i}_model") for i in range(3)]
-        skip_junction = skip_training_if_exists and all(os.path.exists(p) for p in junction_model_files)
+        skip_junction = skip_training_if_exists and rri_models_complete(
+            model_dir, set_name, vessel=False, multi_output=use_multi_output_rri
+        )
 
         # Train
         if skip_junction:
@@ -739,6 +746,8 @@ def run_cross_validation(
             ]
             if asymmetric_loss:
                 cmd_train.append("--asymmetric_loss")
+            if use_multi_output_rri:
+                cmd_train.append("--multi_output_rri")
             if run_config_suffix:
                 cmd_train.extend(["--run_config", run_config_suffix])
             print(f"  Running: {' '.join(cmd_train)}")
@@ -757,10 +766,9 @@ def run_cross_validation(
         # Train vessel NN for this trial (same split) if requested
         if nn_vessel:
             vessel_model_dir = os.path.join(model_dir_base, f"{geometry_variant}_vessel_trial_{trial}")
-            vessel_model_files = [
-                os.path.join(vessel_model_dir, f"rri_{set_name}_vessel_pred_{i}_model") for i in range(3)
-            ]
-            skip_vessel = skip_training_if_exists and all(os.path.exists(p) for p in vessel_model_files)
+            skip_vessel = skip_training_if_exists and rri_models_complete(
+                vessel_model_dir, set_name, vessel=True, multi_output=use_multi_output_rri
+            )
             if skip_vessel:
                 print(f"  Skipping vessel training (models already exist in {vessel_model_dir})")
             else:
@@ -781,6 +789,8 @@ def run_cross_validation(
                 ]
                 if asymmetric_loss:
                     cmd_vessel.append("--asymmetric_loss")
+                if use_multi_output_rri:
+                    cmd_vessel.append("--multi_output_rri")
                 if run_config_suffix:
                     cmd_vessel.extend(["--run_config", run_config_suffix])
                 print(f"  Running vessel training: {' '.join(cmd_vessel)}")
@@ -1036,6 +1046,14 @@ def main():
         help="Skip junction and/or vessel training for a trial if the corresponding model files already exist.",
     )
     parser.add_argument(
+        "--multi_output_rri",
+        action="store_true",
+        help=(
+            "Train one network with R/S/L outputs instead of three separate networks. "
+            "Default follows training.multi_output_rri in config (false)."
+        ),
+    )
+    parser.add_argument(
         "--no_redo",
         action="store_true",
         help=(
@@ -1121,6 +1139,7 @@ def main():
         run_config_suffix=run_config_suffix,
         skip_barchart=args.skip_barchart,
         no_redo=args.no_redo,
+        multi_output_rri=args.multi_output_rri or get_pipeline_config(set_name=args.set_name).training.multi_output_rri,
     )
 
 
