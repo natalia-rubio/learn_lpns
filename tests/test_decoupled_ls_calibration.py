@@ -29,6 +29,15 @@ BUNDLED_CALIBRATED_JSON = (
 )
 
 
+def _bundled_calibrated_json_available() -> bool:
+    """True when the bundled sample exists and Git LFS has materialized it."""
+    if not BUNDLED_CALIBRATED_JSON.is_file():
+        return False
+    with open(BUNDLED_CALIBRATED_JSON, encoding="utf-8") as f:
+        first_line = f.readline()
+    return not first_line.startswith("version https://git-lfs.github.com/spec/v1")
+
+
 def _synthetic_vessel_config(
     *,
     r_true: float,
@@ -172,7 +181,10 @@ def test_connector_vessel_freeze():
     assert values["stenosis_coefficient"] == 0.0
 
 
-@pytest.mark.skipif(not BUNDLED_CALIBRATED_JSON.is_file(), reason="bundled sample not present")
+@pytest.mark.skipif(
+    not _bundled_calibrated_json_available(),
+    reason="bundled sample not present or Git LFS pointer (run git lfs pull)",
+)
 def test_smoke_on_bundled_sample():
     with open(BUNDLED_CALIBRATED_JSON) as f:
         config = json.load(f)
