@@ -206,14 +206,19 @@ def run_calibration(
             print("  Note: plot_rsl_fits applies only to decoupled_ls backend; skipping plots")
         cali = _run_svzerod_calibration(calibration_input_path, output_path)
     elif backend == "decoupled_ls":
+        from learn_lpns.config import get_pipeline_config
         from learn_lpns.zerod_calibration.decoupled_ls_calibration import calibrate_decoupled_ls
 
+        cal_cfg = get_pipeline_config(set_name=set_name).calibration
         cali = calibrate_decoupled_ls(
             config,
             plot_rsl_fits=plot_rsl_fits,
             set_name=set_name,
             geo_name=geo_name,
             calibration_input_path=calibration_input_path,
+            l2_r=cal_cfg.decoupled_l2_r,
+            l2_stenosis=cal_cfg.decoupled_l2_stenosis,
+            l2_l=cal_cfg.decoupled_l2_l,
         )
         cali = _postprocess_calibrated_config(cali)
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)

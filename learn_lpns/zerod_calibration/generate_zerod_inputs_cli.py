@@ -161,6 +161,15 @@ def add_generate_zerod_inputs_arguments(
         help="Directory with rri_{set}_pred_{0,1,2}_model files (CV / custom models)",
     )
     parser.add_argument(
+        "--multi_output_rri",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Use single multi-output R/S/L checkpoint at inference "
+            "(default: training.multi_output_rri from config, usually false)."
+        ),
+    )
+    parser.add_argument(
         "--trial_id",
         type=int,
         default=None,
@@ -247,6 +256,8 @@ def prepare_generate_zerod_namespace(ns: argparse.Namespace) -> str:
     ns.quadratic_resistor = flags["quadratic_resistor"]
     ns.penalty_on = flags["penalty_on"]
     ns.asymmetric_loss = flags["asymmetric_loss"]
+    if getattr(ns, "multi_output_rri", None) is None:
+        ns.multi_output_rri = get_pipeline_config().training.multi_output_rri
     if getattr(ns, "plot_rsl_fits", None) is None:
         ns.plot_rsl_fits = get_pipeline_config().calibration.plot_rsl_fits
     return suffix
@@ -290,6 +301,11 @@ def namespace_to_generate_zerod_argv(
     for attr, flag in bool_flags:
         if getattr(ns, attr, False):
             cmd.append(flag)
+
+    if getattr(ns, "multi_output_rri", False):
+        cmd.append("--multi_output_rri")
+    else:
+        cmd.append("--no-multi_output_rri")
 
     if getattr(ns, "model_dir", None):
         cmd.extend(["--model_dir", ns.model_dir])

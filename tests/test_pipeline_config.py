@@ -37,6 +37,10 @@ def test_load_pipeline_config_defaults():
     assert cfg.solver.steady_initial is False
     assert cfg.calibration.tolerance_gradient == pytest.approx(1e-4)
     assert cfg.calibration.default_l2_r == pytest.approx(1e5)
+    assert cfg.calibration.default_l2_stenosis == pytest.approx(1e10)
+    assert cfg.calibration.decoupled_l2_r == pytest.approx(1e-3)
+    assert cfg.calibration.decoupled_l2_stenosis == pytest.approx(1e-2)
+    assert cfg.calibration.decoupled_l2_l == pytest.approx(1e-3)
     assert cfg.split.percent_train == pytest.approx(0.9)
     assert cfg.split.data_processing_percent_train == pytest.approx(0.8)
     assert cfg.split.cv_num_trials == 5

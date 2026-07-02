@@ -51,16 +51,25 @@ def rri_models_complete(model_dir: str, set_name: str, *, vessel: bool = False, 
     return all(os.path.exists(p) for p in rri_separate_model_checkpoint_paths(model_dir, set_name, vessel=vessel))
 
 
-def _resolve_multi_output_model_path(model_dir: str, set_name: str, *, vessel: bool = False) -> str | None:
-    path = rri_model_checkpoint_path(model_dir, set_name, vessel=vessel)
-    return path if os.path.exists(path) else None
-
-
-def _resolve_model_paths(model_dir: str, set_name: str, *, vessel: bool = False) -> list[str]:
-    multi_path = _resolve_multi_output_model_path(model_dir, set_name, vessel=vessel)
-    if multi_path is not None:
-        return [multi_path]
+def resolve_rri_model_paths(
+    model_dir: str,
+    set_name: str,
+    *,
+    vessel: bool = False,
+    multi_output_rri: bool,
+) -> list[str]:
+    """Checkpoint paths for inference; must match how models were trained."""
+    if multi_output_rri:
+        return [rri_model_checkpoint_path(model_dir, set_name, vessel=vessel)]
     return rri_separate_model_checkpoint_paths(model_dir, set_name, vessel=vessel)
+
+
+def _resolve_multi_output_rri(multi_output_rri: bool | None) -> bool:
+    if multi_output_rri is not None:
+        return bool(multi_output_rri)
+    from learn_lpns.config import get_pipeline_config
+
+    return bool(get_pipeline_config().training.multi_output_rri)
 
 
 def run_nn_predict(
@@ -69,9 +78,16 @@ def run_nn_predict(
     set_name: str,
     *,
     vessel: bool = False,
+    multi_output_rri: bool | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run three NN heads (R, stenosis, L); return prediction arrays."""
-    model_paths = _resolve_model_paths(model_dir, set_name, vessel=vessel)
+    use_multi_output = _resolve_multi_output_rri(multi_output_rri)
+    model_paths = resolve_rri_model_paths(
+        model_dir,
+        set_name,
+        vessel=vessel,
+        multi_output_rri=use_multi_output,
+    )
     for model_path in model_paths:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model not found: {model_path}")
@@ -207,6 +223,7 @@ def run_junction_inference(
     model_dir: str,
     junction_type: str,
     quadratic_resistor: bool = False,
+    multi_output_rri: bool | None = None,
 ) -> None:
     """Load junction rows from jax dict, predict, and apply predictions to ``nn_config``."""
     from learn_lpns.data_processing.data_dict_from_csvs import load_junction_rows_from_jax_dict
@@ -223,7 +240,13 @@ def run_junction_inference(
     print(f"  Selected {len(feature_names)} features (matching training data): {feature_names}")
     print(f"  Neural network input dimensions: {X.shape} (rows={X.shape[0]}, features={X.shape[1]})")
 
-    pred_R, pred_S, pred_L = run_nn_predict(X, model_dir, set_name, vessel=False)
+    pred_R, pred_S, pred_L = run_nn_predict(
+        X,
+        model_dir,
+        set_name,
+        vessel=False,
+        multi_output_rri=multi_output_rri,
+    )
     if not quadratic_resistor:
         pred_S = np.zeros_like(pred_R)
 
@@ -331,6 +354,7 @@ def run_vessel_inference(
     geometry_variant: str,
     model_dir: str | None = None,
     quadratic_resistor: bool = False,
+    multi_output_rri: bool | None = None,
     verbose: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
@@ -347,7 +371,13 @@ def run_vessel_inference(
         geometry_variant=geometry_variant,
         model_dir=model_dir,
     )
-    pred_R, pred_S, pred_L = run_nn_predict(vessel_X, vessel_model_dir, set_name, vessel=True)
+    pred_R, pred_S, pred_L = run_nn_predict(
+        vessel_X,
+        vessel_model_dir,
+        set_name,
+        vessel=True,
+        multi_output_rri=multi_output_rri,
+    )
     if not quadratic_resistor:
         pred_S = np.zeros_like(pred_R)
 

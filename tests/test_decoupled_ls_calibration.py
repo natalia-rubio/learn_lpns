@@ -105,6 +105,52 @@ def test_fit_rlc_recovers_known_parameters_without_stenosis():
     assert l_fit == pytest.approx(l_true, rel=1e-6)
 
 
+def test_fit_rlc_l2_shrinks_coefficients_toward_zero():
+    r_true, l_true = 0.5, 0.4
+    config = _synthetic_vessel_config(r_true=r_true, l_true=l_true, s_true=0.0, fit_stenosis=False)
+    y = config["y"]
+    vessel_name = "branch0_seg0"
+    q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
+    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
+
+    r_unreg, _, l_unreg, _ = _fit_rlc(delta_p, q_in, dq_out, fit_stenosis=False)
+    r_reg, _, l_reg, _ = _fit_rlc(
+        delta_p,
+        q_in,
+        dq_out,
+        fit_stenosis=False,
+        l2_r=10.0,
+        l2_l=10.0,
+    )
+
+    assert r_unreg == pytest.approx(r_true, rel=1e-5)
+    assert l_unreg == pytest.approx(l_true, rel=1e-5)
+    assert r_reg < r_unreg
+    assert l_reg < l_unreg
+
+
+def test_fit_rlc_enforces_nonnegative_r_and_l():
+    r_true, l_true, s_true = 0.05, 0.2, -0.002
+    config = _synthetic_vessel_config(
+        r_true=r_true,
+        l_true=l_true,
+        s_true=s_true,
+        fit_stenosis=True,
+    )
+    y = config["y"]
+    vessel_name = "branch0_seg0"
+    q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
+    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
+
+    r_fit, s_fit, l_fit, _rel_err = _fit_rlc(delta_p, q_in, dq_out, fit_stenosis=True)
+
+    assert r_fit >= 0.0
+    assert l_fit >= 0.0
+    assert s_fit == pytest.approx(s_true, rel=1e-4)
+
+
 def test_fit_rlc_recovers_known_parameters_with_stenosis():
     r_true, l_true, s_true = 0.04, 0.25, 1e-4
     config = _synthetic_vessel_config(
@@ -216,7 +262,7 @@ def test_run_calibration_decoupled_backend(tmp_path):
 
     out = run_calibration(str(input_path), str(output_path), backend="decoupled_ls")
     assert output_path.is_file()
-    assert out["vessels"][0]["zero_d_element_values"]["R_poiseuille"] == pytest.approx(0.03, rel=1e-6)
+    assert out["vessels"][0]["zero_d_element_values"]["R_poiseuille"] == pytest.approx(0.03, rel=1e-4)
 
 
 def test_infer_set_geo_from_zerod_path():

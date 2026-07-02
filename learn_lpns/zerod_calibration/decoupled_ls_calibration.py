@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from scipy.optimize import lsq_linear
 
 from learn_lpns.tools.paths import repo_root
 
@@ -203,8 +204,11 @@ def _fit_rlc(
     dq_out: np.ndarray,
     *,
     fit_stenosis: bool,
+    l2_r: float = 0.0,
+    l2_stenosis: float = 0.0,
+    l2_l: float = 0.0,
 ) -> tuple[float, float, float, float]:
-    """Fit R, S, L from local pressure-drop equation; clamp L >= 0."""
+    """Fit R, S, L from local pressure drop; R >= 0, L >= 0; optional L2 toward 0."""
     delta_p = np.asarray(delta_p, dtype=float)
     q_in = np.asarray(q_in, dtype=float)
     dq_out = np.asarray(dq_out, dtype=float)
@@ -219,15 +223,28 @@ def _fit_rlc(
 
     if fit_stenosis:
         design = np.column_stack([q, np.abs(q) * q, dq])
-        coeffs, _, _, _ = np.linalg.lstsq(design, dp, rcond=None)
-        r_poiseuille, stenosis, inductance = (float(c) for c in coeffs)
+        lower = np.array([0.0, -np.inf, 0.0])
+        upper = np.array([np.inf, np.inf, np.inf])
+        l2_weights = np.array([l2_r, l2_stenosis, l2_l], dtype=float)
     else:
         design = np.column_stack([q, dq])
-        coeffs, _, _, _ = np.linalg.lstsq(design, dp, rcond=None)
+        lower = np.array([0.0, 0.0])
+        upper = np.array([np.inf, np.inf])
+        l2_weights = np.array([l2_r, l2_l], dtype=float)
+
+    if np.any(l2_weights > 0.0):
+        reg_rows = np.diag(np.sqrt(l2_weights))
+        design = np.vstack([design, reg_rows])
+        dp = np.concatenate([dp, np.zeros(reg_rows.shape[0], dtype=float)])
+
+    coeffs = lsq_linear(design, dp, bounds=(lower, upper)).x
+
+    if fit_stenosis:
+        r_poiseuille, stenosis, inductance = (float(c) for c in coeffs)
+    else:
         r_poiseuille, inductance = (float(c) for c in coeffs)
         stenosis = 0.0
 
-    inductance = max(inductance, 0.0)
     rel_err = _relative_fit_error(delta_p, q_in, dq_out, r_poiseuille, stenosis, inductance)
     return r_poiseuille, stenosis, inductance, rel_err
 
@@ -339,6 +356,9 @@ def calibrate_decoupled_ls(
     geo_name: str | None = None,
     calibration_input_path: str | Path | None = None,
     results_root: Path | None = None,
+    l2_r: float = 0.0,
+    l2_stenosis: float = 0.0,
+    l2_l: float = 0.0,
 ) -> dict:
     """
     Calibrate R/L/(S) per vessel and BloodVesselJunction outlet using decoupled lstsq.
@@ -428,6 +448,9 @@ def calibrate_decoupled_ls(
             q_in,
             dq_out,
             fit_stenosis=fit_stenosis,
+            l2_r=l2_r,
+            l2_stenosis=l2_stenosis,
+            l2_l=l2_l,
         )
         if not fit_stenosis:
             stenosis = 0.0
@@ -484,6 +507,9 @@ def calibrate_decoupled_ls(
                 q_in,
                 dq_out,
                 fit_stenosis=fit_stenosis,
+                l2_r=l2_r,
+                l2_stenosis=l2_stenosis,
+                l2_l=l2_l,
             )
             if not fit_stenosis:
                 stenosis = 0.0

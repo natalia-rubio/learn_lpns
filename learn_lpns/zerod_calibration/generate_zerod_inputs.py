@@ -558,6 +558,7 @@ def main():
                         model_dir=model_dir,
                         junction_type=JUNCTION_TYPE,
                         quadratic_resistor=getattr(args, "quadratic_resistor", False),
+                        multi_output_rri=getattr(args, "multi_output_rri", False),
                     )
 
                     with open(nn_output_path, "w") as f:
@@ -593,6 +594,7 @@ def main():
                             geometry_variant=args.geometry_variant,
                             model_dir=getattr(args, "model_dir", None),
                             quadratic_resistor=getattr(args, "quadratic_resistor", False),
+                            multi_output_rri=getattr(args, "multi_output_rri", False),
                             verbose=args.verbose,
                         )
                         with open(nn_junction_and_vessel_path, "w") as f:

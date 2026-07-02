@@ -7,6 +7,7 @@ from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, loss_pure, predi
 from learn_lpns.neural_network.nn_util import get_sizes, init_weights
 from learn_lpns.neural_network.train_nn import _model_checkpoint_basename
 from learn_lpns.zerod_calibration.nn_inference import (
+    resolve_rri_model_paths,
     rri_model_checkpoint_path,
     rri_models_complete,
     rri_separate_model_checkpoint_paths,
@@ -112,3 +113,18 @@ def test_rri_checkpoint_paths(tmp_path):
     with open(multi, "wb") as f:
         f.write(b"x")
     assert rri_models_complete(model_dir, set_name, vessel=False, multi_output=True)
+
+
+def test_resolve_rri_model_paths_respects_multi_output_flag(tmp_path):
+    model_dir = str(tmp_path)
+    set_name = "VMR_aorta"
+    multi = rri_model_checkpoint_path(model_dir, set_name, vessel=False)
+    separate = rri_separate_model_checkpoint_paths(model_dir, set_name, vessel=False)
+    with open(multi, "wb") as f:
+        f.write(b"x")
+    for path in separate:
+        with open(path, "wb") as f:
+            f.write(b"y")
+
+    assert resolve_rri_model_paths(model_dir, set_name, multi_output_rri=True) == [multi]
+    assert resolve_rri_model_paths(model_dir, set_name, multi_output_rri=False) == separate

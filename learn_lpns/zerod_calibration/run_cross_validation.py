@@ -470,6 +470,7 @@ def _run_zerod_inputs_for_cv(
     plots_only=False,
     verbose=False,
     no_redo=False,
+    multi_output_rri=False,
 ):
     """Run generate_zerod_inputs for CV deploy (NN-only) or plot refresh (--plots_only)."""
     ns = argparse.Namespace(
@@ -485,6 +486,7 @@ def _run_zerod_inputs_for_cv(
         verbose=verbose,
         skip_steps="",
         no_redo=no_redo,
+        multi_output_rri=multi_output_rri,
     )
     prepare_generate_zerod_namespace(ns)
     cmd = namespace_to_generate_zerod_argv(ns, set_name=set_name, geo_name=geo_name)
@@ -499,8 +501,11 @@ def run_cv_plots_only(
     data_root="data",
     run_config_suffix="",
     nn_vessel=True,
+    multi_output_rri=None,
 ):
     """Re-run Step 6 plots for each validation geometry listed in the existing CV summary."""
+    if multi_output_rri is None:
+        multi_output_rri = get_pipeline_config(set_name=set_name).training.multi_output_rri
     _out_dir, summary_path = _cv_results_paths(set_name, geometry_variant, run_config_suffix)
     summary_rows = read_cv_summary_rows(summary_path)
     if not summary_rows:
@@ -522,6 +527,7 @@ def run_cv_plots_only(
                 trial_id=trial_id,
                 nn_vessel=nn_vessel,
                 plots_only=True,
+                multi_output_rri=multi_output_rri,
             )
             if result.returncode == 0:
                 print(f"  ✓ trial {trial_id} / {val_geo}")
@@ -818,6 +824,7 @@ def run_cross_validation(
                 model_dir=model_dir,
                 nn_vessel=nn_vessel,
                 no_redo=no_redo,
+                multi_output_rri=use_multi_output_rri,
             )
             if result_deploy.returncode != 0:
                 print(f"  Deploy failed for {val_geo} with return code {result_deploy.returncode}")

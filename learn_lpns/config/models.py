@@ -31,6 +31,21 @@ class CalibrationConfig(BaseModel):
     maximum_iterations: int = Field(default=20, gt=0)
     default_l2_r: float = Field(default=1e5, gt=0)
     default_l2_stenosis: float = Field(default=1e10, gt=0)
+    decoupled_l2_r: float = Field(
+        default=0.0,
+        ge=0,
+        description="Tikhonov L2 on R in decoupled_ls (penalty lambda * R^2 toward 0)",
+    )
+    decoupled_l2_stenosis: float = Field(
+        default=0.0,
+        ge=0,
+        description="Tikhonov L2 on S in decoupled_ls (penalty lambda * S^2 toward 0)",
+    )
+    decoupled_l2_l: float = Field(
+        default=0.0,
+        ge=0,
+        description="Tikhonov L2 on L in decoupled_ls (penalty lambda * L^2 toward 0)",
+    )
     plot_rsl_fits: bool = Field(
         default=False,
         description="When using decoupled_ls, save per-element dP vs Q fit plots under results/RSL_fits/",
