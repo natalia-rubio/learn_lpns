@@ -34,6 +34,7 @@ __all__ = [
     "NN_JUNCTION_AND_VESSEL_SUFFIX",
     "NN_JUNCTION_ONLY_SUFFIX",
     "NN_VESSEL_ONLY_SUFFIX",
+    "casadi_results_csv_path",
     "modality_csv_paths",
     "modality_json_paths",
     "modality_key_from_table_header",
@@ -43,6 +44,12 @@ __all__ = [
     "sort_modalities",
     "split_location_plot_csv_paths",
 ]
+
+
+def casadi_results_csv_path(path: str) -> str:
+    """Return marked CasADi output path with ``_casadi`` before the extension."""
+    base, ext = os.path.splitext(path)
+    return f"{base}_casadi{ext}"
 
 
 def modality_table_header(modality_key: str) -> str:

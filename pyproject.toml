@@ -23,6 +23,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+casadi = [
+    "casadi>=3.6,<4",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",

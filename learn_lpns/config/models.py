@@ -17,6 +17,10 @@ class PhysicsConfig(BaseModel):
 class SolverConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    casadi_fallback: bool = Field(
+        default=True,
+        description="When true, retry failed svzerodsolver forward sims with the Python CasADi solver.",
+    )
     absolute_tolerance: float = Field(default=1e-5, gt=0)
     maximum_nonlinear_iterations: int = Field(default=50, gt=0)
     number_of_cardiac_cycles: int = Field(default=1, gt=0)

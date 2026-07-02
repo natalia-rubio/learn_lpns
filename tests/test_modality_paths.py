@@ -1,6 +1,7 @@
 """Tests for modality display names and forward-simulation path resolution."""
 
 from learn_lpns.zerod_calibration.modality_paths import (
+    casadi_results_csv_path,
     modality_csv_paths,
     modality_key_from_table_header,
     modality_table_header,
@@ -8,6 +9,14 @@ from learn_lpns.zerod_calibration.modality_paths import (
     read_cv_metric_from_row,
     sort_modalities,
 )
+
+
+def test_casadi_results_csv_path_adds_suffix():
+    path = "/out/bifurcations_EL_calibrated_results_BloodVesselJunction.csv"
+    assert (
+        casadi_results_csv_path(path)
+        == "/out/bifurcations_EL_calibrated_results_BloodVesselJunction_casadi.csv"
+    )
 
 
 def test_modality_table_header_known_and_unknown():

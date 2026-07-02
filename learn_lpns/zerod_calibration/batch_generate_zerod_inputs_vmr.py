@@ -24,6 +24,7 @@ from learn_lpns.zerod_calibration.generate_zerod_inputs_cli import (
     namespace_to_generate_zerod_argv,
     prepare_generate_zerod_namespace,
 )
+from learn_lpns.zerod_calibration.modality_paths import NN_JUNCTION_ONLY_SUFFIX
 from learn_lpns.zerod_calibration.tools.file_io import get_vmr_geometries, standard_0d_dir
 
 DEFAULT_GENERATE_ZEROD_INPUTS_TIMEOUT_SECONDS = 1000
@@ -76,8 +77,6 @@ def check_geometry_complete(
                 return False
 
     if require_nn_outputs and "BloodVesselJunction" in junction_types:
-        from learn_lpns.zerod_calibration.modality_paths import NN_JUNCTION_ONLY_SUFFIX
-
         nn_output = os.path.join(base_dir, f"bifurcations_NN_{NN_JUNCTION_ONLY_SUFFIX}.json")
         if not os.path.exists(nn_output):
             return False

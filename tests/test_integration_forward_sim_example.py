@@ -76,3 +76,54 @@ def test_forward_simulation_on_bundled_calibrated_json(bundled_calibrated_input,
 
     assert output_csv.is_file()
     assert output_csv.stat().st_size > 0
+
+
+@pytest.fixture(scope="module")
+def casadi_available():
+    pytest.importorskip("casadi")
+
+
+def test_casadi_fallback_when_svzerod_fails(
+    bundled_calibrated_input,
+    casadi_available,
+    tmp_path_factory,
+    monkeypatch,
+):
+    """When svzerodsolver fails, CasADi fallback produces results CSV."""
+    import json
+
+    from learn_lpns.config.load import _cached_pipeline_config
+
+    def _fail_svzerod(*_args, **_kwargs):
+        raise RuntimeError("svzerodsolver failed (test stub)")
+
+    monkeypatch.setattr(
+        "learn_lpns.zerod_calibration.forward_simulation._run_svzerod_forward_simulation",
+        _fail_svzerod,
+    )
+
+    _cached_pipeline_config.cache_clear()
+    custom = tmp_path_factory.mktemp("cfg") / "fallback.yaml"
+    custom.write_text("solver:\n  casadi_fallback: true\n")
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(custom))
+
+    with open(bundled_calibrated_input) as f:
+        input_data = json.load(f)
+    input_data["simulation_parameters"]["number_of_cardiac_cycles"] = 1
+    input_data["simulation_parameters"]["number_of_time_pts_per_cardiac_cycle"] = 5
+    input_data["simulation_parameters"]["output_all_cycles"] = True
+    inflow = next(bc for bc in input_data["boundary_conditions"] if bc["bc_name"] == "INFLOW")
+    inflow["bc_values"]["t"] = inflow["bc_values"]["t"][:5]
+    inflow["bc_values"]["Q"] = inflow["bc_values"]["Q"][:5]
+
+    trimmed_json = tmp_path_factory.mktemp("input") / "trimmed.json"
+    trimmed_json.write_text(json.dumps(input_data))
+
+    output_csv = tmp_path_factory.mktemp("forward_sim_casadi") / "results.csv"
+    run_forward_simulation(str(trimmed_json), str(output_csv))
+
+    assert output_csv.is_file()
+    assert output_csv.stat().st_size > 0
+    marked_csv = output_csv.with_name(f"{output_csv.stem}_casadi{output_csv.suffix}")
+    assert marked_csv.is_file()
+    _cached_pipeline_config.cache_clear()

@@ -5,6 +5,7 @@ physics:
   mu: 0.04    # blood dynamic viscosity (Poise); used for Poiseuille R and L from geometry
 
 solver:
+  casadi_fallback: true                   # if svzerodsolver fails, retry with Python CasADi before all-zeros fallback
   absolute_tolerance: 1.0e-5              # svzerodsolver nonlinear residual tolerance (simulation_parameters)
   maximum_nonlinear_iterations: 50        # cap on Newton iterations per time step
   number_of_cardiac_cycles: 1             # cardiac cycles to simulate (includes warm-up when steady_initial is false)

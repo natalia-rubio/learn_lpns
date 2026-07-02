@@ -1,0 +1,65 @@
+{
+    "boundary_conditions": [
+        {
+            "bc_name": "INFLOW",
+            "bc_type": "FLOW",
+            "bc_values": {
+                "t": [0.0, 0.01, 0.02, 0.03],
+                "Q": [100.0, 110.0, 105.0, 100.0]
+            }
+        },
+        {
+            "bc_name": "RCR_out",
+            "bc_type": "RCR",
+            "bc_values": {
+                "Rp": 10.0,
+                "C": 0.001,
+                "Rd": 100.0,
+                "Pd": 0.0
+            }
+        }
+    ],
+    "junctions": [
+        {
+            "junction_name": "J0",
+            "junction_type": "NORMAL_JUNCTION",
+            "inlet_vessels": [0],
+            "outlet_vessels": [1]
+        }
+    ],
+    "simulation_parameters": {
+        "number_of_cardiac_cycles": 1,
+        "number_of_time_pts_per_cardiac_cycle": 4,
+        "output_all_cycles": true
+    },
+    "vessels": [
+        {
+            "vessel_id": 0,
+            "vessel_name": "inlet_seg",
+            "zero_d_element_type": "BloodVessel",
+            "zero_d_element_values": {
+                "R_poiseuille": 0.1,
+                "stenosis_coefficient": 0.0,
+                "L": 0.01,
+                "C": 0.0
+            },
+            "boundary_conditions": {
+                "inlet": "INFLOW"
+            }
+        },
+        {
+            "vessel_id": 1,
+            "vessel_name": "outlet_seg",
+            "zero_d_element_type": "BloodVessel",
+            "zero_d_element_values": {
+                "R_poiseuille": 0.2,
+                "stenosis_coefficient": 0.0,
+                "L": 0.02,
+                "C": 0.0
+            },
+            "boundary_conditions": {
+                "outlet": "RCR_out"
+            }
+        }
+    ]
+}
