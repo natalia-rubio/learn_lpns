@@ -63,11 +63,13 @@ def _num_geos_from_basename(path: str) -> int:
 
 
 def _select_pkl(directory: str, glob_pattern: str) -> str:
-    paths = sorted(glob.glob(os.path.join(directory, glob_pattern)))
-    if not paths:
-        raise FileNotFoundError(f"No files matching {glob_pattern!r} under {directory}")
-
-    return max(paths, key=_num_geos_from_basename)
+    for suffix in ("_unclipped.pkl", "_clipped.pkl", ".pkl"):
+        paths = sorted(glob.glob(os.path.join(directory, glob_pattern.replace(".pkl", f"{suffix}"))))
+        if not paths:
+            paths = [p for p in sorted(glob.glob(os.path.join(directory, glob_pattern))) if "_trial_" not in p]
+        if paths:
+            return max(paths, key=_num_geos_from_basename)
+    raise FileNotFoundError(f"No files matching {glob_pattern!r} under {directory}")
 
 
 def _input_nrows(data_dict: dict) -> int:

@@ -26,6 +26,14 @@ from learn_lpns.data_processing.generate_split_indices import (
     resolve_flat_indices,
     resolve_geometry_row_ranges_from_jax_dict,
 )
+from learn_lpns.data_processing.jax_arrays_paths import (
+    jax_arrays_filename,
+    resolve_jax_arrays_path,
+)
+from learn_lpns.data_processing.stenosis_clipping import (
+    export_clipped_lumped_parameter_csvs,
+    write_clipped_jax_pickles,
+)
 from learn_lpns.tools.basic import load_dict, save_dict
 from learn_lpns.tools.paths import repo_root
 from learn_lpns.zerod_calibration.batch_generate_zerod_inputs_vmr import check_geometry_complete
@@ -161,16 +169,21 @@ def _jax_pickle_path(
     num_geos,
     *,
     vessel=False,
+    split_path=None,
+    stenosis_clipping_enabled=None,
 ):
-    prefix = "jax_arrays_vessel" if vessel else "jax_arrays"
-    return _data_path(
+    if stenosis_clipping_enabled is None:
+        stenosis_clipping_enabled = get_pipeline_config(set_name=set_name).data_processing.stenosis_clipping.enabled
+    return resolve_jax_arrays_path(
         data_root,
-        "jax_arrays",
         set_name,
-        run_config_suffix,
         geometry_variant,
         set_type,
-        f"{prefix}_num_geos_{num_geos}.pkl",
+        num_geos,
+        run_config_suffix,
+        vessel=vessel,
+        split_path=split_path,
+        stenosis_clipping_enabled=stenosis_clipping_enabled,
     )
 
 
@@ -235,7 +248,9 @@ def _ensure_cv_prerequisites(
             missing_calib.append(geo)
 
     num_geos = len(geometries)
-    jax_path = _jax_pickle_path(data_root, set_name, run_config_suffix, geometry_variant, set_type, num_geos)
+    jax_path = _jax_pickle_path(
+        data_root, set_name, run_config_suffix, geometry_variant, set_type, num_geos, stenosis_clipping_enabled=False
+    )
     jax_missing = not os.path.exists(jax_path)
 
     if not (missing_ml or jax_missing or missing_calib):
@@ -315,10 +330,18 @@ def _load_cv_jax_cohort(
             + f"/{geometry_variant}"
         )
 
-    jax_path = _jax_pickle_path(data_root, set_name, run_config_suffix, geometry_variant, set_type, num_geos)
+    jax_path = _jax_pickle_path(
+        data_root,
+        set_name,
+        run_config_suffix,
+        geometry_variant,
+        set_type,
+        num_geos,
+        stenosis_clipping_enabled=False,
+    )
     if not os.path.exists(jax_path):
         raise FileNotFoundError(
-            f"Jax arrays not found: {jax_path} (expected {num_geos} geometries). "
+            f"Unclipped jax arrays not found: {jax_path} (expected {num_geos} geometries). "
             f"Re-run data processing for set={set_name!r}, variant={geometry_variant!r}"
             + (f", run-config={run_config_suffix!r}" if run_config_suffix else "")
             + "."
@@ -332,8 +355,10 @@ def _load_cv_jax_cohort(
         set_type,
         num_geos,
         vessel=True,
+        stenosis_clipping_enabled=False,
     )
     data_dict = load_dict(jax_path)
+    vessel_data_dict = load_dict(vessel_jax_path) if os.path.exists(vessel_jax_path) else {}
     row_ranges, total_rows, geometries = resolve_geometry_row_ranges_from_jax_dict(data_dict)
     if len(geometries) != num_geos:
         raise ValueError(
@@ -344,11 +369,13 @@ def _load_cv_jax_cohort(
     num_pts = total_rows
     return {
         "data_dict": data_dict,
+        "vessel_data_dict": vessel_data_dict,
         "row_ranges": row_ranges,
         "geometries": geometries,
         "num_geos": len(geometries),
         "num_pts": num_pts,
         "vessel_jax_path": vessel_jax_path,
+        "jax_path": jax_path,
     }
 
 
@@ -582,11 +609,14 @@ def run_cross_validation(
         set_type,
     )
     data_dict = cohort["data_dict"]
+    vessel_data_dict = cohort["vessel_data_dict"]
     row_ranges = cohort["row_ranges"]
     geometries = cohort["geometries"]
     num_geos = cohort["num_geos"]
     num_pts = cohort["num_pts"]
     vessel_jax_path = cohort["vessel_jax_path"]
+    jax_unclipped_path = cohort["jax_path"]
+    stenosis_cfg = get_pipeline_config(set_name=set_name).data_processing.stenosis_clipping
     paths = _cv_run_directory_paths(data_root, set_name, geometry_variant, data_paths_suffix, set_type)
     split_indices_dir = paths["split_indices_dir"]
     model_dir_base = paths["model_dir_base"]
@@ -668,7 +698,6 @@ def run_cross_validation(
             if not val_geometries:
                 continue
 
-            vessel_data_dict = load_dict(vessel_jax_path) if os.path.exists(vessel_jax_path) else {}
             geometry_indices = build_geometry_index_map(data_dict, vessel_data_dict)
             split_dict = build_split_dict(
                 train_geometries,
@@ -683,6 +712,42 @@ def run_cross_validation(
             train_ind = resolve_flat_indices(split_dict, "junction", "train", split_path=split_path)
             val_ind = resolve_flat_indices(split_dict, "junction", "val", split_path=split_path)
             print(f"  Split: {len(train_geometries)} train, {len(val_geometries)} val -> {val_geometries}")
+
+        if stenosis_cfg.enabled:
+            if not vessel_data_dict:
+                raise FileNotFoundError(
+                    f"Vessel unclipped jax required for stenosis clipping: {vessel_jax_path}"
+                )
+            jax_out_dir = os.path.dirname(jax_unclipped_path)
+            junction_trial_path = os.path.join(
+                jax_out_dir,
+                jax_arrays_filename(num_geos, vessel=False, stenosis_clipping_enabled=True, split_path=split_path),
+            )
+            vessel_trial_path = os.path.join(
+                jax_out_dir,
+                jax_arrays_filename(num_geos, vessel=True, stenosis_clipping_enabled=True, split_path=split_path),
+            )
+            metadata = write_clipped_jax_pickles(
+                junction_unclipped=data_dict,
+                vessel_unclipped=vessel_data_dict,
+                split_dict=split_dict,
+                clip_generation_number=stenosis_cfg.clip_generation_number,
+                junction_out_path=junction_trial_path,
+                vessel_out_path=vessel_trial_path,
+                split_path=split_path,
+            )
+            junction_clipped = load_dict(junction_trial_path)
+            vessel_clipped = load_dict(vessel_trial_path)
+            export_clipped_lumped_parameter_csvs(
+                junction_clipped=junction_clipped,
+                vessel_clipped=vessel_clipped,
+                metadata=metadata,
+                data_root=data_root,
+                set_name=set_name,
+                run_config_suffix=run_config_suffix,
+                geometry_variant=geometry_variant,
+                label_variant=f"trial_{trial}",
+            )
 
         # Check for validation features outside training set range; write CSV per split
         feature_names = get_default_include_features()

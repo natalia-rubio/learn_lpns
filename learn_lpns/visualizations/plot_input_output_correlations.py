@@ -78,6 +78,7 @@ def load_cohort_from_jax(
         num_geos,
         run_config_suffix,
         vessel=vessel,
+        stenosis_clipping_enabled=False,
     )
     if not os.path.isfile(jax_path):
         raise FileNotFoundError(f"Jax pickle not found: {jax_path}")

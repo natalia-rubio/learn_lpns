@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from learn_lpns.config import get_pipeline_config
+from learn_lpns.data_processing.stenosis_clipping import attach_stenosis_bounds_to_model
 from learn_lpns.neural_network.nn_util import attach_train_output_bounds, dill_save, get_batch_indices
 
 
@@ -162,6 +163,12 @@ def train_nn(model, training_params):
     )
     train_inds = training_params["train_inds"]
     attach_train_output_bounds(model, train_inds)
+
+    metadata = getattr(model, "data_dict", {}).get("stenosis_clip_bounds")
+    if metadata is not None:
+        vessel = getattr(model, "model_name_suffix", "") == "_vessel"
+        attach_stenosis_bounds_to_model(model, metadata, vessel=vessel)
+
     dill_save(model, os.path.join(out_dir, f"{model_name}_model"))
 
     if len(val_inds) > 0:

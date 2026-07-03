@@ -97,10 +97,39 @@ def test_compute_train_output_bounds_from_split(tmp_path):
         },
         str(split_path),
     )
-    mins, maxs = compute_train_output_bounds_from_split(
-        model,
-        data_root=str(tmp_path / "data"),
-        run_config_suffix="gen_loss",
-    )
+    mins, maxs = compute_train_output_bounds_from_split(model, split_path=str(split_path))
     assert mins == pytest.approx(np.array([1.0, 0.0, 0.1]))
     assert maxs == pytest.approx(np.array([5.0, 10.0, 0.2]))
+
+
+def test_compute_train_output_bounds_from_split_trial_path(tmp_path):
+    output = np.array([[1.0, 10.0, 0.1], [5.0, 0.0, 0.2]], dtype=float)
+    model = _FakeModel(output, model_name_suffix="")
+    split_path = tmp_path / "train_val_ind_VMR_test_num_geos_2_trial_0"
+    save_dict(
+        {
+            "train_geometries": ["g0"],
+            "val_geometries": ["g1"],
+            "geometry_indices": {
+                "g0": {"junction": (0, 1), "vessel": (0, 1)},
+                "g1": {"junction": (1, 2), "vessel": (1, 2)},
+            },
+        },
+        str(split_path),
+    )
+    mins, maxs = compute_train_output_bounds_from_split(model, split_path=str(split_path))
+    assert mins == pytest.approx(np.array([1.0, 10.0, 0.1]))
+    assert maxs == pytest.approx(np.array([1.0, 10.0, 0.1]))
+
+
+def test_resolve_train_output_bounds_no_cohort_fallback(tmp_path):
+    model = _FakeModel(
+        np.array([[1.0, 2.0, 3.0]]),
+        set_name="VMR_test",
+        geometry_variant="bifurcations_EL",
+        set_type="all",
+        num_geos=1,
+        data_dict={"output_min": np.array([0.0, 0.0, 0.0]), "output_max": np.array([9.0, 9.0, 9.0])},
+    )
+    with pytest.raises(FileNotFoundError):
+        resolve_train_output_bounds(model, data_root=str(tmp_path / "data"))

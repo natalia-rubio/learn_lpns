@@ -242,6 +242,27 @@ learn-lpns-data-processing \
   --run_config gen_loss
 ```
 
+### Stenosis clipping (`data_processing.stenosis_clipping`)
+
+When enabled (default), data processing writes **unclipped** and **clipped** jax pickles:
+
+- `jax_arrays_num_geos_{N}_unclipped.pkl` — full cohort reference
+- `jax_arrays_num_geos_{N}_clipped.pkl` — default train/val split; S clipped in labels
+- `jax_arrays_num_geos_{N}_trial_{T}_clipped.pkl` — per CV trial (written by `learn-lpns-cv`)
+
+Bounds are computed from **train rows only** with `generation <= clip_generation_number` (default 1). Junction and vessel each get separate S bounds. Inspection CSVs are exported under `data/ml_inputs/.../clipped_labels/default/` or `trial_{T}/`.
+
+Config keys in `config/defaults.yaml`:
+
+```yaml
+data_processing:
+  stenosis_clipping:
+    enabled: true
+    clip_generation_number: 1
+```
+
+Training loads the clipped pickle matching `--split_path` (trial splits load `_trial_{T}_clipped`). Inference applies the same S bounds from model checkpoints (`stenosis_clip_bounds`). Re-run data processing after changing `clip_generation_number`.
+
 ## Visualizations
 
 Reporting scripts under `learn_lpns/visualizations/` (run as modules from repo root):

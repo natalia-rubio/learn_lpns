@@ -60,27 +60,12 @@ def attach_train_output_bounds(model, train_inds) -> None:
 def compute_train_output_bounds_from_split(
     model,
     *,
-    data_root: str = "data",
-    run_config_suffix: str | None = None,
+    split_path: str,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Derive train-set R/S/L min/max from split_indices + the model's stacked outputs."""
     from learn_lpns.data_processing.generate_split_indices import load_split_for_training, resolve_flat_indices
-    from learn_lpns.neural_network.launch_training import _default_split_path
 
-    num_geos = int(getattr(model, "num_geos", 0))
-    if num_geos <= 0:
-        raise ValueError("Cannot infer train output bounds: model.num_geos is missing or invalid.")
-
-    set_type = getattr(model, "set_type", "all")
-    split_path = _default_split_path(
-        data_root,
-        model.set_name,
-        model.geometry_variant,
-        set_type,
-        num_geos,
-        run_config_suffix or getattr(model, "run_config_suffix", None),
-    )
-    if not os.path.isfile(split_path):
+    if not split_path or not os.path.isfile(split_path):
         raise FileNotFoundError(f"Train/val split not found for clipping bounds: {split_path}")
 
     split_dict = load_split_for_training(split_path)
@@ -98,6 +83,7 @@ def resolve_train_output_bounds(
     *,
     data_root: str = "data",
     run_config_suffix: str | None = None,
+    split_path: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (min, max) vectors length 3 for R/S/L clipping."""
     if hasattr(model, "train_output_min") and hasattr(model, "train_output_max"):
@@ -105,32 +91,30 @@ def resolve_train_output_bounds(
             np.asarray(model.train_output_min, dtype=float),
             np.asarray(model.train_output_max, dtype=float),
         )
-    try:
-        mins, maxs = compute_train_output_bounds_from_split(
-            model,
-            data_root=data_root,
-            run_config_suffix=run_config_suffix,
+
+    effective_split_path = split_path or getattr(model, "split_path", None)
+    if effective_split_path is None:
+        from learn_lpns.neural_network.launch_training import _default_split_path
+
+        num_geos = int(getattr(model, "num_geos", 0))
+        if num_geos <= 0:
+            raise ValueError("Cannot infer train output bounds: model.num_geos is missing or invalid.")
+        set_type = getattr(model, "set_type", "all")
+        effective_split_path = _default_split_path(
+            data_root,
+            model.set_name,
+            model.geometry_variant,
+            set_type,
+            num_geos,
+            run_config_suffix or getattr(model, "run_config_suffix", None),
         )
-        print(
-            "  clip_predictions: loaded train-set bounds from split_indices "
-            f"(R [{mins[0]:.4g}, {maxs[0]:.4g}], S [{mins[1]:.4g}, {maxs[1]:.4g}], L [{mins[2]:.4g}, {maxs[2]:.4g}])"
-        )
-        return mins, maxs
-    except (FileNotFoundError, ValueError) as exc:
-        data_dict = getattr(model, "data_dict", None) or {}
-        if "output_min" in data_dict and "output_max" in data_dict:
-            print(
-                "  clip_predictions: could not load train split "
-                f"({exc}); using cohort output_min/max instead"
-            )
-            return (
-                np.asarray(data_dict["output_min"], dtype=float),
-                np.asarray(data_dict["output_max"], dtype=float),
-            )
-        raise ValueError(
-            "clip_predictions is enabled but the loaded model has no train output bounds, "
-            "no usable split_indices file, and no cohort output_min/output_max in data_dict."
-        ) from exc
+
+    mins, maxs = compute_train_output_bounds_from_split(model, split_path=effective_split_path)
+    print(
+        "  clip_predictions: loaded train-set bounds from split_indices "
+        f"(R [{mins[0]:.4g}, {maxs[0]:.4g}], S [{mins[1]:.4g}, {maxs[1]:.4g}], L [{mins[2]:.4g}, {maxs[2]:.4g}])"
+    )
+    return mins, maxs
 
 
 def clip_rsl_predictions(

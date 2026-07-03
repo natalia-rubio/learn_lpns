@@ -1,4 +1,3 @@
-import os
 from functools import partial
 
 import jax.numpy as jnp
@@ -27,25 +26,20 @@ class NeuralNet:
         self.geometry_variant = network_params.get("geometry_variant", "bifurcations")
         self.data_root = network_params.get("data_root", "data")
         self.run_config_suffix = network_params.get("run_config_suffix")
+        self.split_path = network_params.get("split_path")
+        self.trial_id = network_params.get("trial_id")
+        self.jax_arrays_path = network_params.get("jax_arrays_path")
 
         if "data_dict" in network_params:
             self.data_dict = network_params["data_dict"]
-        else:
-            jax_arrays_path = network_params.get("jax_arrays_path")
-            if jax_arrays_path is None:
-                data_root = network_params.get("data_root", "data")
-                run_config_suffix = network_params.get("run_config_suffix")
-                jax_filename = network_params.get(
-                    "jax_arrays_filename",
-                    f"jax_arrays_num_geos_{network_params['num_geos']}.pkl",
-                )
-                path_parts = [data_root, "jax_arrays", self.set_name]
-                if run_config_suffix:
-                    path_parts.append(run_config_suffix)
-                path_parts.extend([self.geometry_variant, self.set_type, jax_filename])
-                jax_arrays_path = os.path.join(*path_parts)
+        elif network_params.get("jax_arrays_path"):
+            jax_arrays_path = network_params["jax_arrays_path"]
             print(f"  Loading jax_arrays from: {jax_arrays_path}")
             self.data_dict = load_dict(jax_arrays_path)
+        else:
+            raise ValueError(
+                "NeuralNet requires either network_params['data_dict'] or network_params['jax_arrays_path']."
+            )
 
         self.model_name_suffix = network_params.get("model_name_suffix", "")
         self.use_leaky_relu = network_params.get("use_leaky_relu", False)

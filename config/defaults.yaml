@@ -41,6 +41,9 @@ cohorts:
 
 data_processing:
   flow_split_method: peak_inlet_flow         # mean_over_time | peak_inlet_flow (flow_split from geometric 0D CSV)
+  stenosis_clipping:
+    enabled: true                            # clip S in jax labels to train+gen-filtered bounds; write _clipped pickles
+    clip_generation_number: 3               # inclusive: use train rows with generation 0..N for S min/max
 
 split:
   percent_train: 0.9                      # default train fraction for learn-lpns-cv geometry splits

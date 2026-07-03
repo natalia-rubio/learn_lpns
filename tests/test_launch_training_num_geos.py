@@ -31,7 +31,16 @@ def test_infer_num_geos_prefers_largest_with_matching_split(tmp_path):
             / run_config
             / geometry_variant
             / set_type
-            / f"jax_arrays_num_geos_{num_geos}.pkl"
+            / f"jax_arrays_num_geos_{num_geos}_unclipped.pkl"
+        )
+        _touch(
+            data_root
+            / "jax_arrays"
+            / set_name
+            / run_config
+            / geometry_variant
+            / set_type
+            / f"jax_arrays_num_geos_{num_geos}_clipped.pkl"
         )
         _touch(_default_split_path(str(data_root), set_name, geometry_variant, set_type, num_geos, run_config))
 
@@ -74,7 +83,16 @@ def test_infer_num_geos_requires_matching_split_when_not_explicit(tmp_path):
         / "gen_loss"
         / "bifurcations_EL"
         / "all"
-        / "jax_arrays_num_geos_5.pkl"
+        / "jax_arrays_num_geos_5_unclipped.pkl"
+    )
+    _touch(
+        data_root
+        / "jax_arrays"
+        / "VMR_aorta_starter"
+        / "gen_loss"
+        / "bifurcations_EL"
+        / "all"
+        / "jax_arrays_num_geos_5_clipped.pkl"
     )
 
     with pytest.raises(SystemExit, match="no matching split_indices"):

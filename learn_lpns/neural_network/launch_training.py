@@ -7,6 +7,10 @@ from learn_lpns.data_processing.generate_split_indices import (
     load_split_for_training,
     resolve_flat_indices,
 )
+from learn_lpns.data_processing.jax_arrays_paths import (
+    parse_trial_id_from_split_path,
+    resolve_jax_arrays_path,
+)
 from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, NeuralNet
 from learn_lpns.neural_network.nn_util import append_output_rri_to_input
 from learn_lpns.neural_network.train_nn import train_nn
@@ -130,13 +134,22 @@ def _jax_arrays_path(
     run_config_suffix: str | None,
     *,
     vessel: bool,
+    split_path: str | None = None,
+    stenosis_clipping_enabled: bool | None = None,
 ) -> str:
-    jax_filename = f"jax_arrays_vessel_num_geos_{num_geos}.pkl" if vessel else f"jax_arrays_num_geos_{num_geos}.pkl"
-    parts = [data_root, "jax_arrays", set_name]
-    if run_config_suffix:
-        parts.append(run_config_suffix)
-    parts.extend([geometry_variant, set_type, jax_filename])
-    return os.path.join(*parts)
+    if stenosis_clipping_enabled is None:
+        stenosis_clipping_enabled = get_pipeline_config(set_name=set_name).data_processing.stenosis_clipping.enabled
+    return resolve_jax_arrays_path(
+        data_root,
+        set_name,
+        geometry_variant,
+        set_type,
+        num_geos,
+        run_config_suffix,
+        vessel=vessel,
+        split_path=split_path,
+        stenosis_clipping_enabled=stenosis_clipping_enabled,
+    )
 
 
 def _default_split_path(
@@ -222,6 +235,8 @@ def _build_training_params_for_modality(
         "geometry_variant": geometry_variant,
         "run_config_suffix": run_config_suffix,
         "jax_arrays_path": jax_path,
+        "split_path": split_path,
+        "trial_id": parse_trial_id_from_split_path(split_path),
         "data_dict": jax_data,
         "use_leaky_relu": leaky_relu,
         "model_name_suffix": model_name_suffix,
@@ -230,8 +245,8 @@ def _build_training_params_for_modality(
         "generation_weighted_loss": generation_weighted_loss_eff,
         "generation_weighted_loss_decay_base": generation_weighted_loss_decay_base,
     }
-    if vessel:
-        network_params["jax_arrays_filename"] = os.path.basename(jax_path)
+    if "stenosis_clip_bounds" in jax_data:
+        network_params["stenosis_clip_bounds"] = jax_data["stenosis_clip_bounds"]
 
     n_train = max(len(train_inds), 1)
     training_params = {
@@ -538,7 +553,14 @@ def main():
             num_geos,
             data_paths_suffix,
             vessel=vessel,
+            split_path=split_path,
         )
+        if not os.path.isfile(jax_path):
+            raise FileNotFoundError(
+                f"Expected jax arrays at {jax_path} for split {split_path!r}. "
+                "Re-run data processing or cross-validation to create clipped pickles."
+            )
+        print(f"  Loading jax_arrays from: {jax_path}")
         network_params, training_params = _build_training_params_for_modality(
             vessel=vessel,
             split_dict=split_dict,

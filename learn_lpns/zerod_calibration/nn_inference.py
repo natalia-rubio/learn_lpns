@@ -9,6 +9,12 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
+from learn_lpns.config import get_pipeline_config
+from learn_lpns.data_processing.jax_arrays_paths import resolve_jax_arrays_path
+from learn_lpns.data_processing.stenosis_clipping import (
+    clip_stenosis_values,
+    resolve_stenosis_bounds_from_model,
+)
 from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, predict
 from learn_lpns.neural_network.nn_util import clip_rsl_predictions, dill_load, resolve_train_output_bounds
 
@@ -20,16 +26,23 @@ def forward_jax_pickle_path(
     geometry_variant: str,
     num_geos: int = 1,
 ) -> str:
-    """Path to per-forward-pass jax pickle (default: single geometry, set_type=forward)."""
-    return os.path.join(
+    """Path to per-forward-pass unclipped jax pickle (single geometry, set_type=forward)."""
+    stenosis_enabled = get_pipeline_config(set_name=set_name).data_processing.stenosis_clipping.enabled
+    return resolve_jax_arrays_path(
         data_root,
-        "jax_arrays",
         set_name,
-        run_config_suffix,
         geometry_variant,
         "forward",
-        f"jax_arrays_num_geos_{num_geos}.pkl",
+        num_geos,
+        run_config_suffix,
+        vessel=False,
+        split_path=None,
+        stenosis_clipping_enabled=False,
     )
+
+
+def _resolve_stenosis_clipping_enabled(set_name: str) -> bool:
+    return bool(get_pipeline_config(set_name=set_name).data_processing.stenosis_clipping.enabled)
 
 
 def rri_model_checkpoint_path(model_dir: str, set_name: str, *, vessel: bool = False) -> str:
@@ -128,15 +141,29 @@ def run_nn_predict(
             pred = predict(X_jax, model.weights, use_leaky)
             raw_predictions.append(np.array(pred).flatten())
 
+    if _resolve_stenosis_clipping_enabled(set_name):
+        if bounds_model is None:
+            raise ValueError("stenosis_clipping enabled but no model was loaded for bounds.")
+        s_min, s_max = resolve_stenosis_bounds_from_model(bounds_model, vessel=vessel)
+        pre_s = (float(np.min(raw_predictions[1])), float(np.max(raw_predictions[1])))
+        raw_predictions[1] = clip_stenosis_values(raw_predictions[1], s_min, s_max)
+        post_s = (float(np.min(raw_predictions[1])), float(np.max(raw_predictions[1])))
+        print(
+            f"      stenosis_clipping: ON  (S bounds [{s_min:.4g}, {s_max:.4g}]; "
+            f"pred S before [{pre_s[0]:.4g},{pre_s[1]:.4g}] after [{post_s[0]:.4g},{post_s[1]:.4g}])"
+        )
+
     if _resolve_clip_predictions(clip_predictions, set_name):
         if bounds_model is None:
             raise ValueError("clip_predictions enabled but no model was loaded for bounds.")
         suffix = run_config_suffix or getattr(bounds_model, "run_config_suffix", None)
         root = getattr(bounds_model, "data_root", data_root)
+        split_path = getattr(bounds_model, "split_path", None)
         bounds_min, bounds_max = resolve_train_output_bounds(
             bounds_model,
             data_root=root,
             run_config_suffix=suffix,
+            split_path=split_path,
         )
         pre_clip = [(float(np.min(p)), float(np.max(p))) for p in raw_predictions]
         raw_predictions = list(

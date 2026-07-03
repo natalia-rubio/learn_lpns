@@ -129,6 +129,23 @@ class SplitConfig(BaseModel):
 FlowSplitMethod = Literal["mean_over_time", "peak_inlet_flow"]
 
 
+class StenosisClippingConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Clip stenosis (S) in output_rri to train-set bounds from rows with "
+            "generation <= clip_generation_number; write _clipped jax pickles."
+        ),
+    )
+    clip_generation_number: int = Field(
+        default=1,
+        ge=0,
+        description="Inclusive upper generation for S bound computation (generations 0..N).",
+    )
+
+
 class DataProcessingConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -140,6 +157,7 @@ class DataProcessingConfig(BaseModel):
             "peak_inlet_flow uses the timestep of maximum original-inlet flow."
         ),
     )
+    stenosis_clipping: StenosisClippingConfig = Field(default_factory=StenosisClippingConfig)
 
 
 class OptimizerConfig(BaseModel):

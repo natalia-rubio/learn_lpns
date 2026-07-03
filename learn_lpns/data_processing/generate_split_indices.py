@@ -14,6 +14,7 @@ from typing import Any, Literal
 import numpy as np
 
 from learn_lpns.config import get_pipeline_config
+from learn_lpns.data_processing.jax_arrays_paths import resolve_jax_arrays_path
 from learn_lpns.tools.basic import load_dict, save_dict
 
 
@@ -323,13 +324,16 @@ def main():
     parser.add_argument("--data_root", default="data", help="Repo data root (default: data)")
     args = parser.parse_args()
 
-    jax_arrays_path = os.path.join(
+    jax_arrays_path = resolve_jax_arrays_path(
         args.data_root,
-        "jax_arrays",
         args.set_name,
         args.geometry_variant,
         args.set_type,
-        f"jax_arrays_num_geos_{args.num_geos}.pkl",
+        args.num_geos,
+        None,
+        vessel=False,
+        split_path=None,
+        stenosis_clipping_enabled=False,
     )
     data_dict = load_dict(jax_arrays_path)
 
@@ -346,9 +350,16 @@ def main():
 
     train_geometries, val_geometries = generate_geometry_split(args.percent_train, args.seed, geometries)
 
-    vessel_jax_path = os.path.join(
-        os.path.dirname(jax_arrays_path),
-        f"jax_arrays_vessel_num_geos_{args.num_geos}.pkl",
+    vessel_jax_path = resolve_jax_arrays_path(
+        args.data_root,
+        args.set_name,
+        args.geometry_variant,
+        args.set_type,
+        args.num_geos,
+        None,
+        vessel=True,
+        split_path=None,
+        stenosis_clipping_enabled=False,
     )
     vessel_dict: dict[str, Any] = load_dict(vessel_jax_path) if os.path.exists(vessel_jax_path) else {}
     geometry_indices = build_geometry_index_map(data_dict, vessel_dict)

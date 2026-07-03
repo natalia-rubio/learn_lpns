@@ -3,7 +3,7 @@ For a set name and list of geometries, run the full data processing pipeline:
 
 1) Extract geometric features from 0D config -> `geometric_features.csv`
 2) Extract calibrated junction lumped parameters -> `junction_lumped_parameters.csv`
-3) Build concatenated `data_dict` for JAX NN training -> `data/jax_arrays/.../jax_arrays_num_geos_<N>.pkl`
+3) Build concatenated `data_dict` for JAX NN training -> `data/jax_arrays/.../jax_arrays_num_geos_<N>_{unclipped,clipped}.pkl`
 4) Generate train/val split indices -> `data/split_indices/.../train_val_ind_<set_name>_num_geos_<N>`
 """
 
@@ -33,7 +33,12 @@ from learn_lpns.data_processing.inputs_from_0d_config import (
     load_vessel_targets_from_config,
 )
 from learn_lpns.data_processing.outputs_from_config import load_junction_lumped_parameters
-from learn_lpns.tools.basic import save_dict
+from learn_lpns.data_processing.jax_arrays_paths import jax_arrays_filename
+from learn_lpns.data_processing.stenosis_clipping import (
+    export_clipped_lumped_parameter_csvs,
+    write_clipped_jax_pickles,
+)
+from learn_lpns.tools.basic import load_dict, save_dict
 from learn_lpns.zerod_calibration.run_config_canonical import DEFAULT_CLI_RUN_CONFIG
 
 
@@ -363,9 +368,15 @@ def main():
             else:
                 jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, geometry_variant, args.set_type)
             os.makedirs(jax_out_dir, exist_ok=True)
-            jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}.pkl")
-            save_dict(data_dict, jax_out_path)
-            print(f"Wrote data_dict to {jax_out_path}")
+            junction_unclipped_name = jax_arrays_filename(
+                num_geos, vessel=False, stenosis_clipping_enabled=False
+            )
+            vessel_unclipped_name = jax_arrays_filename(
+                num_geos, vessel=True, stenosis_clipping_enabled=False
+            )
+            jax_unclipped_path = os.path.join(jax_out_dir, junction_unclipped_name)
+            save_dict(data_dict, jax_unclipped_path)
+            print(f"Wrote unclipped data_dict to {jax_unclipped_path}")
 
             # ---- Build and save vessel data_dict ----
             vessel_data_dict = build_data_dict_from_vessel_csvs(
@@ -378,10 +389,10 @@ def main():
                 set_type=args.set_type,
                 data_root=args.data_root,
             )
-            vessel_jax_path = os.path.join(jax_out_dir, f"jax_arrays_vessel_num_geos_{num_geos}.pkl")
-            save_dict(vessel_data_dict, vessel_jax_path)
+            vessel_jax_unclipped_path = os.path.join(jax_out_dir, vessel_unclipped_name)
+            save_dict(vessel_data_dict, vessel_jax_unclipped_path)
             n_vessel = vessel_data_dict["input"].shape[0]
-            print(f"Wrote vessel data_dict to {vessel_jax_path} (n_vessel_rows={n_vessel})")
+            print(f"Wrote unclipped vessel data_dict to {vessel_jax_unclipped_path} (n_vessel_rows={n_vessel})")
 
             # ---- Generate train/val split indices (by geometry: all rows from one geometry in same set) ----
             if "input" not in data_dict:
@@ -428,6 +439,43 @@ def main():
             print(f"Wrote geometry set assignment to {geometries_txt_path}")
             print("Train geometries:", train_geometries)
             print("Validation geometries:", val_geometries)
+
+            stenosis_cfg = dp_cfg.stenosis_clipping
+            if stenosis_cfg.enabled:
+                junction_clipped_name = jax_arrays_filename(
+                    num_geos, vessel=False, stenosis_clipping_enabled=True
+                )
+                vessel_clipped_name = jax_arrays_filename(
+                    num_geos, vessel=True, stenosis_clipping_enabled=True
+                )
+                jax_clipped_path = os.path.join(jax_out_dir, junction_clipped_name)
+                vessel_jax_clipped_path = os.path.join(jax_out_dir, vessel_clipped_name)
+                metadata = write_clipped_jax_pickles(
+                    junction_unclipped=data_dict,
+                    vessel_unclipped=vessel_data_dict,
+                    split_dict=split_dict,
+                    clip_generation_number=stenosis_cfg.clip_generation_number,
+                    junction_out_path=jax_clipped_path,
+                    vessel_out_path=vessel_jax_clipped_path,
+                    split_path=split_out_path,
+                )
+                junction_clipped = load_dict(jax_clipped_path)
+                vessel_clipped = load_dict(vessel_jax_clipped_path)
+                export_clipped_lumped_parameter_csvs(
+                    junction_clipped=junction_clipped,
+                    vessel_clipped=vessel_clipped,
+                    metadata=metadata,
+                    data_root=args.data_root,
+                    set_name=args.set_name,
+                    run_config_suffix=run_config_suffix or None,
+                    geometry_variant=geometry_variant,
+                    label_variant="default",
+                )
+            else:
+                print(
+                    "  stenosis_clipping disabled: training should load _unclipped jax pickles "
+                    f"({junction_unclipped_name}, {vessel_unclipped_name})"
+                )
         except Exception as e:
             print(f"  Failed to build data_dict / jax_arrays / split for {geometry_variant}: {e}")
             if args.verbose:
