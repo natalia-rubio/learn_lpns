@@ -5,8 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from learn_lpns.config import get_pipeline_config
-from learn_lpns.neural_network.nn_model import loss_pure
-from learn_lpns.neural_network.nn_util import dill_save, get_batch_indices
+from learn_lpns.neural_network.nn_util import attach_train_output_bounds, dill_save, get_batch_indices
 
 
 def _model_checkpoint_basename(model) -> str:
@@ -15,11 +14,49 @@ def _model_checkpoint_basename(model) -> str:
     return f"{model.output_type}_{model.set_name}{model.model_name_suffix}_pred_{model.target_output_column}"
 
 
+def _save_training_plot(
+    *,
+    out_dir: str,
+    model_name: str,
+    epoch: int,
+    train_pure_hist: list,
+    val_pure_hist: list,
+    train_training_hist: list,
+    val_training_hist: list,
+) -> None:
+    epochs = np.linspace(0, epoch, epoch + 1, True)
+    fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
+
+    axes[0].plot(epochs, np.asarray(train_pure_hist), label="Train", color="cornflowerblue")
+    axes[0].plot(epochs, np.asarray(val_pure_hist), label="Val", color="salmon")
+    axes[0].set_ylabel("Pure RMSE")
+    axes[0].set_title("Unweighted RMSE (no generation / asymmetric weighting)")
+    axes[0].set_yscale("log")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+
+    axes[1].plot(epochs, np.asarray(train_training_hist), label="Train", color="cornflowerblue")
+    axes[1].plot(epochs, np.asarray(val_training_hist), label="Val", color="salmon")
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Training loss (weighted MSE)")
+    axes[1].set_title("Training objective (generation- and/or asymmetric-weighted)")
+    axes[1].set_yscale("log")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    os.makedirs(out_dir, exist_ok=True)
+    fig.savefig(os.path.join(out_dir, f"{model_name}_training_plot.png"), bbox_inches="tight")
+    plt.close(fig)
+
+
 def train_nn(model, training_params):
     model_name = _model_checkpoint_basename(model)
     verbose_epochs = training_params.get("verbose_epochs", True)
-    train_hist = []
-    val_hist = []
+    train_pure_hist: list[float] = []
+    val_pure_hist: list[float] = []
+    train_training_hist: list[float] = []
+    val_training_hist: list[float] = []
 
     out_dir = training_params.get("output_dir")
     if out_dir is None:
@@ -67,7 +104,6 @@ def train_nn(model, training_params):
         else:
             print("\n  print_gradients: no training indices, skipping.\n")
 
-    target_output_column = model.target_output_column if model.target_output_column is not None else 0
     for epoch in range(training_params["num_epochs"]):
         start_time = time.time()
         batch_ind_list = get_batch_indices(train_inds, batch_size)
@@ -75,74 +111,59 @@ def train_nn(model, training_params):
             model.update(indices=batch_inds)
         epoch_time = time.time() - start_time
 
-        train_loss = loss_pure(
-            input=model.input[train_inds, :],
-            outputs=model.output[train_inds, :],
-            target_output_column=target_output_column,
-            num_output_features=model.num_output_features,
-            use_leaky_relu=model.use_leaky_relu,
-            weights=model.weights,
-        )
-        train_hist.append(train_loss)
+        train_pure = model.eval_pure_loss(train_inds)
+        train_training = model.eval_training_loss(train_inds)
+        train_pure_hist.append(train_pure)
+        train_training_hist.append(train_training)
 
         if len(val_inds) > 0:
-            val_loss = loss_pure(
-                input=model.input[val_inds, :],
-                outputs=model.output[val_inds, :],
-                target_output_column=target_output_column,
-                num_output_features=model.num_output_features,
-                use_leaky_relu=model.use_leaky_relu,
-                weights=model.weights,
-            )
-            val_hist.append(val_loss)
+            val_pure = model.eval_pure_loss(val_inds)
+            val_training = model.eval_training_loss(val_inds)
+            val_pure_hist.append(val_pure)
+            val_training_hist.append(val_training)
             if verbose_epochs:
                 print(
                     f"Epoch {epoch} in {epoch_time:0.2f} sec  |  "
-                    f"Training set accuracy {train_loss:e}  |  "
-                    f"Validation set accuracy {val_loss:e}"
+                    f"Train pure RMSE {train_pure:e}  |  Train loss {train_training:e}  |  "
+                    f"Val pure RMSE {val_pure:e}  |  Val loss {val_training:e}"
                 )
         else:
-            val_loss = float("nan")
-            val_hist.append(val_loss)
+            val_pure = float("nan")
+            val_training = float("nan")
+            val_pure_hist.append(val_pure)
+            val_training_hist.append(val_training)
             if verbose_epochs:
                 print(
                     f"Epoch {epoch} in {epoch_time:0.2f} sec  |  "
-                    f"Training set accuracy {train_loss:e}  |  "
-                    "Validation set: N/A (100% train)"
+                    f"Train pure RMSE {train_pure:e}  |  Train loss {train_training:e}  |  "
+                    "Val: N/A (100% train)"
                 )
 
-        loss_to_check = val_loss if len(val_inds) > 0 and not np.isnan(val_loss) else train_loss
+        loss_to_check = val_pure if len(val_inds) > 0 and not np.isnan(val_pure) else train_pure
         early_stop_threshold = training_params.get(
             "early_stop_loss_threshold",
             get_pipeline_config().training.early_stop_loss_threshold,
         )
         if loss_to_check < early_stop_threshold:
-            print(f"\n  Early stopping: Loss ({loss_to_check:.2e}) is below threshold ({early_stop_threshold:g})")
+            print(
+                f"\n  Early stopping: pure RMSE ({loss_to_check:.2e}) is below threshold ({early_stop_threshold:g})"
+            )
             print(f"  Stopping training at epoch {epoch + 1}/{training_params['num_epochs']}")
             break
 
-    plt.clf()
-    plt.plot(
-        np.linspace(0, epoch, epoch + 1, True),
-        np.asarray(train_hist),
-        label="Training Loss",
-        color="cornflowerblue",
+    _save_training_plot(
+        out_dir=out_dir,
+        model_name=model_name,
+        epoch=epoch,
+        train_pure_hist=train_pure_hist,
+        val_pure_hist=val_pure_hist,
+        train_training_hist=train_training_hist,
+        val_training_hist=val_training_hist,
     )
-    plt.plot(
-        np.linspace(0, epoch, epoch + 1, True),
-        np.asarray(val_hist),
-        label="Validation Loss",
-        color="salmon",
-    )
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss (RMSE) (mmHg)")
-    plt.title("Training and Validation Loss")
-    plt.yscale("log")
-    plt.legend()
-    os.makedirs(out_dir, exist_ok=True)
-    plt.savefig(os.path.join(out_dir, f"{model_name}_training_plot.png"), bbox_inches="tight")
+    train_inds = training_params["train_inds"]
+    attach_train_output_bounds(model, train_inds)
     dill_save(model, os.path.join(out_dir, f"{model_name}_model"))
 
     if len(val_inds) > 0:
-        return val_loss.item()
+        return val_pure
     return float("nan")

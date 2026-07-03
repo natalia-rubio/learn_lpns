@@ -170,6 +170,15 @@ def add_generate_zerod_inputs_arguments(
         ),
     )
     parser.add_argument(
+        "--clip_predictions",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Clip R/S/L NN predictions to train-set min/max "
+            "(default: training.clip_predictions from config, usually false)."
+        ),
+    )
+    parser.add_argument(
         "--trial_id",
         type=int,
         default=None,
@@ -257,7 +266,9 @@ def prepare_generate_zerod_namespace(ns: argparse.Namespace) -> str:
     ns.penalty_on = flags["penalty_on"]
     ns.asymmetric_loss = flags["asymmetric_loss"]
     if getattr(ns, "multi_output_rri", None) is None:
-        ns.multi_output_rri = get_pipeline_config().training.multi_output_rri
+        ns.multi_output_rri = get_pipeline_config(set_name=getattr(ns, "set_name", None)).training.multi_output_rri
+    if getattr(ns, "clip_predictions", None) is None:
+        ns.clip_predictions = get_pipeline_config(set_name=getattr(ns, "set_name", None)).training.clip_predictions
     if getattr(ns, "plot_rsl_fits", None) is None:
         ns.plot_rsl_fits = get_pipeline_config().calibration.plot_rsl_fits
     return suffix
@@ -306,6 +317,11 @@ def namespace_to_generate_zerod_argv(
         cmd.append("--multi_output_rri")
     else:
         cmd.append("--no-multi_output_rri")
+
+    if getattr(ns, "clip_predictions", False):
+        cmd.append("--clip_predictions")
+    else:
+        cmd.append("--no-clip_predictions")
 
     if getattr(ns, "model_dir", None):
         cmd.extend(["--model_dir", ns.model_dir])

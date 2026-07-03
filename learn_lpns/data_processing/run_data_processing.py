@@ -26,6 +26,8 @@ from learn_lpns.data_processing.generate_split_indices import (
     write_geometries_txt,
 )
 from learn_lpns.data_processing.inputs_from_0d_config import (
+    FLOW_SPLIT_METHOD_MEAN_OVER_TIME,
+    FLOW_SPLIT_METHOD_PEAK_INLET_FLOW,
     load_junction_geometric_features,
     load_vessel_geometric_features,
     load_vessel_targets_from_config,
@@ -75,7 +77,9 @@ def discover_geometries_with_csvs(set_name, geometry_variant="bifurcations", dat
 
 
 def main():
-    split_defaults = get_pipeline_config().split
+    pipeline_defaults = get_pipeline_config()
+    split_defaults = pipeline_defaults.split
+    dp_defaults = pipeline_defaults.data_processing
     parser = argparse.ArgumentParser(description="Run the full data processing pipeline for NN training")
     parser.add_argument("--set_name", required=True, help="Set name (e.g., VMR)")
     parser.add_argument(
@@ -121,8 +125,20 @@ def main():
         "(e.g. gen_loss is a full duplicate path tree).",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose printing")
+    parser.add_argument(
+        "--flow_split_method",
+        choices=sorted({FLOW_SPLIT_METHOD_MEAN_OVER_TIME, FLOW_SPLIT_METHOD_PEAK_INLET_FLOW}),
+        default=None,
+        help=(
+            "How to compute flow_split from geometric simulation CSV. "
+            f"Default: {dp_defaults.flow_split_method} from config "
+            "(data_processing.flow_split_method)."
+        ),
+    )
     args = parser.parse_args()
     run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
+    dp_cfg = get_pipeline_config(set_name=args.set_name).data_processing
+    flow_split_method = dp_cfg.flow_split_method if args.flow_split_method is None else args.flow_split_method
 
     # Determine which geometry variants to process
     if args.geometry_variant == "all":
@@ -183,6 +199,7 @@ def main():
                 geometric_input_path,
                 verbose=args.verbose,
                 geometric_results_path=geometric_results_path,
+                flow_split_method=flow_split_method,
             )
             print(f"Loaded {len(X)} junctions with {len(feature_names)} features")
             # Save the features to a csv file

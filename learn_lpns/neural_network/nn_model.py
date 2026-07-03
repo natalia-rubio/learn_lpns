@@ -25,6 +25,8 @@ class NeuralNet:
 
         self.set_type = network_params.get("set_type", "test")
         self.geometry_variant = network_params.get("geometry_variant", "bifurcations")
+        self.data_root = network_params.get("data_root", "data")
+        self.run_config_suffix = network_params.get("run_config_suffix")
 
         if "data_dict" in network_params:
             self.data_dict = network_params["data_dict"]
@@ -93,11 +95,11 @@ class NeuralNet:
         else:
             garr = jnp.zeros((n_rows,), dtype=jnp.float32)
         self._generation_full = garr
-        self.generation_weighted_loss_scale = float(network_params["generation_weighted_loss_scale"])
+        self.generation_weighted_loss_decay_base = float(network_params["generation_weighted_loss_decay_base"])
         if self.generation_weighted_loss:
             print(
                 f"  generation_weighted_loss: ON  "
-                f"(sample weight = {self.generation_weighted_loss_scale} / 2^generation); "
+                f"(sample weight = 1 / {self.generation_weighted_loss_decay_base}^generation); "
                 f"generation rows={n_rows}"
             )
 
@@ -112,14 +114,61 @@ class NeuralNet:
         self.optimizer = optax.adam(learning_rate=self.scheduler)
         self.opt_state = self.optimizer.init(self.weights)
 
-    def get_gradients(self, indices):
-        """Compute gradients of loss w.r.t. weights for the given batch (no update)."""
+    def _sample_weights_for_indices(self, indices) -> jnp.ndarray:
         idx = jnp.asarray(indices)
         if self.generation_weighted_loss:
             gen_b = self._generation_full[idx]
-            sample_w = self.generation_weighted_loss_scale / jnp.power(2.0, gen_b)
-        else:
-            sample_w = jnp.ones((idx.shape[0],), dtype=jnp.float32)
+            return 1.0 / jnp.power(self.generation_weighted_loss_decay_base, gen_b)
+        return jnp.ones((idx.shape[0],), dtype=jnp.float32)
+
+    def eval_pure_loss(self, indices) -> float:
+        """Unweighted RMSE on the given rows (no generation or asymmetric weighting)."""
+        idx = jnp.asarray(indices)
+        return float(
+            loss_pure(
+                self.input[idx, :],
+                self.output[idx, :],
+                self.target_output_column if self.target_output_column is not None else 0,
+                self.num_output_features,
+                self.use_leaky_relu,
+                self.weights,
+            )
+        )
+
+    def eval_training_loss(self, indices) -> float:
+        """Training objective (generation- and/or asymmetric-weighted MSE) on the given rows."""
+        idx = jnp.asarray(indices)
+        sample_w = self._sample_weights_for_indices(idx)
+        if self.num_output_features == 1:
+            return float(
+                loss(
+                    self.input[idx, :],
+                    self.output[idx, :],
+                    self.target_output_column,
+                    self.num_output_features,
+                    self.use_leaky_relu,
+                    self.weights,
+                    self.asymmetric_loss_overestimate_weight,
+                    sample_w,
+                )
+            )
+        return float(
+            loss(
+                self.input[idx, :],
+                self.output[idx, :],
+                0,
+                self.num_output_features,
+                self.use_leaky_relu,
+                self.weights,
+                self.asymmetric_loss_overestimate_weights,
+                sample_w,
+            )
+        )
+
+    def get_gradients(self, indices):
+        """Compute gradients of loss w.r.t. weights for the given batch (no update)."""
+        idx = jnp.asarray(indices)
+        sample_w = self._sample_weights_for_indices(idx)
         if self.num_output_features == 1:
             return grad(loss, argnums=-3)(
                 self.input[indices, :],
@@ -183,8 +232,9 @@ def loss(
     squared_residual = jnp.square(residuals)
     per_sample = jnp.sum(residual_weight * squared_residual, axis=1)
     L2_penalty = get_L2(weights) / (len(weights) * jnp.size(weights[0][0]))
-    return jnp.sum(per_sample) / jnp.maximum(jnp.sum(residual_weight), 1e-8) + L2_penalty * 0
-
+    #return jnp.sum(per_sample) / jnp.maximum(jnp.sum(residual_weight), 1e-8) + L2_penalty * 0
+    # temporarily ignore assymmetric loss
+    return jnp.sum(squared_residual) / jnp.size(squared_residual)
 
 @partial(jit, static_argnums=(2, 3, 4))
 def loss_pure(

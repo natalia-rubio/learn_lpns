@@ -24,6 +24,14 @@ import numpy as np
 
 from learn_lpns.zerod_calibration.tools.file_io import read_zerod_csv
 
+FLOW_SPLIT_METHOD_MEAN_OVER_TIME = "mean_over_time"
+FLOW_SPLIT_METHOD_PEAK_INLET_FLOW = "peak_inlet_flow"
+DEFAULT_FLOW_SPLIT_METHOD = FLOW_SPLIT_METHOD_MEAN_OVER_TIME
+FLOW_SPLIT_METHODS = frozenset(
+    {FLOW_SPLIT_METHOD_MEAN_OVER_TIME, FLOW_SPLIT_METHOD_PEAK_INLET_FLOW}
+)
+MIN_INLET_FLOW_FOR_FLOW_SPLIT = 5.0
+
 
 def _safe_get(d: dict[str, Any], *keys, default=None):
     """Nested dict get with default."""
@@ -194,6 +202,7 @@ def load_junction_geometric_features(
     require_two_outlets: bool = True,
     verbose: bool = False,
     geometric_results_path: str | None = None,
+    flow_split_method: str = DEFAULT_FLOW_SPLIT_METHOD,
 ) -> tuple[np.ndarray, list[str], list[str], list[str]]:
     """
     Extract a junction-level geometric feature matrix from a 0D config JSON.
@@ -211,6 +220,11 @@ def load_junction_geometric_features(
             Optional path to geometric simulation results CSV (e.g.
             ``bifurcations_EL_geometric_results.csv``). When present, appends
             ``flow_split``, ``flow_split_inv``, and ``speed_change`` columns.
+        flow_split_method:
+            How to reduce multi-timepoint geometric simulation flows to one
+            split per outlet: ``mean_over_time`` (default) averages
+            ``Q_outlet / Q_inlet`` over valid timesteps; ``peak_inlet_flow``
+            uses the timestep with maximum original-inlet ``flow_out``.
 
     Returns:
         X:
@@ -491,6 +505,7 @@ def load_junction_geometric_features(
             config_path,
             geometric_results_path,
             require_two_outlets=require_two_outlets,
+            flow_split_method=flow_split_method,
         )
         flow_split_col: list[float] = []
         speed_change_col: list[float] = []
@@ -585,15 +600,108 @@ def _resolve_original_inlet_per_junction(cfg: dict[str, Any]) -> dict[str, str]:
     return out
 
 
+def _flow_split_at_time(
+    results: dict[str, dict[float, dict[str, float]]],
+    *,
+    original_inlet_name: str,
+    out0_name: str,
+    out1_name: str,
+    time: float,
+) -> tuple[float, float] | None:
+    """Return (ratio0, ratio1) at one time, or None if inlet flow is invalid."""
+    inlet_data = results[original_inlet_name].get(time, {})
+    out0_data = results[out0_name].get(time, {})
+    out1_data = results[out1_name].get(time, {})
+    q_in = inlet_data.get("flow_out")
+    q0 = out0_data.get("flow_in")
+    q1 = out1_data.get("flow_in")
+    if q_in is None or q_in < MIN_INLET_FLOW_FOR_FLOW_SPLIT:
+        return None
+    if q0 is None or q1 is None:
+        return None
+    q_in_f = float(q_in)
+    return float(q0) / q_in_f, float(q1) / q_in_f
+
+
+def _flow_split_percentages_for_junction(
+    results: dict[str, dict[float, dict[str, float]]],
+    times: list[float],
+    *,
+    original_inlet_name: str,
+    out0_name: str,
+    out1_name: str,
+    junction_name: str,
+    flow_split_method: str = DEFAULT_FLOW_SPLIT_METHOD,
+) -> tuple[float, float]:
+    """Reduce multi-timepoint flows to one (fs0_pct, fs1_pct) pair for a junction."""
+    if flow_split_method not in FLOW_SPLIT_METHODS:
+        raise ValueError(
+            f"Invalid flow_split_method {flow_split_method!r}; "
+            f"expected one of {sorted(FLOW_SPLIT_METHODS)}"
+        )
+
+    if flow_split_method == FLOW_SPLIT_METHOD_PEAK_INLET_FLOW:
+        peak_time: float | None = None
+        peak_q_in = -np.inf
+        for t in times:
+            q_in = results[original_inlet_name].get(t, {}).get("flow_out")
+            if q_in is None or q_in < MIN_INLET_FLOW_FOR_FLOW_SPLIT:
+                continue
+            q_in_f = float(q_in)
+            if q_in_f > peak_q_in:
+                peak_q_in = q_in_f
+                peak_time = t
+        if peak_time is None:
+            return 50.0, 50.0
+        ratios = _flow_split_at_time(
+            results,
+            original_inlet_name=original_inlet_name,
+            out0_name=out0_name,
+            out1_name=out1_name,
+            time=peak_time,
+        )
+        if ratios is None:
+            raise ValueError(
+                f"Junction {junction_name!r}: flow split undefined at peak inlet-flow time {peak_time}."
+            )
+        r0, r1 = ratios
+        return r0 * 100.0, r1 * 100.0
+
+    ratios0: list[float] = []
+    ratios1: list[float] = []
+    for t in times:
+        ratios = _flow_split_at_time(
+            results,
+            original_inlet_name=original_inlet_name,
+            out0_name=out0_name,
+            out1_name=out1_name,
+            time=t,
+        )
+        if ratios is None:
+            continue
+        r0, r1 = ratios
+        ratios0.append(r0)
+        ratios1.append(r1)
+
+    if not ratios0 and not ratios1:
+        return 50.0, 50.0
+    if not ratios0 or not ratios1:
+        raise ValueError(
+            f"Junction {junction_name!r}: inconsistent flow split "
+            "(one outlet has flow data, the other does not)."
+        )
+    return float(np.mean(ratios0)) * 100.0, float(np.mean(ratios1)) * 100.0
+
+
 def compute_junction_flow_splits(
     config_path: str,
     geometric_results_csv_path: str,
     require_two_outlets: bool = True,
+    flow_split_method: str = DEFAULT_FLOW_SPLIT_METHOD,
 ) -> dict[str, tuple[float, float]]:
     """
     Compute flow split (percentage of inlet flow through each outlet) from the
-    base geometric 0D simulation results. If multiple timepoints exist, the
-    ratio is averaged over time.
+    base geometric 0D simulation results.
 
     For junctions that came from splitting a multi-outlet junction into multiple
     bifurcations, the denominator is the flow through the *original* inlet (the
@@ -607,6 +715,9 @@ def compute_junction_flow_splits(
             (e.g. bifurcations_EL_geometric_results.csv).
         require_two_outlets: If True, only junctions with exactly two outlets
             are included (same convention as load_junction_geometric_features).
+        flow_split_method: ``mean_over_time`` averages outlet/inlet ratios over
+            timesteps with inlet ``flow_out`` >= 5 (default). ``peak_inlet_flow``
+            uses the single timestep with maximum original-inlet ``flow_out``.
 
     Returns:
         Dict mapping junction_name -> ((outlet0_name, outlet1_name), (flow_split0_pct, flow_split1_pct)).
@@ -658,34 +769,15 @@ def compute_junction_flow_splits(
                 f"Results keys include: {list(results.keys())[:5]}..."
             )
 
-        ratios0: list[float] = []
-        ratios1: list[float] = []
-        for t in times:
-            # Denominator: flow through original inlet (flow_out of that vessel at junction)
-            inlet_data = results[original_inlet_name].get(t, {})
-            out0_data = results[out0_name].get(t, {})
-            out1_data = results[out1_name].get(t, {})
-            q_in = inlet_data.get("flow_out")
-            q0 = out0_data.get("flow_in")
-            q1 = out1_data.get("flow_in")
-            # Skip timesteps where inlet flow is missing, zero, or below threshold (avoids ratio blow-up)
-            if q_in is None or q_in < 5.0:
-                continue
-            if q0 is not None:
-                ratios0.append(float(q0) / float(q_in))
-            if q1 is not None:
-                ratios1.append(float(q1) / float(q_in))
-
-        if not ratios0 and not ratios1:
-            # All timesteps had inlet flow < 5; use default 50% / 50%
-            fs0, fs1 = 50.0, 50.0
-        elif not ratios0 or not ratios1:
-            raise ValueError(
-                f"Junction {j_name!r}: inconsistent flow split (one outlet has flow data, the other does not)."
-            )
-        else:
-            fs0 = float(np.mean(ratios0)) * 100.0
-            fs1 = float(np.mean(ratios1)) * 100.0
+        fs0, fs1 = _flow_split_percentages_for_junction(
+            results,
+            times,
+            original_inlet_name=original_inlet_name,
+            out0_name=out0_name,
+            out1_name=out1_name,
+            junction_name=j_name,
+            flow_split_method=flow_split_method,
+        )
         out[j_name] = ((out0_name, out1_name), (fs0, fs1))
 
     return out
@@ -935,7 +1027,12 @@ def _speed_change_for_junction_row(
 
 __all__ = [
     "COMPUTED_VESSEL_FEATURES",
+    "DEFAULT_FLOW_SPLIT_METHOD",
+    "FLOW_SPLIT_METHOD_MEAN_OVER_TIME",
+    "FLOW_SPLIT_METHOD_PEAK_INLET_FLOW",
+    "FLOW_SPLIT_METHODS",
     "compute_bifurcation_generation_by_vessel",
+    "compute_junction_flow_splits",
     "load_junction_geometric_features",
     "load_vessel_geometric_features",
     "load_vessel_targets_from_config",

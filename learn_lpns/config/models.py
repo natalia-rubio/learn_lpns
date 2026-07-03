@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -124,6 +126,22 @@ class SplitConfig(BaseModel):
     )
 
 
+FlowSplitMethod = Literal["mean_over_time", "peak_inlet_flow"]
+
+
+class DataProcessingConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    flow_split_method: FlowSplitMethod = Field(
+        default="mean_over_time",
+        description=(
+            "How to compute flow_split from geometric simulation CSV: "
+            "mean_over_time averages outlet/inlet ratios; "
+            "peak_inlet_flow uses the timestep of maximum original-inlet flow."
+        ),
+    )
+
+
 class OptimizerConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -162,13 +180,28 @@ class TrainingConfig(BaseModel):
         default=False,
         description="Train one network with R/S/L outputs instead of three single-output networks.",
     )
+    leaky_relu: bool = Field(
+        default=False,
+        description="Use Leaky ReLU (negative slope 0.01) instead of ReLU in MLP hidden layers.",
+    )
+    clip_predictions: bool = Field(
+        default=False,
+        description=(
+            "Clip R/S/L NN predictions at inference to train-set output_rri min/max "
+            "stored on the model checkpoint."
+        ),
+    )
     early_stop_loss_threshold: float = Field(default=1e-7, gt=0)
     batch_size_divisor: int = Field(
         default=10,
         gt=0,
         description="batch_size = ceil(n_train / batch_size_divisor).",
     )
-    generation_weighted_loss_scale: float = Field(default=1.0, gt=0)
+    generation_weighted_loss_decay_base: float = Field(
+        default=2.0,
+        gt=1.0,
+        description="Per-generation decay base for gen_loss training: sample weight = 1 / base^generation.",
+    )
     optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
     vessel: VesselArchConfig = Field(default_factory=VesselArchConfig)
     rri_coefficients: tuple[RriCoefficientConfig, ...] = Field(
@@ -218,6 +251,7 @@ class PipelineConfig(BaseModel):
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
     cohorts: CohortsConfig = Field(default_factory=CohortsConfig)
     split: SplitConfig = Field(default_factory=SplitConfig)
+    data_processing: DataProcessingConfig = Field(default_factory=DataProcessingConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
 
 

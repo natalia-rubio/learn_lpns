@@ -35,7 +35,7 @@ See `learn_lpns/zerod_calibration/run_config_canonical.py`.
 | `quadratic_resistor` | RRI junction model (R + stenosis + L); off by default                          |
 | `penalty_on`         | Enable L2 calibration penalties (requires `quadratic_resistor`)                |
 | `asymmetric_loss`    | Asymmetric NN loss (per-coefficient overestimate weights)                      |
-| `gen_loss`           | Generation-weighted NN training loss (`weight = scale / 2^generation`)         |
+| `gen_loss`           | Generation-weighted NN training loss (`weight = 1 / B^generation`; B from config) |
 
 
 **Alias:** `generation_weighted_loss` → `gen_loss` (on-disk suffix remains `_gen_loss`).
@@ -181,9 +181,10 @@ learn-lpns-train --set_name VMR_aorta_starter --geometry_variant all
 | `--geometry_variant`               | `bifurcations`, `bifurcations_EL`, or `all` (default: `bifurcations_EL`) |
 | `--asymmetric_loss`                | Per-coefficient overestimate weights                                    |
 | `--generation_weighted_loss`       | Enable generation-weighted loss                                         |
-| `--generation_weighted_loss_scale` | Multiplier for generation weights (default from `config/defaults.yaml`) |
+| `--generation_weighted_loss_decay_base` | Per-generation decay base B (weight = 1 / B^generation; default from `config/defaults.yaml`) |
+| `--oracle_inputs`                  | Append R/S/L targets to inputs for training sanity check (not for deploy) |
 | `--vessel`                         | Train vessel NNs                                                        |
-| `--leaky_relu`                     | Leaky ReLU activations                                                  |
+| `--leaky_relu` / `--no-leaky_relu` | Leaky ReLU activations (default from `training.leaky_relu` in config)   |
 | `--quiet_epochs`                   | Suppress per-epoch loss logging                                         |
 | `--split_path` / `--model_dir`     | Override split pickle or output directory                               |
 

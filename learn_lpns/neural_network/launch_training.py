@@ -8,6 +8,7 @@ from learn_lpns.data_processing.generate_split_indices import (
     resolve_flat_indices,
 )
 from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, NeuralNet
+from learn_lpns.neural_network.nn_util import append_output_rri_to_input
 from learn_lpns.neural_network.train_nn import train_nn
 from learn_lpns.tools.basic import load_dict
 from learn_lpns.zerod_calibration.run_config_canonical import (
@@ -172,13 +173,22 @@ def _build_training_params_for_modality(
     output_type: str,
     asymmetric_loss_eff: bool,
     generation_weighted_loss_eff: bool,
-    generation_weighted_loss_scale: float,
+    generation_weighted_loss_decay_base: float,
     leaky_relu: bool,
     model_dir: str | None,
     training_cfg: TrainingConfig,
+    oracle_inputs: bool = False,
 ) -> tuple[dict, dict]:
     modality = "vessel" if vessel else "junction"
     jax_data = load_dict(jax_path)
+    if oracle_inputs:
+        jax_data = append_output_rri_to_input(jax_data)
+        asymmetric_loss_eff = False
+        generation_weighted_loss_eff = False
+        print(
+            "  Oracle inputs: appended R/S/L to feature matrix; "
+            "generation-weighted and asymmetric loss disabled"
+        )
     num_input_features = int(jax_data["input"].shape[1])
     train_inds = resolve_flat_indices(split_dict, modality, "train", split_path=split_path)
     val_inds = resolve_flat_indices(split_dict, modality, "val", split_path=split_path)
@@ -218,7 +228,7 @@ def _build_training_params_for_modality(
         "asymmetric_loss_overestimate_weight": 1.0,
         "asymmetric_loss": asymmetric_loss_eff,
         "generation_weighted_loss": generation_weighted_loss_eff,
-        "generation_weighted_loss_scale": generation_weighted_loss_scale,
+        "generation_weighted_loss_decay_base": generation_weighted_loss_decay_base,
     }
     if vessel:
         network_params["jax_arrays_filename"] = os.path.basename(jax_path)
@@ -371,8 +381,12 @@ def main():
     )
     parser.add_argument(
         "--leaky_relu",
-        action="store_true",
-        help="Use Leaky ReLU instead of ReLU (helps gradient flow when inputs span large ranges)",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Use Leaky ReLU instead of ReLU (helps gradient flow when inputs span large ranges). "
+            "Default follows training.leaky_relu in config (false)."
+        ),
     )
     parser.add_argument(
         "--print_gradients",
@@ -407,19 +421,19 @@ def main():
         action="store_true",
         dest="generation_weighted_loss",
         help=(
-            "Weight training loss by bifurcation generation: weight = scale / 2^generation "
-            "(larger weight for smaller generation; requires generation in jax pkl)."
+            "Weight training loss by bifurcation generation: weight = 1 / base^generation "
+            "(larger weight for smaller generation; requires generation in jax pkl; base from config)."
         ),
     )
     parser.add_argument(
-        "--generation_weighted_loss_scale",
+        "--generation_weighted_loss_decay_base",
         type=float,
-        default=training_defaults.generation_weighted_loss_scale,
-        dest="generation_weighted_loss_scale",
-        metavar="S",
+        default=training_defaults.generation_weighted_loss_decay_base,
+        dest="generation_weighted_loss_decay_base",
+        metavar="B",
         help=(
-            f"Overall multiplier for generation-weighted loss "
-            f"(default: {training_defaults.generation_weighted_loss_scale} from config)."
+            f"Decay base for generation-weighted loss (weight = 1 / B^generation; must be > 1). "
+            f"Default: {training_defaults.generation_weighted_loss_decay_base} from config."
         ),
     )
     parser.add_argument(
@@ -430,11 +444,21 @@ def main():
             "Default follows training.multi_output_rri in config (false)."
         ),
     )
+    parser.add_argument(
+        "--oracle_inputs",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Append R/S/L targets to the input feature matrix (training sanity check only; "
+            "not for deploy/inference)."
+        ),
+    )
     cli_args = parser.parse_args()
 
     training_cfg = get_pipeline_config(set_name=cli_args.set_name).training
     set_name = cli_args.set_name
     multi_output_rri = bool(cli_args.multi_output_rri or training_cfg.multi_output_rri)
+    leaky_relu = training_cfg.leaky_relu if cli_args.leaky_relu is None else bool(cli_args.leaky_relu)
 
     geometry_variant_arg = cli_args.geometry_variant or DEFAULT_GEOMETRY_VARIANT
     if geometry_variant_arg not in GEOMETRY_VARIANT_NAMES:
@@ -489,11 +513,15 @@ def main():
             print("Symmetric loss: overestimate weight = 1.0 for all models")
         if generation_weighted_loss_eff:
             print(
-                f"Generation-weighted loss: ON (scale={float(cli_args.generation_weighted_loss_scale):g}; "
+                f"Generation-weighted loss: ON (decay_base={float(cli_args.generation_weighted_loss_decay_base):g}; "
                 f"from --generation_weighted_loss and/or --run_config ..._gen_loss)"
             )
         if multi_output_rri:
             print("Multi-output RRI: one network with R, S, L outputs")
+        if cli_args.oracle_inputs:
+            print("Oracle inputs: ON (R/S/L appended to features; not for deploy)")
+        if leaky_relu:
+            print("Leaky ReLU: ON")
         print(f"{'=' * 80}")
 
         split_path = cli_args.split_path or _default_split_path(
@@ -525,10 +553,11 @@ def main():
             output_type=output_type,
             asymmetric_loss_eff=asymmetric_loss_eff,
             generation_weighted_loss_eff=generation_weighted_loss_eff,
-            generation_weighted_loss_scale=float(cli_args.generation_weighted_loss_scale),
-            leaky_relu=getattr(cli_args, "leaky_relu", False),
+            generation_weighted_loss_decay_base=float(cli_args.generation_weighted_loss_decay_base),
+            leaky_relu=leaky_relu,
             model_dir=cli_args.model_dir,
             training_cfg=training_cfg,
+            oracle_inputs=bool(cli_args.oracle_inputs),
         )
         training_params["print_gradients"] = getattr(cli_args, "print_gradients", False)
         training_params["verbose_epochs"] = not cli_args.quiet_epochs

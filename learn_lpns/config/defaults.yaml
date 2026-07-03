@@ -37,6 +37,9 @@ cohorts:
     VMR_all:
       display_label: All
 
+data_processing:
+  flow_split_method: peak_inlet_flow         # mean_over_time | peak_inlet_flow (flow_split from geometric 0D CSV)
+
 split:
   percent_train: 0.9                      # default train fraction for learn-lpns-cv geometry splits
   data_processing_percent_train: 0.8      # default train fraction for learn-lpns-data-processing / notebook demo
@@ -45,11 +48,13 @@ split:
   cv_trial_seed_stride: 1000              # CV trial seed = trial_index * stride + resample_attempt
 
 training:
-  num_epochs: 500                         # max Optax training epochs per R/S/L network
+  num_epochs: 10    00                         # max Optax training epochs per R/S/L network
   early_stop_loss_threshold: 1.0e-7       # stop training when train loss drops below this
   batch_size_divisor: 10                  # batch_size = ceil(n_train / batch_size_divisor)
-  generation_weighted_loss_scale: 1.0     # sample weight = scale / 2^generation when gen_loss run_config is active
+  generation_weighted_loss_decay_base: 2.0   # gen_loss sample weight = 1 / base^generation (base>1 down-weights distal outlets)
   multi_output_rri: false                 # if true, train one 3-output network (R,S,L) instead of three separate nets
+  leaky_relu: true                      # if true, use Leaky ReLU (slope 0.01) instead of ReLU in MLP hidden layers
+  clip_predictions: true               # if true, clip R/S/L predictions to train-set min/max at inference
   optimizer:
     init: 0.02                            # default Adam learning rate (overridden per coefficient by lr_init)
     transition_steps: 1000                # Optax exponential decay: steps between LR multiplications

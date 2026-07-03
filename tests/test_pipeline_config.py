@@ -49,6 +49,10 @@ def test_load_pipeline_config_defaults():
     assert len(cfg.training.rri_coefficients) == 3
     assert cfg.training.rri_coefficients[0].name == "R"
     assert cfg.training.optimizer.transition_steps == 1000
+    assert cfg.training.generation_weighted_loss_decay_base == pytest.approx(2.0)
+    assert cfg.training.leaky_relu is False
+    assert cfg.data_processing.flow_split_method == "mean_over_time"
+    assert cfg.training.clip_predictions is True
 
 
 def test_training_batch_size_for_n_train():

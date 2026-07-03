@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, predict
-from learn_lpns.neural_network.nn_util import dill_load
+from learn_lpns.neural_network.nn_util import clip_rsl_predictions, dill_load, resolve_train_output_bounds
 
 
 def forward_jax_pickle_path(
@@ -72,6 +72,14 @@ def _resolve_multi_output_rri(multi_output_rri: bool | None) -> bool:
     return bool(get_pipeline_config().training.multi_output_rri)
 
 
+def _resolve_clip_predictions(clip_predictions: bool | None, set_name: str) -> bool:
+    if clip_predictions is not None:
+        return bool(clip_predictions)
+    from learn_lpns.config import get_pipeline_config
+
+    return bool(get_pipeline_config(set_name=set_name).training.clip_predictions)
+
+
 def run_nn_predict(
     X: np.ndarray,
     model_dir: str,
@@ -79,6 +87,9 @@ def run_nn_predict(
     *,
     vessel: bool = False,
     multi_output_rri: bool | None = None,
+    clip_predictions: bool | None = None,
+    run_config_suffix: str | None = None,
+    data_root: str = "data",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run three NN heads (R, stenosis, L); return prediction arrays."""
     use_multi_output = _resolve_multi_output_rri(multi_output_rri)
@@ -93,10 +104,12 @@ def run_nn_predict(
             raise FileNotFoundError(f"Model not found: {model_path}")
 
     X_jax = jnp.array(X, dtype=jnp.float32)
+    bounds_model = None
     if len(model_paths) == 1:
         model_path = model_paths[0]
         print(f"      Loading multi-output model: {model_path}")
         model = dill_load(model_path)
+        bounds_model = model
         use_leaky = getattr(model, "use_leaky_relu", False)
         pred = np.array(predict(X_jax, model.weights, use_leaky))
         if pred.ndim == 1:
@@ -109,9 +122,53 @@ def run_nn_predict(
         for i, model_path in enumerate(model_paths):
             print(f"      Loading model {i + 1}/3: {model_path}")
             model = dill_load(model_path)
+            if bounds_model is None:
+                bounds_model = model
             use_leaky = getattr(model, "use_leaky_relu", False)
             pred = predict(X_jax, model.weights, use_leaky)
             raw_predictions.append(np.array(pred).flatten())
+
+    if _resolve_clip_predictions(clip_predictions, set_name):
+        if bounds_model is None:
+            raise ValueError("clip_predictions enabled but no model was loaded for bounds.")
+        suffix = run_config_suffix or getattr(bounds_model, "run_config_suffix", None)
+        root = getattr(bounds_model, "data_root", data_root)
+        bounds_min, bounds_max = resolve_train_output_bounds(
+            bounds_model,
+            data_root=root,
+            run_config_suffix=suffix,
+        )
+        pre_clip = [(float(np.min(p)), float(np.max(p))) for p in raw_predictions]
+        raw_predictions = list(
+            clip_rsl_predictions(
+                raw_predictions[0],
+                raw_predictions[1],
+                raw_predictions[2],
+                bounds_min,
+                bounds_max,
+            )
+        )
+        post_clip = [(float(np.min(p)), float(np.max(p))) for p in raw_predictions]
+        print(
+            "      clip_predictions: ON  "
+            f"(R [{bounds_min[0]:.4g}, {bounds_max[0]:.4g}], "
+            f"S [{bounds_min[1]:.4g}, {bounds_max[1]:.4g}], "
+            f"L [{bounds_min[2]:.4g}, {bounds_max[2]:.4g}])"
+        )
+        print(
+            "      clip_predictions: pred ranges before "
+            f"R=[{pre_clip[0][0]:.4g},{pre_clip[0][1]:.4g}] "
+            f"S=[{pre_clip[1][0]:.4g},{pre_clip[1][1]:.4g}] "
+            f"L=[{pre_clip[2][0]:.4g},{pre_clip[2][1]:.4g}]"
+        )
+        print(
+            "      clip_predictions: pred ranges after  "
+            f"R=[{post_clip[0][0]:.4g},{post_clip[0][1]:.4g}] "
+            f"S=[{post_clip[1][0]:.4g},{post_clip[1][1]:.4g}] "
+            f"L=[{post_clip[2][0]:.4g},{post_clip[2][1]:.4g}]"
+        )
+    elif clip_predictions is False:
+        print("      clip_predictions: OFF  (--no-clip_predictions)")
 
     output_names = ["R_poiseuille", "stenosis_coefficient", "L"]
     for coef_idx, pred in enumerate(raw_predictions):
@@ -224,6 +281,9 @@ def run_junction_inference(
     junction_type: str,
     quadratic_resistor: bool = False,
     multi_output_rri: bool | None = None,
+    clip_predictions: bool | None = None,
+    run_config_suffix: str | None = None,
+    data_root: str = "data",
 ) -> None:
     """Load junction rows from jax dict, predict, and apply predictions to ``nn_config``."""
     from learn_lpns.data_processing.data_dict_from_csvs import load_junction_rows_from_jax_dict
@@ -246,6 +306,9 @@ def run_junction_inference(
         set_name,
         vessel=False,
         multi_output_rri=multi_output_rri,
+        clip_predictions=clip_predictions,
+        run_config_suffix=run_config_suffix,
+        data_root=data_root,
     )
     if not quadratic_resistor:
         pred_S = np.zeros_like(pred_R)
@@ -355,6 +418,9 @@ def run_vessel_inference(
     model_dir: str | None = None,
     quadratic_resistor: bool = False,
     multi_output_rri: bool | None = None,
+    clip_predictions: bool | None = None,
+    run_config_suffix: str | None = None,
+    data_root: str = "data",
     verbose: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
@@ -377,6 +443,9 @@ def run_vessel_inference(
         set_name,
         vessel=True,
         multi_output_rri=multi_output_rri,
+        clip_predictions=clip_predictions,
+        run_config_suffix=run_config_suffix,
+        data_root=data_root,
     )
     if not quadratic_resistor:
         pred_S = np.zeros_like(pred_R)
