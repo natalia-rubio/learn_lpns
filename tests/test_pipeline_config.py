@@ -52,6 +52,9 @@ def test_load_pipeline_config_defaults():
     assert cfg.training.generation_weighted_loss_decay_base == pytest.approx(2.0)
     assert cfg.training.leaky_relu is False
     assert cfg.data_processing.flow_split_method == "mean_over_time"
+    assert cfg.data_processing.stenosis_generation_limit.enabled is False
+    assert cfg.data_processing.stenosis_generation_limit.junction_max_generation == pytest.approx(1.0)
+    assert cfg.data_processing.stenosis_generation_limit.vessel_max_generation == pytest.approx(1.0)
     assert cfg.training.clip_predictions is True
 
 

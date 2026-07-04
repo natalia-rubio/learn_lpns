@@ -39,6 +39,10 @@ cohorts:
 
 data_processing:
   flow_split_method: peak_inlet_flow         # mean_over_time | peak_inlet_flow (flow_split from geometric 0D CSV)
+  stenosis_generation_limit:
+    enabled: false                         # RSL/S training/inference only below junction/vessel generation limits
+    junction_max_generation: 1             # inclusive; junction inlet-vessel generation
+    vessel_max_generation: 1               # inclusive; each vessel's own bifurcation generation
 
 split:
   percent_train: 0.9                      # default train fraction for learn-lpns-cv geometry splits

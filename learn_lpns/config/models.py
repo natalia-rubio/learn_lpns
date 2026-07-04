@@ -129,6 +129,48 @@ class SplitConfig(BaseModel):
 FlowSplitMethod = Literal["mean_over_time", "peak_inlet_flow"]
 
 
+class StenosisGenerationLimitConfig(BaseModel):
+    """Gate stenosis S to low-generation elements (RSL vs RL calibration, S training, inference)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "When true (with quadratic_resistor), fit/train/predict S only for elements at or below "
+            "the junction/vessel max_generation thresholds; higher-generation elements use RL (S=0)."
+        ),
+    )
+    junction_max_generation: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Inclusive junction stenosis generation bound (inlet-vessel generation per junction row).",
+    )
+    vessel_max_generation: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Inclusive vessel stenosis generation bound (each vessel's own bifurcation generation).",
+    )
+    max_generation: float | None = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Deprecated legacy alias: when set, overrides both junction_max_generation and "
+            "vessel_max_generation to this value."
+        ),
+    )
+
+    def junction_limit(self) -> float:
+        if self.max_generation is not None:
+            return float(self.max_generation)
+        return float(self.junction_max_generation)
+
+    def vessel_limit(self) -> float:
+        if self.max_generation is not None:
+            return float(self.max_generation)
+        return float(self.vessel_max_generation)
+
+
 class DataProcessingConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -139,6 +181,9 @@ class DataProcessingConfig(BaseModel):
             "mean_over_time averages outlet/inlet ratios; "
             "peak_inlet_flow uses the timestep of maximum original-inlet flow."
         ),
+    )
+    stenosis_generation_limit: StenosisGenerationLimitConfig = Field(
+        default_factory=StenosisGenerationLimitConfig,
     )
 
 

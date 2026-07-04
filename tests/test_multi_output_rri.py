@@ -44,7 +44,8 @@ def test_loss_grad_multi_output():
     outputs = jnp.ones((batch, RRI_NUM_OUTPUTS), dtype=jnp.float32)
     overestimate_weights = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
     sample_w = jnp.ones((batch,), dtype=jnp.float32)
-    grads = grad(loss, argnums=-3)(
+    stenosis_mask = jnp.ones((batch,), dtype=jnp.float32)
+    grads = grad(loss, argnums=-4)(
         inputs,
         outputs,
         0,
@@ -53,6 +54,7 @@ def test_loss_grad_multi_output():
         weights,
         overestimate_weights,
         sample_w,
+        stenosis_mask,
     )
     assert len(grads) == len(weights)
 

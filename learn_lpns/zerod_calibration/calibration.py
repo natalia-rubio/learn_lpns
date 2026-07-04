@@ -210,6 +210,7 @@ def run_calibration(
         from learn_lpns.zerod_calibration.decoupled_ls_calibration import calibrate_decoupled_ls
 
         cal_cfg = get_pipeline_config(set_name=set_name).calibration
+        dp_cfg = get_pipeline_config(set_name=set_name).data_processing.stenosis_generation_limit
         cali = calibrate_decoupled_ls(
             config,
             plot_rsl_fits=plot_rsl_fits,
@@ -219,6 +220,9 @@ def run_calibration(
             l2_r=cal_cfg.decoupled_l2_r,
             l2_stenosis=cal_cfg.decoupled_l2_stenosis,
             l2_l=cal_cfg.decoupled_l2_l,
+            stenosis_generation_limit_enabled=dp_cfg.enabled,
+            junction_stenosis_generation_max=dp_cfg.junction_limit(),
+            vessel_stenosis_generation_max=dp_cfg.vessel_limit(),
         )
         cali = _postprocess_calibrated_config(cali)
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)

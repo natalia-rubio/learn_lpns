@@ -103,6 +103,16 @@ class NeuralNet:
                 f"generation rows={n_rows}"
             )
 
+        self.stenosis_generation_limit_enabled = bool(
+            network_params.get("stenosis_generation_limit_enabled", False)
+        )
+        self.stenosis_generation_max = float(network_params.get("stenosis_generation_max", 1.0))
+        if self.stenosis_generation_limit_enabled:
+            print(
+                f"  stenosis_generation_limit: ON  "
+                f"(S loss/predictions only for generation <= {self.stenosis_generation_max:g})"
+            )
+
         self.num_geos = network_params["num_geos"]
         self.decay_rate = optimizer_params["decay_rate"]
 
@@ -118,8 +128,24 @@ class NeuralNet:
         idx = jnp.asarray(indices)
         if self.generation_weighted_loss:
             gen_b = self._generation_full[idx]
-            return 1.0 / jnp.power(self.generation_weighted_loss_decay_base, gen_b)
-        return jnp.ones((idx.shape[0],), dtype=jnp.float32)
+            weights = 1.0 / jnp.power(self.generation_weighted_loss_decay_base, gen_b)
+        else:
+            weights = jnp.ones((idx.shape[0],), dtype=jnp.float32)
+        if (
+            self.stenosis_generation_limit_enabled
+            and self.num_output_features == 1
+            and self.target_output_column == S_OUTPUT_COLUMN
+        ):
+            gen_b = self._generation_full[idx]
+            weights = weights * (gen_b <= self.stenosis_generation_max).astype(jnp.float32)
+        return weights
+
+    def _stenosis_row_mask_for_indices(self, indices) -> jnp.ndarray:
+        idx = jnp.asarray(indices)
+        if not self.stenosis_generation_limit_enabled or self.num_output_features == 1:
+            return jnp.ones((idx.shape[0],), dtype=jnp.float32)
+        gen_b = self._generation_full[idx]
+        return (gen_b <= self.stenosis_generation_max).astype(jnp.float32)
 
     def eval_pure_loss(self, indices) -> float:
         """Unweighted RMSE on the given rows (no generation or asymmetric weighting)."""
@@ -150,6 +176,7 @@ class NeuralNet:
                     self.weights,
                     self.asymmetric_loss_overestimate_weight,
                     sample_w,
+                    jnp.ones((idx.shape[0],), dtype=jnp.float32),
                 )
             )
         return float(
@@ -162,6 +189,7 @@ class NeuralNet:
                 self.weights,
                 self.asymmetric_loss_overestimate_weights,
                 sample_w,
+                self._stenosis_row_mask_for_indices(idx),
             )
         )
 
@@ -170,7 +198,7 @@ class NeuralNet:
         idx = jnp.asarray(indices)
         sample_w = self._sample_weights_for_indices(idx)
         if self.num_output_features == 1:
-            return grad(loss, argnums=-3)(
+            return grad(loss, argnums=-4)(
                 self.input[indices, :],
                 self.output[indices, :],
                 self.target_output_column,
@@ -179,8 +207,9 @@ class NeuralNet:
                 self.weights,
                 self.asymmetric_loss_overestimate_weight,
                 sample_w,
+                jnp.ones((idx.shape[0],), dtype=jnp.float32),
             )
-        return grad(loss, argnums=-3)(
+        return grad(loss, argnums=-4)(
             self.input[indices, :],
             self.output[indices, :],
             0,
@@ -189,6 +218,7 @@ class NeuralNet:
             self.weights,
             self.asymmetric_loss_overestimate_weights,
             sample_w,
+            self._stenosis_row_mask_for_indices(idx),
         )
 
     def update(self, indices):
@@ -212,6 +242,7 @@ def loss(
     weights,
     overestimate_weight,
     sample_weights,
+    stenosis_row_mask,
 ):
     coefs_pred = predict(input, weights, use_leaky_relu)
     if num_output_features == 1:
@@ -229,12 +260,20 @@ def loss(
     absolute_residual = jnp.abs(coefs_pred) - jnp.abs(outputs[:, :num_output_features])
     asymmetric_residual_weight = jnp.where(absolute_residual > 0, overestimate_weight, 1.0)
     residual_weight = asymmetric_residual_weight * sample_weights[:, None]
+    column_mask = jnp.stack(
+        [
+            jnp.ones_like(stenosis_row_mask),
+            stenosis_row_mask,
+            jnp.ones_like(stenosis_row_mask),
+        ],
+        axis=1,
+    )
+    residual_weight = residual_weight * column_mask
     squared_residual = jnp.square(residuals)
-    per_sample = jnp.sum(residual_weight * squared_residual, axis=1)
     L2_penalty = get_L2(weights) / (len(weights) * jnp.size(weights[0][0]))
     #return jnp.sum(per_sample) / jnp.maximum(jnp.sum(residual_weight), 1e-8) + L2_penalty * 0
     # temporarily ignore assymmetric loss
-    return jnp.sum(squared_residual) / jnp.size(squared_residual)
+    return jnp.sum(residual_weight * squared_residual) / jnp.maximum(jnp.sum(residual_weight), 1e-8) + L2_penalty * 0
 
 @partial(jit, static_argnums=(2, 3, 4))
 def loss_pure(

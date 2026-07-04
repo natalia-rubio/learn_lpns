@@ -12,6 +12,12 @@ import numpy as np
 from scipy.optimize import lsq_linear
 
 from learn_lpns.tools.paths import repo_root
+from learn_lpns.zerod_calibration.stenosis_generation import (
+    compute_bifurcation_generation_by_vessel,
+    generation_allows_stenosis,
+    junction_inlet_generation,
+    vessel_generation,
+)
 
 VESSEL_ELEMENT_TYPES = frozenset({"BloodVessel", "BloodVesselCRL", "BloodVesselFC"})
 FIT_QUALITY_THRESHOLD = 0.10
@@ -359,6 +365,9 @@ def calibrate_decoupled_ls(
     l2_r: float = 0.0,
     l2_stenosis: float = 0.0,
     l2_l: float = 0.0,
+    stenosis_generation_limit_enabled: bool = False,
+    junction_stenosis_generation_max: float = 1.0,
+    vessel_stenosis_generation_max: float = 1.0,
 ) -> dict:
     """
     Calibrate R/L/(S) per vessel and BloodVesselJunction outlet using decoupled lstsq.
@@ -385,6 +394,31 @@ def calibrate_decoupled_ls(
     vessels = cali.get("vessels", [])
     junctions = cali.get("junctions", [])
     vessel_id_map = _build_vessel_id_map(vessels)
+
+    gen_by_vessel: dict[Any, float] | None = None
+    if fit_stenosis and stenosis_generation_limit_enabled:
+        gen_by_vessel = compute_bifurcation_generation_by_vessel(cali)
+        print(
+            "  stenosis_generation_limit: ON  "
+            f"(junction RSL for inlet gen <= {junction_stenosis_generation_max:g}; "
+            f"vessel RSL for gen <= {vessel_stenosis_generation_max:g}; RL S=0 above)"
+        )
+
+    rsl_fit_count = 0
+    rl_fit_count = 0
+
+    def _fit_stenosis_for_element(element_gen: float | None, max_generation: float) -> bool:
+        nonlocal rsl_fit_count, rl_fit_count
+        if not fit_stenosis:
+            return False
+        if not stenosis_generation_limit_enabled or element_gen is None:
+            rsl_fit_count += 1
+            return True
+        if generation_allows_stenosis(element_gen, max_generation):
+            rsl_fit_count += 1
+            return True
+        rl_fit_count += 1
+        return False
 
     plot_dir: Path | None = None
     if plot_rsl_fits:
@@ -443,16 +477,22 @@ def calibrate_decoupled_ls(
             continue
 
         delta_p, q_in, dq_out, _ = resolved
+        element_gen = (
+            vessel_generation(int(vessel["vessel_id"]), gen_by_vessel)
+            if gen_by_vessel is not None
+            else None
+        )
+        fit_stenosis_element = _fit_stenosis_for_element(element_gen, vessel_stenosis_generation_max)
         r_poiseuille, stenosis, inductance, rel_err = _fit_rlc(
             delta_p,
             q_in,
             dq_out,
-            fit_stenosis=fit_stenosis,
+            fit_stenosis=fit_stenosis_element,
             l2_r=l2_r,
             l2_stenosis=l2_stenosis,
             l2_l=l2_l,
         )
-        if not fit_stenosis:
+        if not fit_stenosis_element:
             stenosis = 0.0
 
         values["R_poiseuille"] = r_poiseuille
@@ -482,6 +522,14 @@ def calibrate_decoupled_ls(
         while len(s_list) < num_outlets:
             s_list.append(0.0)
 
+        junction_element_gen = (
+            junction_inlet_generation(junction, gen_by_vessel) if gen_by_vessel is not None else None
+        )
+        fit_stenosis_junction = _fit_stenosis_for_element(
+            junction_element_gen,
+            junction_stenosis_generation_max,
+        )
+
         for outlet_index, outlet_name in enumerate(outlet_names):
             element_label = f"{junc_name}/outlet_{outlet_index} ({outlet_name})"
 
@@ -506,12 +554,12 @@ def calibrate_decoupled_ls(
                 delta_p,
                 q_in,
                 dq_out,
-                fit_stenosis=fit_stenosis,
+                fit_stenosis=fit_stenosis_junction,
                 l2_r=l2_r,
                 l2_stenosis=l2_stenosis,
                 l2_l=l2_l,
             )
-            if not fit_stenosis:
+            if not fit_stenosis_junction:
                 stenosis = 0.0
 
             r_list[outlet_index] = r_poiseuille
@@ -523,5 +571,8 @@ def calibrate_decoupled_ls(
         junc_values["R_poiseuille"] = r_list
         junc_values["L"] = l_list
         junc_values["stenosis_coefficient"] = s_list
+
+    if fit_stenosis and stenosis_generation_limit_enabled:
+        print(f"  stenosis_generation_limit: {rsl_fit_count} RSL fits, {rl_fit_count} RL fits (S=0)")
 
     return cali

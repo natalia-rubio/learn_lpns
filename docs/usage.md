@@ -242,6 +242,30 @@ learn-lpns-data-processing \
   --run_config gen_loss
 ```
 
+### Stenosis generation limit (`data_processing.stenosis_generation_limit`)
+
+Alternative to value clipping: treat stenosis **S** as meaningful only for proximal (low **generation**) elements when using `quadratic_resistor`.
+
+| Stage | Behavior when enabled |
+| ----- | --------------------- |
+| **Calibration** (`decoupled_ls`) | RSL fit when generation ≤ modality limit; RL (S=0) above |
+| **Training** | S network ignores rows with generation > modality limit |
+| **Inference** | `pred_S` set to 0 where generation exceeds the junction or vessel limit |
+
+Generation matches the bifurcation count along the path from the root inlet vessel (see `inputs_from_0d_config.compute_bifurcation_generation_by_vessel`). Junction rows use the **inlet-vessel** generation; vessels use **each vessel's own** generation.
+
+```yaml
+data_processing:
+  stenosis_generation_limit:
+    enabled: true
+    junction_max_generation: 2   # inlet-vessel generation (junction rows / junction outlets)
+    vessel_max_generation: 1     # each vessel's own bifurcation generation
+```
+
+Legacy configs with a single `max_generation` still work: that value overrides both limits.
+
+Requires `quadratic_resistor` in `--run_config`. Default is `enabled: false` (no behavior change). After toggling, re-run **calibration → data processing → training → inference**.
+
 ## Visualizations
 
 Reporting scripts under `learn_lpns/visualizations/` (run as modules from repo root):

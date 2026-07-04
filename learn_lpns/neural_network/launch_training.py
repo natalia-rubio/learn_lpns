@@ -178,6 +178,8 @@ def _build_training_params_for_modality(
     model_dir: str | None,
     training_cfg: TrainingConfig,
     oracle_inputs: bool = False,
+    stenosis_generation_limit_enabled: bool = False,
+    stenosis_generation_max: float = 1.0,
 ) -> tuple[dict, dict]:
     modality = "vessel" if vessel else "junction"
     jax_data = load_dict(jax_path)
@@ -229,6 +231,8 @@ def _build_training_params_for_modality(
         "asymmetric_loss": asymmetric_loss_eff,
         "generation_weighted_loss": generation_weighted_loss_eff,
         "generation_weighted_loss_decay_base": generation_weighted_loss_decay_base,
+        "stenosis_generation_limit_enabled": stenosis_generation_limit_enabled,
+        "stenosis_generation_max": stenosis_generation_max,
     }
     if vessel:
         network_params["jax_arrays_filename"] = os.path.basename(jax_path)
@@ -472,14 +476,21 @@ def main():
         rc_flags = run_config_suffix_to_flags(run_config_raw)
         asymmetric_loss_eff = bool(cli_args.asymmetric_loss or rc_flags["asymmetric_loss"])
         generation_weighted_loss_eff = bool(cli_args.generation_weighted_loss or rc_flags["generation_weighted_loss"])
+        quadratic_resistor_eff = bool(rc_flags["quadratic_resistor"])
     else:
         asymmetric_loss_eff = bool(cli_args.asymmetric_loss)
         generation_weighted_loss_eff = bool(cli_args.generation_weighted_loss)
+        quadratic_resistor_eff = False
+    vessel = bool(cli_args.vessel)
+    dp_limit = get_pipeline_config(set_name=set_name).data_processing.stenosis_generation_limit
+    stenosis_generation_limit_enabled = bool(dp_limit.enabled and quadratic_resistor_eff)
+    stenosis_generation_max = float(
+        dp_limit.vessel_limit() if vessel else dp_limit.junction_limit()
+    )
     output_type = "rri"
     set_type = "all"
     data_root = "data"
     explicit_num_geos = cli_args.num_geos
-    vessel = bool(cli_args.vessel)
 
     if geometry_variant_arg == "all":
         geometry_variants_to_process = ["bifurcations", "bifurcations_EL"]
@@ -515,6 +526,12 @@ def main():
             print(
                 f"Generation-weighted loss: ON (decay_base={float(cli_args.generation_weighted_loss_decay_base):g}; "
                 f"from --generation_weighted_loss and/or --run_config ..._gen_loss)"
+            )
+        if stenosis_generation_limit_enabled:
+            modality_label = "vessel" if vessel else "junction"
+            print(
+                f"Stenosis generation limit: ON ({modality_label} S training for generation <= "
+                f"{stenosis_generation_max:g})"
             )
         if multi_output_rri:
             print("Multi-output RRI: one network with R, S, L outputs")
@@ -558,6 +575,8 @@ def main():
             model_dir=cli_args.model_dir,
             training_cfg=training_cfg,
             oracle_inputs=bool(cli_args.oracle_inputs),
+            stenosis_generation_limit_enabled=stenosis_generation_limit_enabled,
+            stenosis_generation_max=stenosis_generation_max,
         )
         training_params["print_gradients"] = getattr(cli_args, "print_gradients", False)
         training_params["verbose_epochs"] = not cli_args.quiet_epochs

@@ -11,6 +11,11 @@ import numpy as np
 
 from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, predict
 from learn_lpns.neural_network.nn_util import clip_rsl_predictions, dill_load, resolve_train_output_bounds
+from learn_lpns.zerod_calibration.stenosis_generation import (
+    apply_stenosis_generation_gate,
+    resolve_effective_stenosis_generation_limit,
+    slice_jax_generation_for_geo,
+)
 
 
 def forward_jax_pickle_path(
@@ -173,7 +178,12 @@ def run_nn_predict(
     output_names = ["R_poiseuille", "stenosis_coefficient", "L"]
     for coef_idx, pred in enumerate(raw_predictions):
         print(f"      {output_names[coef_idx]}: pred range=[{pred.min():.4f}, {pred.max():.4f}]")
-    return np.array(raw_predictions[0]), np.array(raw_predictions[1]), np.array(raw_predictions[2])
+    return (
+        np.array(raw_predictions[0]),
+        np.array(raw_predictions[1]),
+        np.array(raw_predictions[2]),
+        bounds_model,
+    )
 
 
 def apply_junction_predictions(
@@ -300,7 +310,7 @@ def run_junction_inference(
     print(f"  Selected {len(feature_names)} features (matching training data): {feature_names}")
     print(f"  Neural network input dimensions: {X.shape} (rows={X.shape[0]}, features={X.shape[1]})")
 
-    pred_R, pred_S, pred_L = run_nn_predict(
+    pred_R, pred_S, pred_L, bounds_model = run_nn_predict(
         X,
         model_dir,
         set_name,
@@ -312,6 +322,26 @@ def run_junction_inference(
     )
     if not quadratic_resistor:
         pred_S = np.zeros_like(pred_R)
+    else:
+        limit_enabled, max_generation = resolve_effective_stenosis_generation_limit(
+            set_name=set_name,
+            quadratic_resistor=quadratic_resistor,
+            vessel=False,
+            bounds_model=bounds_model,
+        )
+        if limit_enabled:
+            generation = slice_jax_generation_for_geo(
+                jax_data_dict,
+                geo_name=geo_name,
+                n_expected=len(X),
+            )
+            pred_S = apply_stenosis_generation_gate(
+                pred_S,
+                generation,
+                enabled=True,
+                max_generation=max_generation,
+                modality="junction",
+            )
 
     apply_junction_predictions(
         nn_config,
@@ -360,8 +390,8 @@ def load_vessel_feature_matrix(
     geometric_input_path: str,
     *,
     verbose: bool = False,
-) -> tuple[np.ndarray, list[int]]:
-    """Load and filter vessel geometric features for NN inference."""
+) -> tuple[np.ndarray, list[int], np.ndarray]:
+    """Load vessel NN features, ids, and per-row generation for inference."""
     from learn_lpns.data_processing.data_dict_from_csvs import (
         _clamp_tortuosity,
         filter_features_from_array,
@@ -375,13 +405,16 @@ def load_vessel_feature_matrix(
     if len(vessel_X) == 0:
         raise ValueError(f"No non-connector vessels for vessel NN ({geometric_input_path})")
 
+    gen_idx = vessel_feature_names.index("generation")
+    generation = np.asarray(vessel_X[:, gen_idx], dtype=float)
+
     vessel_X, vessel_feature_names = filter_features_from_array(
         vessel_X,
         vessel_feature_names,
         include_features=get_default_include_features_vessel(),
     )
     _clamp_tortuosity(vessel_X, vessel_feature_names)
-    return np.array(vessel_X, dtype=np.float64), vessel_ids
+    return np.array(vessel_X, dtype=np.float64), vessel_ids, generation
 
 
 def apply_vessel_predictions(
@@ -431,13 +464,15 @@ def run_vessel_inference(
     """
     validate_vessel_trial_geometry_variant(model_dir, geometry_variant)
 
-    vessel_X, vessel_ids = load_vessel_feature_matrix(variant_geometric_input, verbose=verbose)
+    vessel_X, vessel_ids, vessel_generation = load_vessel_feature_matrix(
+        variant_geometric_input, verbose=verbose
+    )
     vessel_model_dir = resolve_vessel_model_dir(
         set_name=set_name,
         geometry_variant=geometry_variant,
         model_dir=model_dir,
     )
-    pred_R, pred_S, pred_L = run_nn_predict(
+    pred_R, pred_S, pred_L, bounds_model = run_nn_predict(
         vessel_X,
         vessel_model_dir,
         set_name,
@@ -449,6 +484,20 @@ def run_vessel_inference(
     )
     if not quadratic_resistor:
         pred_S = np.zeros_like(pred_R)
+    else:
+        limit_enabled, max_generation = resolve_effective_stenosis_generation_limit(
+            set_name=set_name,
+            quadratic_resistor=quadratic_resistor,
+            vessel=True,
+            bounds_model=bounds_model,
+        )
+        pred_S = apply_stenosis_generation_gate(
+            pred_S,
+            vessel_generation,
+            enabled=limit_enabled,
+            max_generation=max_generation,
+            modality="vessel",
+        )
 
     junction_and_vessel_config = json.loads(json.dumps(junction_nn_config))
     apply_vessel_predictions(
