@@ -213,8 +213,10 @@ def _fit_rlc(
     l2_r: float = 0.0,
     l2_stenosis: float = 0.0,
     l2_l: float = 0.0,
+    nonneg_r: bool = True,
+    nonneg_l: bool = True,
 ) -> tuple[float, float, float, float]:
-    """Fit R, S, L from local pressure drop; R >= 0, L >= 0; optional L2 toward 0."""
+    """Fit R, S, L from local pressure drop; optional R/L lower bounds; optional L2 toward 0."""
     delta_p = np.asarray(delta_p, dtype=float)
     q_in = np.asarray(q_in, dtype=float)
     dq_out = np.asarray(dq_out, dtype=float)
@@ -227,14 +229,16 @@ def _fit_rlc(
     dq = dq_out[mask]
     dp = delta_p[mask]
 
+    r_lower = 0.0 if nonneg_r else -np.inf
+    l_lower = 0.0 if nonneg_l else -np.inf
     if fit_stenosis:
         design = np.column_stack([q, np.abs(q) * q, dq])
-        lower = np.array([0.0, -np.inf, 0.0])
+        lower = np.array([r_lower, -np.inf, l_lower])
         upper = np.array([np.inf, np.inf, np.inf])
         l2_weights = np.array([l2_r, l2_stenosis, l2_l], dtype=float)
     else:
         design = np.column_stack([q, dq])
-        lower = np.array([0.0, 0.0])
+        lower = np.array([r_lower, l_lower])
         upper = np.array([np.inf, np.inf])
         l2_weights = np.array([l2_r, l2_l], dtype=float)
 
@@ -365,6 +369,8 @@ def calibrate_decoupled_ls(
     l2_r: float = 0.0,
     l2_stenosis: float = 0.0,
     l2_l: float = 0.0,
+    nonneg_r: bool = True,
+    nonneg_l: bool = True,
     stenosis_generation_limit_enabled: bool = False,
     junction_stenosis_generation_max: float = 1.0,
     vessel_stenosis_generation_max: float = 1.0,
@@ -379,6 +385,15 @@ def calibrate_decoupled_ls(
     cal_params = cali.get("calibration_parameters", {})
     fit_stenosis = bool(cal_params.get("calibrate_stenosis_coefficient", False))
     freeze_connector = bool(cal_params.get("freeze_connector_segments", True))
+    nonneg_r = bool(nonneg_r) and fit_stenosis
+    if nonneg_r and nonneg_l:
+        print("  decoupled_ls: R_poiseuille and L bounded >= 0")
+    elif nonneg_r:
+        print("  decoupled_ls: R_poiseuille bounded >= 0; L unbounded")
+    elif nonneg_l:
+        print("  decoupled_ls: R_poiseuille unbounded; L bounded >= 0")
+    else:
+        print("  decoupled_ls: R_poiseuille and L unbounded")
 
     if not cali.get("y") or not cali.get("dy"):
         full_obs = cali.get("_full_observations")
@@ -491,6 +506,8 @@ def calibrate_decoupled_ls(
             l2_r=l2_r,
             l2_stenosis=l2_stenosis,
             l2_l=l2_l,
+            nonneg_r=nonneg_r,
+            nonneg_l=nonneg_l,
         )
         if not fit_stenosis_element:
             stenosis = 0.0
@@ -558,6 +575,8 @@ def calibrate_decoupled_ls(
                 l2_r=l2_r,
                 l2_stenosis=l2_stenosis,
                 l2_l=l2_l,
+                nonneg_r=nonneg_r,
+                nonneg_l=nonneg_l,
             )
             if not fit_stenosis_junction:
                 stenosis = 0.0

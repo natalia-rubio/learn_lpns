@@ -52,6 +52,17 @@ class CalibrationConfig(BaseModel):
         default=False,
         description="When using decoupled_ls, save per-element dP vs Q fit plots under results/RSL_fits/",
     )
+    decoupled_nonneg_r: bool = Field(
+        default=True,
+        description=(
+            "When using decoupled_ls with quadratic_resistor (calibrate_stenosis_coefficient), "
+            "enforce R_poiseuille >= 0 in bounded least-squares fits. Ignored when S is not calibrated."
+        ),
+    )
+    decoupled_nonneg_l: bool = Field(
+        default=True,
+        description="When using decoupled_ls, enforce L >= 0 in bounded least-squares fits.",
+    )
 
 
 class CohortCalibrationOverrides(BaseModel):
@@ -215,12 +226,37 @@ class RriCoefficientConfig(BaseModel):
     junction_layer_width: int = Field(gt=0)
     junction_asymmetric_overestimate_weight: float = Field(gt=0)
     vessel_asymmetric_overestimate_weight: float = Field(gt=0)
+    num_epochs: int | None = Field(
+        default=None,
+        gt=0,
+        description="Max training epochs for this coefficient (junction). Omit to use training.num_epochs.",
+    )
+    vessel_num_epochs: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Max training epochs for this coefficient (vessel). "
+            "Omit to use num_epochs, then training.num_epochs."
+        ),
+    )
+
+    def training_epochs(self, *, vessel: bool, default: int) -> int:
+        """Resolve epoch count for junction or vessel training."""
+        if vessel and self.vessel_num_epochs is not None:
+            return self.vessel_num_epochs
+        if self.num_epochs is not None:
+            return self.num_epochs
+        return default
 
 
 class TrainingConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    num_epochs: int = Field(default=500, gt=0)
+    num_epochs: int = Field(
+        default=500,
+        gt=0,
+        description="Default max epochs per R/S/L network when a coefficient omits num_epochs.",
+    )
     multi_output_rri: bool = Field(
         default=False,
         description="Train one network with R/S/L outputs instead of three single-output networks.",

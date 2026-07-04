@@ -220,6 +220,8 @@ def run_calibration(
             l2_r=cal_cfg.decoupled_l2_r,
             l2_stenosis=cal_cfg.decoupled_l2_stenosis,
             l2_l=cal_cfg.decoupled_l2_l,
+            nonneg_r=cal_cfg.decoupled_nonneg_r,
+            nonneg_l=cal_cfg.decoupled_nonneg_l,
             stenosis_generation_limit_enabled=dp_cfg.enabled,
             junction_stenosis_generation_max=dp_cfg.junction_limit(),
             vessel_stenosis_generation_max=dp_cfg.vessel_limit(),

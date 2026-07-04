@@ -289,7 +289,10 @@ def launch_training(
         network_params["target_output_column"] = spec.target_output_column
         network_params["num_output_features"] = 1
         optimizer_params["init"] = spec.lr_init
-        training_params["num_epochs"] = training_cfg.num_epochs
+        training_params["num_epochs"] = spec.training_epochs(
+            vessel=is_vessel,
+            default=training_cfg.num_epochs,
+        )
 
         if is_vessel:
             network_params["num_layers"] = training_cfg.vessel.num_layers

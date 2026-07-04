@@ -38,9 +38,11 @@ def test_load_pipeline_config_defaults():
     assert cfg.calibration.tolerance_gradient == pytest.approx(1e-4)
     assert cfg.calibration.default_l2_r == pytest.approx(1e5)
     assert cfg.calibration.default_l2_stenosis == pytest.approx(1e10)
-    assert cfg.calibration.decoupled_l2_r == pytest.approx(1e-3)
-    assert cfg.calibration.decoupled_l2_stenosis == pytest.approx(1e-2)
-    assert cfg.calibration.decoupled_l2_l == pytest.approx(1e-3)
+    assert cfg.calibration.decoupled_l2_r == pytest.approx(0.0)
+    assert cfg.calibration.decoupled_l2_stenosis == pytest.approx(0.0)
+    assert cfg.calibration.decoupled_l2_l == pytest.approx(0.0)
+    assert cfg.calibration.decoupled_nonneg_r is True
+    assert cfg.calibration.decoupled_nonneg_l is False
     assert cfg.split.percent_train == pytest.approx(0.9)
     assert cfg.split.data_processing_percent_train == pytest.approx(0.8)
     assert cfg.split.cv_num_trials == 5
@@ -52,10 +54,34 @@ def test_load_pipeline_config_defaults():
     assert cfg.training.generation_weighted_loss_decay_base == pytest.approx(2.0)
     assert cfg.training.leaky_relu is False
     assert cfg.data_processing.flow_split_method == "mean_over_time"
-    assert cfg.data_processing.stenosis_generation_limit.enabled is False
+    assert cfg.data_processing.stenosis_generation_limit.enabled is True
     assert cfg.data_processing.stenosis_generation_limit.junction_max_generation == pytest.approx(1.0)
     assert cfg.data_processing.stenosis_generation_limit.vessel_max_generation == pytest.approx(1.0)
-    assert cfg.training.clip_predictions is True
+    assert cfg.training.clip_predictions is False
+
+
+def test_rri_coefficient_per_modality_epochs():
+    cfg = load_pipeline_config()
+    r_spec, s_spec, l_spec = cfg.training.rri_coefficients
+    assert r_spec.training_epochs(vessel=False, default=cfg.training.num_epochs) == 4000
+    assert r_spec.training_epochs(vessel=True, default=cfg.training.num_epochs) == 1000
+    assert s_spec.training_epochs(vessel=False, default=2000) == 2000
+    assert l_spec.training_epochs(vessel=True, default=2000) == 2000
+
+    from learn_lpns.config.models import RriCoefficientConfig
+
+    bare = RriCoefficientConfig(
+        name="R",
+        label="R",
+        target_output_column=0,
+        lr_init=0.01,
+        junction_num_layers=2,
+        junction_layer_width=10,
+        junction_asymmetric_overestimate_weight=1.0,
+        vessel_asymmetric_overestimate_weight=1.0,
+    )
+    assert bare.training_epochs(vessel=False, default=500) == 500
+    assert bare.training_epochs(vessel=True, default=500) == 500
 
 
 def test_training_batch_size_for_n_train():

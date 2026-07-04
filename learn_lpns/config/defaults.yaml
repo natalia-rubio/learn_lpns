@@ -19,6 +19,8 @@ calibration:
   decoupled_l2_r: 1.0e-3                  # decoupled_ls Tikhonov: lambda * R^2 toward 0
   decoupled_l2_stenosis: 1.0e-2           # decoupled_ls Tikhonov: lambda * S^2 toward 0
   decoupled_l2_l: 1.0e-3                  # decoupled_ls Tikhonov: lambda * L^2 toward 0
+  decoupled_nonneg_r: true               # decoupled_ls: bound R >= 0 only when quadratic_resistor (S) is calibrated
+  decoupled_nonneg_l: true               # decoupled_ls: bound L >= 0 in each element fit
   plot_rsl_fits: false                    # decoupled_ls: save dP vs Q diagnostic plots under results/RSL_fits/
 
 cohorts:
@@ -52,7 +54,7 @@ split:
   cv_trial_seed_stride: 1000              # CV trial seed = trial_index * stride + resample_attempt
 
 training:
-  num_epochs: 10    00                         # max Optax training epochs per R/S/L network
+  num_epochs: 2000                         # default max epochs when a coefficient omits num_epochs / vessel_num_epochs
   early_stop_loss_threshold: 1.0e-7       # stop training when train loss drops below this
   batch_size_divisor: 10                  # batch_size = ceil(n_train / batch_size_divisor)
   generation_weighted_loss_decay_base: 2.0   # gen_loss sample weight = 1 / base^generation (base>1 down-weights distal outlets)

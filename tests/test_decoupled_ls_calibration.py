@@ -144,11 +144,37 @@ def test_fit_rlc_enforces_nonnegative_r_and_l():
     dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
-    r_fit, s_fit, l_fit, _rel_err = _fit_rlc(delta_p, q_in, dq_out, fit_stenosis=True)
+    r_fit, s_fit, l_fit, _rel_err = _fit_rlc(
+        delta_p, q_in, dq_out, fit_stenosis=True, nonneg_r=True, nonneg_l=True
+    )
 
     assert r_fit >= 0.0
     assert l_fit >= 0.0
     assert s_fit == pytest.approx(s_true, rel=1e-4)
+
+
+def test_fit_rlc_allows_negative_r_and_l_when_nonneg_disabled():
+    r_true, l_true = -0.05, -0.2
+    config = _synthetic_vessel_config(r_true=r_true, l_true=l_true, s_true=0.0, fit_stenosis=False)
+    y = config["y"]
+    vessel_name = "branch0_seg0"
+    q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
+    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
+
+    r_fit, s_fit, l_fit, rel_err = _fit_rlc(
+        delta_p,
+        q_in,
+        dq_out,
+        fit_stenosis=False,
+        nonneg_r=False,
+        nonneg_l=False,
+    )
+
+    assert rel_err < 1e-10
+    assert r_fit == pytest.approx(r_true, rel=1e-5)
+    assert l_fit == pytest.approx(l_true, rel=1e-5)
+    assert s_fit == pytest.approx(0.0)
 
 
 def test_fit_rlc_recovers_known_parameters_with_stenosis():
@@ -171,6 +197,15 @@ def test_fit_rlc_recovers_known_parameters_with_stenosis():
     assert r_fit == pytest.approx(r_true, rel=1e-5)
     assert l_fit == pytest.approx(l_true, rel=1e-5)
     assert s_fit == pytest.approx(s_true, rel=1e-5)
+
+
+def test_calibrate_decoupled_ls_skips_nonneg_r_without_stenosis():
+    """decoupled_nonneg_r applies only when calibrate_stenosis_coefficient is true."""
+    config = _synthetic_vessel_config(r_true=-0.05, l_true=0.15, s_true=0.0, fit_stenosis=False)
+    out = calibrate_decoupled_ls(config, nonneg_r=True, nonneg_l=False)
+    values = out["vessels"][0]["zero_d_element_values"]
+    assert values["R_poiseuille"] == pytest.approx(-0.05, rel=1e-4)
+    assert values["L"] == pytest.approx(0.15, rel=1e-6)
 
 
 def test_calibrate_decoupled_ls_end_to_end_synthetic():
