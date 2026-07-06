@@ -251,6 +251,29 @@ class RriCoefficientConfig(BaseModel):
             "(relu, leaky_relu, tanh). Omit to use training.activation."
         ),
     )
+    generation_weighted_loss_decay_base: float | None = Field(
+        default=None,
+        gt=1.0,
+        description=(
+            "gen_loss sample-weight decay base for this coefficient "
+            "(weight = 1 / base^generation). Omit to use training.generation_weighted_loss_decay_base."
+        ),
+    )
+    restore_best_weights: bool | None = Field(
+        default=None,
+        description=(
+            "When true, save weights from the epoch with lowest weighted train training loss. "
+            "Omit to use training.restore_best_weights."
+        ),
+    )
+    early_stop_loss_threshold: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Stop when weighted train training loss drops below this. "
+            "Omit to use training.early_stop_loss_threshold."
+        ),
+    )
 
     def training_epochs(self, *, vessel: bool, default: int) -> int:
         """Resolve epoch count for junction or vessel training."""
@@ -266,6 +289,24 @@ class RriCoefficientConfig(BaseModel):
             return self.activation
         if self.leaky_relu is not None:
             return "leaky_relu" if self.leaky_relu else "relu"
+        return default
+
+    def effective_generation_weighted_loss_decay_base(self, default: float) -> float:
+        """Resolve gen_loss decay base for this coefficient."""
+        if self.generation_weighted_loss_decay_base is not None:
+            return float(self.generation_weighted_loss_decay_base)
+        return default
+
+    def effective_restore_best_weights(self, default: bool) -> bool:
+        """Resolve whether to restore best train-loss weights for this coefficient."""
+        if self.restore_best_weights is not None:
+            return self.restore_best_weights
+        return default
+
+    def effective_early_stop_loss_threshold(self, default: float) -> float:
+        """Resolve early-stop threshold for this coefficient."""
+        if self.early_stop_loss_threshold is not None:
+            return float(self.early_stop_loss_threshold)
         return default
 
 
@@ -299,7 +340,17 @@ class TrainingConfig(BaseModel):
             "stored on the model checkpoint."
         ),
     )
-    early_stop_loss_threshold: float = Field(default=1e-7, gt=0)
+    restore_best_weights: bool = Field(
+        default=True,
+        description=(
+            "When true, restore and save weights from the epoch with lowest weighted train training loss."
+        ),
+    )
+    early_stop_loss_threshold: float = Field(
+        default=1e-7,
+        gt=0,
+        description="Stop when weighted train training loss drops below this.",
+    )
     batch_size_divisor: int = Field(
         default=10,
         gt=0,
@@ -308,7 +359,10 @@ class TrainingConfig(BaseModel):
     generation_weighted_loss_decay_base: float = Field(
         default=2.0,
         gt=1.0,
-        description="Per-generation decay base for gen_loss training: sample weight = 1 / base^generation.",
+        description=(
+            "Default gen_loss decay base per R/S/L network when a coefficient omits "
+            "generation_weighted_loss_decay_base (sample weight = 1 / base^generation)."
+        ),
     )
     optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
     vessel: VesselArchConfig = Field(default_factory=VesselArchConfig)

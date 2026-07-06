@@ -76,7 +76,7 @@ def test_oracle_training_fits_synthetic_data(tmp_path):
         "train_inds": train_inds,
         "val_inds": val_inds,
         "num_offsets": 1,
-        "early_stop_loss_threshold": 1e-4,
+        "early_stop_loss_threshold": 1e-12,
         "verbose_epochs": False,
     }
 

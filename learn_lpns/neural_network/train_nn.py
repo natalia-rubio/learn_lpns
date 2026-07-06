@@ -1,6 +1,8 @@
 import os
 import time
 
+import jax
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -50,6 +52,10 @@ def _save_training_plot(
     plt.close(fig)
 
 
+def _copy_weights(weights):
+    return jax.tree_util.tree_map(jnp.copy, weights)
+
+
 def train_nn(model, training_params):
     model_name = _model_checkpoint_basename(model)
     verbose_epochs = training_params.get("verbose_epochs", True)
@@ -57,6 +63,20 @@ def train_nn(model, training_params):
     val_pure_hist: list[float] = []
     train_training_hist: list[float] = []
     val_training_hist: list[float] = []
+
+    training_defaults = get_pipeline_config().training
+    restore_best_weights = training_params.get(
+        "restore_best_weights",
+        training_defaults.restore_best_weights,
+    )
+    early_stop_threshold = training_params.get(
+        "early_stop_loss_threshold",
+        training_defaults.early_stop_loss_threshold,
+    )
+
+    best_train_loss = float("inf")
+    best_epoch: int | None = None
+    best_weights = None
 
     out_dir = training_params.get("output_dir")
     if out_dir is None:
@@ -104,6 +124,7 @@ def train_nn(model, training_params):
         else:
             print("\n  print_gradients: no training indices, skipping.\n")
 
+    final_val_pure = float("nan")
     for epoch in range(training_params["num_epochs"]):
         start_time = time.time()
         batch_ind_list = get_batch_indices(train_inds, batch_size)
@@ -116,11 +137,17 @@ def train_nn(model, training_params):
         train_pure_hist.append(train_pure)
         train_training_hist.append(train_training)
 
+        if train_training < best_train_loss:
+            best_train_loss = train_training
+            best_epoch = epoch
+            best_weights = _copy_weights(model.weights)
+
         if len(val_inds) > 0:
             val_pure = model.eval_pure_loss(val_inds)
             val_training = model.eval_training_loss(val_inds)
             val_pure_hist.append(val_pure)
             val_training_hist.append(val_training)
+            final_val_pure = val_pure
             if verbose_epochs:
                 print(
                     f"Epoch {epoch} in {epoch_time:0.2f} sec  |  "
@@ -139,17 +166,37 @@ def train_nn(model, training_params):
                     "Val: N/A (100% train)"
                 )
 
-        loss_to_check = val_pure if len(val_inds) > 0 and not np.isnan(val_pure) else train_pure
-        early_stop_threshold = training_params.get(
-            "early_stop_loss_threshold",
-            get_pipeline_config().training.early_stop_loss_threshold,
-        )
-        if loss_to_check < early_stop_threshold:
+        if train_training < early_stop_threshold:
             print(
-                f"\n  Early stopping: pure RMSE ({loss_to_check:.2e}) is below threshold ({early_stop_threshold:g})"
+                f"\n  Early stopping: train training loss ({train_training:.2e}) "
+                f"is below threshold ({early_stop_threshold:g})"
             )
             print(f"  Stopping training at epoch {epoch + 1}/{training_params['num_epochs']}")
             break
+
+    final_epoch = epoch
+    restored_from_best = False
+    if restore_best_weights and best_weights is not None:
+        restored_from_best = best_epoch != final_epoch
+        model.weights = best_weights
+        print(
+            f"\n  Restored best weights from epoch {best_epoch} "
+            f"(train training loss {best_train_loss:.2e})"
+        )
+        if restored_from_best:
+            print(f"  (last epoch was {final_epoch})")
+    elif best_epoch is not None:
+        print(
+            f"\n  Best train training loss {best_train_loss:.2e} at epoch {best_epoch} "
+            f"(keeping last-epoch weights from epoch {final_epoch})"
+        )
+
+    model.best_epoch = best_epoch
+    model.best_train_loss = best_train_loss if best_epoch is not None else None
+    model.restored_from_best = restored_from_best
+
+    if len(val_inds) > 0 and not np.isnan(final_val_pure):
+        print(f"  Final val pure RMSE (monitoring only): {final_val_pure:.2e}")
 
     _save_training_plot(
         out_dir=out_dir,
@@ -164,6 +211,9 @@ def train_nn(model, training_params):
     attach_train_output_bounds(model, train_inds)
     dill_save(model, os.path.join(out_dir, f"{model_name}_model"))
 
-    if len(val_inds) > 0:
-        return val_pure
-    return float("nan")
+    final_val_pure_rmse = None if len(val_inds) == 0 or np.isnan(final_val_pure) else float(final_val_pure)
+    return {
+        "best_train_loss": float(best_train_loss) if best_epoch is not None else None,
+        "best_epoch": best_epoch,
+        "final_val_pure_rmse": final_val_pure_rmse,
+    }

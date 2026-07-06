@@ -191,6 +191,16 @@ learn-lpns-train --set_name VMR_aorta_starter --geometry_variant all
 
 Bifurcation **generation** is stored in the jax pickle (not an NN input) and used only with generation-weighted loss.
 
+### Train-only model selection
+
+During training, **validation metrics are logged and plotted for monitoring only** — they never drive early stopping or saved weights.
+
+- **Early stop:** `training.early_stop_loss_threshold` applies to **weighted train training loss** (MSE), not pure RMSE. Retune this value when changing loss weighting; the default `1e-7` was originally tuned for a different scale.
+- **Saved checkpoint:** When `training.restore_best_weights` is `true` (default), the saved model uses weights from the epoch with the lowest weighted train training loss, not the last epoch.
+- **Per-coefficient overrides:** Under `training.rri_coefficients`, each R/S/L entry may override `restore_best_weights` and `early_stop_loss_threshold`. These overrides apply only to the three separate single-output networks; `multi_output_rri: true` uses global training settings only.
+
+Each saved checkpoint stores `best_epoch`, `best_train_loss`, and `restored_from_best` for traceability.
+
 ## Notebook example (no C++ solver)
 
 [examples/nn_parameter_comparison.ipynb](../examples/nn_parameter_comparison.ipynb) walks through a five-geometry demo (`VMR_aorta_starter`: `0129_0000`, `0154_0001`, `0174_0000`, `0175_0000`, `0176_0000`) without running calibration or forward simulation:

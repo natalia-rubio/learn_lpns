@@ -58,6 +58,40 @@ def test_load_pipeline_config_defaults():
     assert cfg.data_processing.stenosis_generation_limit.junction_max_generation == pytest.approx(1.0)
     assert cfg.data_processing.stenosis_generation_limit.vessel_max_generation == pytest.approx(1.0)
     assert cfg.training.clip_predictions is False
+    assert cfg.training.restore_best_weights is True
+
+
+def test_rri_coefficient_effective_restore_and_threshold():
+    from learn_lpns.config.models import RriCoefficientConfig
+
+    bare = RriCoefficientConfig(
+        name="R",
+        label="R",
+        target_output_column=0,
+        lr_init=0.01,
+        junction_num_layers=2,
+        junction_layer_width=10,
+        junction_asymmetric_overestimate_weight=1.0,
+        vessel_asymmetric_overestimate_weight=1.0,
+    )
+    assert bare.effective_restore_best_weights(True) is True
+    assert bare.effective_restore_best_weights(False) is False
+    assert bare.effective_early_stop_loss_threshold(1e-7) == pytest.approx(1e-7)
+
+    custom = RriCoefficientConfig(
+        name="S",
+        label="S",
+        target_output_column=1,
+        lr_init=0.1,
+        junction_num_layers=1,
+        junction_layer_width=3,
+        junction_asymmetric_overestimate_weight=1.0,
+        vessel_asymmetric_overestimate_weight=1.0,
+        restore_best_weights=False,
+        early_stop_loss_threshold=1e-5,
+    )
+    assert custom.effective_restore_best_weights(True) is False
+    assert custom.effective_early_stop_loss_threshold(1e-7) == pytest.approx(1e-5)
 
 
 def test_rri_coefficient_per_modality_epochs():
@@ -82,6 +116,35 @@ def test_rri_coefficient_per_modality_epochs():
     )
     assert bare.training_epochs(vessel=False, default=500) == 500
     assert bare.training_epochs(vessel=True, default=500) == 500
+
+
+def test_rri_coefficient_effective_generation_weighted_loss_decay_base():
+    from learn_lpns.config.models import RriCoefficientConfig
+
+    bare = RriCoefficientConfig(
+        name="R",
+        label="R",
+        target_output_column=0,
+        lr_init=0.01,
+        junction_num_layers=2,
+        junction_layer_width=10,
+        junction_asymmetric_overestimate_weight=1.0,
+        vessel_asymmetric_overestimate_weight=1.0,
+    )
+    assert bare.effective_generation_weighted_loss_decay_base(3.0) == pytest.approx(3.0)
+
+    custom = RriCoefficientConfig(
+        name="S",
+        label="S",
+        target_output_column=1,
+        lr_init=0.1,
+        junction_num_layers=1,
+        junction_layer_width=3,
+        junction_asymmetric_overestimate_weight=1.0,
+        vessel_asymmetric_overestimate_weight=1.0,
+        generation_weighted_loss_decay_base=2.5,
+    )
+    assert custom.effective_generation_weighted_loss_decay_base(3.0) == pytest.approx(2.5)
 
 
 def test_rri_coefficient_effective_activation():

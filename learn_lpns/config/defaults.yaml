@@ -55,9 +55,10 @@ split:
 
 training:
   num_epochs: 2000                         # default max epochs when a coefficient omits num_epochs / vessel_num_epochs
-  early_stop_loss_threshold: 1.0e-7       # stop training when train loss drops below this
+  restore_best_weights: true              # save weights from epoch with lowest weighted train training loss
+  early_stop_loss_threshold: 1.0e-7       # stop when weighted train training loss (MSE) drops below this; retune after policy change
   batch_size_divisor: 10                  # batch_size = ceil(n_train / batch_size_divisor)
-  generation_weighted_loss_decay_base: 2.0   # gen_loss sample weight = 1 / base^generation (base>1 down-weights distal outlets)
+  generation_weighted_loss_decay_base: 2.0   # default gen_loss weight = 1/base^generation; override per R/S/L in rri_coefficients
   multi_output_rri: false                 # if true, train one 3-output network (R,S,L) instead of three separate nets
   activation: relu                      # default hidden-layer activation (relu | leaky_relu | tanh)
   clip_predictions: true               # if true, clip R/S/L predictions to train-set min/max at inference

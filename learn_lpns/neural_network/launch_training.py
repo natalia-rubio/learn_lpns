@@ -246,6 +246,7 @@ def _build_training_params_for_modality(
         "val_inds": val_inds,
         "num_offsets": 1 if vessel else num_offsets,
         "early_stop_loss_threshold": training_cfg.early_stop_loss_threshold,
+        "restore_best_weights": training_cfg.restore_best_weights,
     }
     if vessel:
         out_dir = model_dir or os.path.join("results", "models", set_name, geometry_variant + "_vessel")
@@ -309,6 +310,27 @@ def launch_training(
         )
         network_params["activation"] = spec.effective_activation(default_activation)
         print(f"  activation: {network_params['activation']}")
+        default_decay_base = float(
+            network_params.get(
+                "generation_weighted_loss_decay_base",
+                training_cfg.generation_weighted_loss_decay_base,
+            )
+        )
+        network_params["generation_weighted_loss_decay_base"] = (
+            spec.effective_generation_weighted_loss_decay_base(default_decay_base)
+        )
+        if network_params["generation_weighted_loss"]:
+            print(
+                "  generation_weighted_loss decay_base: "
+                f"{network_params['generation_weighted_loss_decay_base']:g}"
+            )
+
+        training_params["restore_best_weights"] = spec.effective_restore_best_weights(
+            training_cfg.restore_best_weights
+        )
+        training_params["early_stop_loss_threshold"] = spec.effective_early_stop_loss_threshold(
+            training_cfg.early_stop_loss_threshold
+        )
 
         if shared_data_dict is not None:
             network_params["data_dict"] = shared_data_dict
@@ -355,6 +377,8 @@ def _launch_training_multi_output(
     network_params["activation"] = normalize_activation(
         network_params.get("activation", training_cfg.resolved_activation())
     )
+    training_params["restore_best_weights"] = training_cfg.restore_best_weights
+    training_params["early_stop_loss_threshold"] = training_cfg.early_stop_loss_threshold
 
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
@@ -448,7 +472,8 @@ def main():
         dest="generation_weighted_loss_decay_base",
         metavar="B",
         help=(
-            f"Decay base for generation-weighted loss (weight = 1 / B^generation; must be > 1). "
+            "Default gen_loss decay base when a coefficient omits generation_weighted_loss_decay_base "
+            f"(weight = 1 / B^generation; must be > 1). "
             f"Default: {training_defaults.generation_weighted_loss_decay_base} from config."
         ),
     )
@@ -538,8 +563,9 @@ def main():
             print("Symmetric loss: overestimate weight = 1.0 for all models")
         if generation_weighted_loss_eff:
             print(
-                f"Generation-weighted loss: ON (decay_base={float(cli_args.generation_weighted_loss_decay_base):g}; "
-                f"from --generation_weighted_loss and/or --run_config ..._gen_loss)"
+                "Generation-weighted loss: ON "
+                f"(default decay_base={float(cli_args.generation_weighted_loss_decay_base):g}; "
+                "per-coef override via rri_coefficients.<R|S|L>.generation_weighted_loss_decay_base)"
             )
         if stenosis_generation_limit_enabled:
             modality_label = "vessel" if vessel else "junction"
