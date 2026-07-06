@@ -184,7 +184,7 @@ learn-lpns-train --set_name VMR_aorta_starter --geometry_variant all
 | `--generation_weighted_loss_decay_base` | Per-generation decay base B (weight = 1 / B^generation; default from `config/defaults.yaml`) |
 | `--oracle_inputs`                  | Append R/S/L targets to inputs for training sanity check (not for deploy) |
 | `--vessel`                         | Train vessel NNs                                                        |
-| `--leaky_relu` / `--no-leaky_relu` | Leaky ReLU activations (default from `training.leaky_relu` in config)   |
+| `--activation` | Hidden-layer activation for all coefficients without a per-coef override (`relu`, `leaky_relu`, `tanh`; default from `training.activation` in config) |
 | `--quiet_epochs`                   | Suppress per-epoch loss logging                                         |
 | `--split_path` / `--model_dir`     | Override split pickle or output directory                               |
 

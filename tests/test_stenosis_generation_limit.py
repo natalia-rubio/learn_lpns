@@ -259,7 +259,7 @@ def test_nn_s_sample_weights_zero_for_high_generation():
             "output_rri": jnp.ones((n_rows, 3), dtype=jnp.float32),
             "generation": jnp.array([0.0, 1.0, 2.0, 3.0], dtype=jnp.float32),
         },
-        "use_leaky_relu": False,
+        "activation": "relu",
         "asymmetric_loss": False,
         "asymmetric_loss_overestimate_weight": 1.0,
         "generation_weighted_loss": False,

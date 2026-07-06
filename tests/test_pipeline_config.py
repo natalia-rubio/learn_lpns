@@ -52,7 +52,7 @@ def test_load_pipeline_config_defaults():
     assert cfg.training.rri_coefficients[0].name == "R"
     assert cfg.training.optimizer.transition_steps == 1000
     assert cfg.training.generation_weighted_loss_decay_base == pytest.approx(2.0)
-    assert cfg.training.leaky_relu is False
+    assert cfg.training.activation == "relu"
     assert cfg.data_processing.flow_split_method == "mean_over_time"
     assert cfg.data_processing.stenosis_generation_limit.enabled is True
     assert cfg.data_processing.stenosis_generation_limit.junction_max_generation == pytest.approx(1.0)
@@ -82,6 +82,42 @@ def test_rri_coefficient_per_modality_epochs():
     )
     assert bare.training_epochs(vessel=False, default=500) == 500
     assert bare.training_epochs(vessel=True, default=500) == 500
+
+
+def test_rri_coefficient_effective_activation():
+    cfg = load_pipeline_config()
+    r_spec, s_spec, l_spec = cfg.training.rri_coefficients
+    assert r_spec.effective_activation(default="relu") == "relu"
+    assert s_spec.effective_activation(default="relu") == "leaky_relu"
+    assert l_spec.effective_activation(default="relu") == "relu"
+    assert s_spec.effective_activation(default="tanh") == "leaky_relu"
+
+    from learn_lpns.config.models import RriCoefficientConfig
+
+    bare = RriCoefficientConfig(
+        name="R",
+        label="R",
+        target_output_column=0,
+        lr_init=0.01,
+        junction_num_layers=2,
+        junction_layer_width=10,
+        junction_asymmetric_overestimate_weight=1.0,
+        vessel_asymmetric_overestimate_weight=1.0,
+    )
+    assert bare.effective_activation(default="tanh") == "tanh"
+
+    legacy = RriCoefficientConfig(
+        name="S",
+        label="S",
+        target_output_column=1,
+        lr_init=0.1,
+        junction_num_layers=1,
+        junction_layer_width=3,
+        junction_asymmetric_overestimate_weight=1.0,
+        vessel_asymmetric_overestimate_weight=1.0,
+        leaky_relu=True,
+    )
+    assert legacy.effective_activation(default="relu") == "leaky_relu"
 
 
 def test_training_batch_size_for_n_train():

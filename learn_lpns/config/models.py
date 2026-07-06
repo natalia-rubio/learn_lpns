@@ -138,6 +138,7 @@ class SplitConfig(BaseModel):
 
 
 FlowSplitMethod = Literal["mean_over_time", "peak_inlet_flow"]
+ActivationName = Literal["relu", "leaky_relu", "tanh"]
 
 
 class StenosisGenerationLimitConfig(BaseModel):
@@ -239,6 +240,17 @@ class RriCoefficientConfig(BaseModel):
             "Omit to use num_epochs, then training.num_epochs."
         ),
     )
+    leaky_relu: bool | None = Field(
+        default=None,
+        description="Deprecated legacy flag; when set, maps to leaky_relu or relu before activation.",
+    )
+    activation: ActivationName | None = Field(
+        default=None,
+        description=(
+            "Hidden-layer activation for this coefficient's MLP "
+            "(relu, leaky_relu, tanh). Omit to use training.activation."
+        ),
+    )
 
     def training_epochs(self, *, vessel: bool, default: int) -> int:
         """Resolve epoch count for junction or vessel training."""
@@ -246,6 +258,14 @@ class RriCoefficientConfig(BaseModel):
             return self.vessel_num_epochs
         if self.num_epochs is not None:
             return self.num_epochs
+        return default
+
+    def effective_activation(self, default: ActivationName) -> ActivationName:
+        """Resolve activation for this coefficient."""
+        if self.activation is not None:
+            return self.activation
+        if self.leaky_relu is not None:
+            return "leaky_relu" if self.leaky_relu else "relu"
         return default
 
 
@@ -261,9 +281,16 @@ class TrainingConfig(BaseModel):
         default=False,
         description="Train one network with R/S/L outputs instead of three single-output networks.",
     )
-    leaky_relu: bool = Field(
-        default=False,
-        description="Use Leaky ReLU (negative slope 0.01) instead of ReLU in MLP hidden layers.",
+    activation: ActivationName = Field(
+        default="relu",
+        description=(
+            "Default hidden-layer activation for each R/S/L MLP when a coefficient omits activation. "
+            "Choices: relu, leaky_relu, tanh. Stored on each model checkpoint for inference."
+        ),
+    )
+    leaky_relu: bool | None = Field(
+        default=None,
+        description="Deprecated global flag; when set, overrides activation for all coefficients.",
     )
     clip_predictions: bool = Field(
         default=False,
@@ -322,6 +349,12 @@ class TrainingConfig(BaseModel):
 
     def batch_size_for_n_train(self, n_train: int) -> int:
         return max(1, math.ceil(max(n_train, 1) / self.batch_size_divisor))
+
+    def resolved_activation(self) -> ActivationName:
+        """Global default activation, honoring legacy leaky_relu when present."""
+        if self.leaky_relu is not None:
+            return "leaky_relu" if self.leaky_relu else "relu"
+        return self.activation
 
 
 class PipelineConfig(BaseModel):

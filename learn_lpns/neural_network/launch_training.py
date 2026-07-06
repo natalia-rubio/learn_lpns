@@ -3,6 +3,7 @@ import os
 import re
 
 from learn_lpns.config import TrainingConfig, get_pipeline_config
+from learn_lpns.neural_network.activations import ACTIVATION_NAMES, normalize_activation
 from learn_lpns.data_processing.generate_split_indices import (
     load_split_for_training,
     resolve_flat_indices,
@@ -174,7 +175,7 @@ def _build_training_params_for_modality(
     asymmetric_loss_eff: bool,
     generation_weighted_loss_eff: bool,
     generation_weighted_loss_decay_base: float,
-    leaky_relu: bool,
+    activation: str,
     model_dir: str | None,
     training_cfg: TrainingConfig,
     oracle_inputs: bool = False,
@@ -225,7 +226,7 @@ def _build_training_params_for_modality(
         "run_config_suffix": run_config_suffix,
         "jax_arrays_path": jax_path,
         "data_dict": jax_data,
-        "use_leaky_relu": leaky_relu,
+        "activation": activation,
         "model_name_suffix": model_name_suffix,
         "asymmetric_loss_overestimate_weight": 1.0,
         "asymmetric_loss": asymmetric_loss_eff,
@@ -303,6 +304,11 @@ def launch_training(
             network_params["layer_width"] = spec.junction_layer_width
             overestimate_weight = spec.junction_asymmetric_overestimate_weight if asymmetric_loss else 1.0
         network_params["asymmetric_loss_overestimate_weight"] = overestimate_weight
+        default_activation = normalize_activation(
+            network_params.get("activation", training_cfg.resolved_activation())
+        )
+        network_params["activation"] = spec.effective_activation(default_activation)
+        print(f"  activation: {network_params['activation']}")
 
         if shared_data_dict is not None:
             network_params["data_dict"] = shared_data_dict
@@ -346,6 +352,9 @@ def _launch_training_multi_output(
             for spec in training_cfg.rri_coefficients
         ]
     network_params["asymmetric_loss_overestimate_weights"] = overestimate_weights
+    network_params["activation"] = normalize_activation(
+        network_params.get("activation", training_cfg.resolved_activation())
+    )
 
     model = NeuralNet(network_params, optimizer_params)
     train_nn(model, training_params)
@@ -387,12 +396,12 @@ def main():
         help="Train vessel NN (R/S/L per vessel); uses vessel jax arrays and same geometry-based split",
     )
     parser.add_argument(
-        "--leaky_relu",
-        action=argparse.BooleanOptionalAction,
+        "--activation",
+        choices=ACTIVATION_NAMES,
         default=None,
         help=(
-            "Use Leaky ReLU instead of ReLU (helps gradient flow when inputs span large ranges). "
-            "Default follows training.leaky_relu in config (false)."
+            "Default hidden-layer activation when a coefficient omits activation in config "
+            f"({', '.join(ACTIVATION_NAMES)}). Default follows training.activation in config."
         ),
     )
     parser.add_argument(
@@ -465,7 +474,9 @@ def main():
     training_cfg = get_pipeline_config(set_name=cli_args.set_name).training
     set_name = cli_args.set_name
     multi_output_rri = bool(cli_args.multi_output_rri or training_cfg.multi_output_rri)
-    leaky_relu = training_cfg.leaky_relu if cli_args.leaky_relu is None else bool(cli_args.leaky_relu)
+    default_activation = training_cfg.resolved_activation()
+    if cli_args.activation is not None:
+        default_activation = normalize_activation(cli_args.activation, context="--activation")
 
     geometry_variant_arg = cli_args.geometry_variant or DEFAULT_GEOMETRY_VARIANT
     if geometry_variant_arg not in GEOMETRY_VARIANT_NAMES:
@@ -540,8 +551,13 @@ def main():
             print("Multi-output RRI: one network with R, S, L outputs")
         if cli_args.oracle_inputs:
             print("Oracle inputs: ON (R/S/L appended to features; not for deploy)")
-        if leaky_relu:
-            print("Leaky ReLU: ON")
+        if multi_output_rri:
+            print(f"Activation: {default_activation} (multi-output network)")
+        else:
+            print(
+                f"Activation: per coefficient (default {default_activation}; "
+                "override via training.rri_coefficients.<R|S|L>.activation)"
+            )
         print(f"{'=' * 80}")
 
         split_path = cli_args.split_path or _default_split_path(
@@ -574,7 +590,7 @@ def main():
             asymmetric_loss_eff=asymmetric_loss_eff,
             generation_weighted_loss_eff=generation_weighted_loss_eff,
             generation_weighted_loss_decay_base=float(cli_args.generation_weighted_loss_decay_base),
-            leaky_relu=leaky_relu,
+            activation=default_activation,
             model_dir=cli_args.model_dir,
             training_cfg=training_cfg,
             oracle_inputs=bool(cli_args.oracle_inputs),

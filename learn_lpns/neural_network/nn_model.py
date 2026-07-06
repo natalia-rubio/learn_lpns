@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import optax
 from jax import grad, jit
 
+from learn_lpns.neural_network.activations import resolve_activation_from_network_params
 from learn_lpns.neural_network.nn_util import batched_forward_pass, get_L2, init_weights
 from learn_lpns.tools.basic import load_dict
 
@@ -48,7 +49,8 @@ class NeuralNet:
             self.data_dict = load_dict(jax_arrays_path)
 
         self.model_name_suffix = network_params.get("model_name_suffix", "")
-        self.use_leaky_relu = network_params.get("use_leaky_relu", False)
+        self.activation = resolve_activation_from_network_params(network_params)
+        print(f"  activation: {self.activation}")
         self.asymmetric_loss = bool(network_params["asymmetric_loss"])
         self.num_output_features = int(network_params.get("num_output_features", 1))
         if self.num_output_features == 1:
@@ -156,7 +158,7 @@ class NeuralNet:
                 self.output[idx, :],
                 self.target_output_column if self.target_output_column is not None else 0,
                 self.num_output_features,
-                self.use_leaky_relu,
+                self.activation,
                 self.weights,
             )
         )
@@ -172,7 +174,7 @@ class NeuralNet:
                     self.output[idx, :],
                     self.target_output_column,
                     self.num_output_features,
-                    self.use_leaky_relu,
+                    self.activation,
                     self.weights,
                     self.asymmetric_loss_overestimate_weight,
                     sample_w,
@@ -185,7 +187,7 @@ class NeuralNet:
                 self.output[idx, :],
                 0,
                 self.num_output_features,
-                self.use_leaky_relu,
+                self.activation,
                 self.weights,
                 self.asymmetric_loss_overestimate_weights,
                 sample_w,
@@ -203,7 +205,7 @@ class NeuralNet:
                 self.output[indices, :],
                 self.target_output_column,
                 self.num_output_features,
-                self.use_leaky_relu,
+                self.activation,
                 self.weights,
                 self.asymmetric_loss_overestimate_weight,
                 sample_w,
@@ -214,7 +216,7 @@ class NeuralNet:
             self.output[indices, :],
             0,
             self.num_output_features,
-            self.use_leaky_relu,
+            self.activation,
             self.weights,
             self.asymmetric_loss_overestimate_weights,
             sample_w,
@@ -228,8 +230,8 @@ class NeuralNet:
 
 
 @partial(jit, static_argnums=(2,))
-def predict(input, weights, use_leaky_relu=False):
-    return batched_forward_pass(input, weights, use_leaky_relu)
+def predict(input, weights, activation="relu"):
+    return batched_forward_pass(input, weights, activation)
 
 
 @partial(jit, static_argnums=(2, 3, 4))
@@ -238,13 +240,13 @@ def loss(
     outputs,
     target_output_column,
     num_output_features,
-    use_leaky_relu,
+    activation,
     weights,
     overestimate_weight,
     sample_weights,
     stenosis_row_mask,
 ):
-    coefs_pred = predict(input, weights, use_leaky_relu)
+    coefs_pred = predict(input, weights, activation)
     if num_output_features == 1:
         residual = coefs_pred[:, 0] - outputs[:, target_output_column]
         absolute_residual = jnp.abs(coefs_pred[:, 0]) - jnp.abs(outputs[:, target_output_column])
@@ -281,10 +283,10 @@ def loss_pure(
     outputs,
     target_output_column,
     num_output_features,
-    use_leaky_relu,
+    activation,
     weights,
 ):
-    coefs_pred = predict(input, weights, use_leaky_relu)
+    coefs_pred = predict(input, weights, activation)
     if num_output_features == 1:
         return jnp.sqrt(jnp.mean(jnp.square(coefs_pred[:, 0] - outputs[:, target_output_column])))
     residuals = coefs_pred - outputs[:, :num_output_features]

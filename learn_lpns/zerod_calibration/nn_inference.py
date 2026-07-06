@@ -9,6 +9,7 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
+from learn_lpns.neural_network.activations import resolve_activation_from_model
 from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, predict
 from learn_lpns.neural_network.nn_util import clip_rsl_predictions, dill_load, resolve_train_output_bounds
 from learn_lpns.zerod_calibration.stenosis_generation import (
@@ -115,8 +116,8 @@ def run_nn_predict(
         print(f"      Loading multi-output model: {model_path}")
         model = dill_load(model_path)
         bounds_model = model
-        use_leaky = getattr(model, "use_leaky_relu", False)
-        pred = np.array(predict(X_jax, model.weights, use_leaky))
+        activation = resolve_activation_from_model(model)
+        pred = np.array(predict(X_jax, model.weights, activation))
         if pred.ndim == 1:
             pred = pred.reshape(1, -1)
         if pred.shape[1] != RRI_NUM_OUTPUTS:
@@ -129,8 +130,8 @@ def run_nn_predict(
             model = dill_load(model_path)
             if bounds_model is None:
                 bounds_model = model
-            use_leaky = getattr(model, "use_leaky_relu", False)
-            pred = predict(X_jax, model.weights, use_leaky)
+            activation = resolve_activation_from_model(model)
+            pred = predict(X_jax, model.weights, activation)
             raw_predictions.append(np.array(pred).flatten())
 
     if _resolve_clip_predictions(clip_predictions, set_name):

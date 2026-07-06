@@ -6,6 +6,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax import random, vmap
 
+from learn_lpns.neural_network.activations import ActivationName, apply_activation, normalize_activation
+
 np.random.seed(0)
 
 ORACLE_OUTPUT_FEATURE_NAMES = ("R_poiseuille", "stenosis_coefficient", "L")
@@ -182,29 +184,20 @@ def get_batch_indices(indices, batch_size):
     return [indices[i * batch_size : (i + 1) * batch_size] for i in range(num_batches)]
 
 
-def relu(x):
-    return jnp.maximum(0, x)
-
-
-def leaky_relu(x, negative_slope=0.01):
-    """Leaky ReLU: max(negative_slope * x, x). Gradient flows when x < 0."""
-    return jnp.where(x >= 0, x, negative_slope * x)
-
-
-def forward_pass(input, weights, use_leaky_relu=False):
-    activation = leaky_relu if use_leaky_relu else relu
+def forward_pass(input, weights, activation: ActivationName = "relu"):
+    act = normalize_activation(activation)
     latent_rep = input
     for w, b in weights[:-1]:
         lin_comb = jnp.dot(w, latent_rep) + b
-        latent_rep = activation(lin_comb)
+        latent_rep = apply_activation(lin_comb, act)
 
     final_w, final_b = weights[-1]
     return jnp.dot(final_w, latent_rep) + final_b
 
 
-def batched_forward_pass(input, weights, use_leaky_relu=False):
+def batched_forward_pass(input, weights, activation: ActivationName = "relu"):
     """Vectorized forward pass over batch dimension (axis 0 of input)."""
-    return vmap(forward_pass, in_axes=(0, None, None))(input, weights, use_leaky_relu)
+    return vmap(forward_pass, in_axes=(0, None, None))(input, weights, activation)
 
 
 def get_L2(weights):

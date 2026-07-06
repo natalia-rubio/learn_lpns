@@ -63,7 +63,7 @@ def test_oracle_training_fits_synthetic_data(tmp_path):
         "num_geos": 1,
         "geometry_variant": "bifurcations_EL",
         "data_dict": data_dict,
-        "use_leaky_relu": True,
+        "activation": "leaky_relu",
         "asymmetric_loss": False,
         "asymmetric_loss_overestimate_weight": 1.0,
         "generation_weighted_loss": False,
