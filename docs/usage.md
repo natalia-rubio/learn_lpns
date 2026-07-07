@@ -148,6 +148,31 @@ When that step runs, batch processing generates only missing geometries. Data pr
 
 Checkpoints: `rri_{set_name}_pred_{0,1,2}_model` (one scalar-output network per R/S/L coefficient).
 
+### Batch CV: all configs × all sets
+
+Runs cross-validation for every combination of default cohorts (`cohorts.default_cv_set_names`) and default run configs (`gen_loss`, `base`, `quadratic_resistor_gen_loss`, `gen_loss:bifurcations`). After each set finishes, a by-config comparison barchart is generated; after all sets finish, a cross-set summary barchart is generated per run config.
+
+This is a long-running batch job. If one set/config pair fails, the batch logs the error and continues with the remaining jobs, then exits non-zero if any job failed.
+
+```bash
+learn-lpns-cv-all-configs-and-sets
+
+learn-lpns-cv-all-configs-and-sets \
+  --set_names VMR_pulmo \
+  --configs gen_loss quadratic_resistor_gen_loss
+
+# Dry-ish smoke test: one set, one config, one trial
+learn-lpns-cv-all-configs-and-sets \
+  --set_names VMR_aorta_starter \
+  --configs gen_loss \
+  --num_trials 1
+```
+
+Related batch commands:
+
+- `learn-lpns-cv-all-sets` — many sets × one `--run_config`
+- `python -m learn_lpns.zerod_calibration.run_cv_all_configs` — one set × many configs (no console entry point)
+
 ## Neural network training
 
 Each RRI coefficient (R, S, L) is a **separate single-output network** against one column of `output_rri`. Hyperparameters: `training.rri_coefficients` in `config/defaults.yaml`.
@@ -301,6 +326,8 @@ Most accept `--run_config`, `--set_name`, and `--geometry_variant`. See each mod
 | Command                      | Script                                                            | Notes                                                                 |
 | ---------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
 | `learn-lpns-cv`              | `learn_lpns/zerod_calibration/run_cross_validation.py`            | `--set_name` required; default `geometry_variant=bifurcations_EL`     |
+| `learn-lpns-cv-all-sets`     | `learn_lpns/zerod_calibration/run_cv_all_sets.py`                   | Default cohorts × one `--run_config`                                  |
+| `learn-lpns-cv-all-configs-and-sets` | `learn_lpns/zerod_calibration/run_cv_all_configs_and_sets.py` | Default cohorts × default run configs; continues on failure           |
 | `learn-lpns-batch-zerod`     | `learn_lpns/zerod_calibration/batch_generate_zerod_inputs_vmr.py` | Per-geometry 0D pipeline over a cohort                                |
 | `learn-lpns-data-processing` | `learn_lpns/data_processing/run_data_processing.py`               | Builds `ml_inputs`, `jax_arrays`, `split_indices`                     |
 | `learn-lpns-train`           | `learn_lpns/neural_network/launch_training.py`                    | `--set_name` required; infers `--num_geos` when omitted               |

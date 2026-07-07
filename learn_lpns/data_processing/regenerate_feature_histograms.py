@@ -5,9 +5,9 @@ Regenerate feature histogram figures for a given set and run config.
 Reads ML input CSVs from data/ml_inputs/{set_name}/{run_config}/{geometry_variant}/
 and saves histograms to data/feature_histograms/{set_name}/{run_config}/{geometry_variant}/{set_type}/.
 
-Example (quadratic_resistor_penalty_on_gen_loss for VMR_rigid_aorta_adults, both geometry variants):
+Example (quadratic_resistor_gen_loss for VMR_rigid_aorta_adults, both geometry variants):
   python -m learn_lpns.data_processing.regenerate_feature_histograms VMR_rigid_aorta_adults \\
-      --run_config quadratic_resistor_penalty_on_gen_loss
+      --run_config quadratic_resistor_gen_loss
 
 Example (single geometry variant):
   python -m learn_lpns.data_processing.regenerate_feature_histograms VMR_rigid_aorta_adults \\

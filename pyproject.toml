@@ -39,6 +39,7 @@ notebook = [
 [project.scripts]
 learn-lpns-cv = "learn_lpns.zerod_calibration.run_cross_validation:main"
 learn-lpns-cv-all-sets = "learn_lpns.zerod_calibration.run_cv_all_sets:main"
+learn-lpns-cv-all-configs-and-sets = "learn_lpns.zerod_calibration.run_cv_all_configs_and_sets:main"
 learn-lpns-batch-zerod = "learn_lpns.zerod_calibration.batch_generate_zerod_inputs_vmr:main"
 learn-lpns-data-processing = "learn_lpns.data_processing.run_data_processing:main"
 learn-lpns-train = "learn_lpns.neural_network.launch_training:main"

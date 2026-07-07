@@ -153,7 +153,7 @@ def main():
         default="base",
         help=(
             "Run-config subfolder (default: base). Use e.g. gen_loss or "
-            "quadratic_resistor_penalty_on_gen_loss when CV was run with that config."
+            "quadratic_resistor_gen_loss when CV was run with that config."
         ),
     )
     args = parser.parse_args()

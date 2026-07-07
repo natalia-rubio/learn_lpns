@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Wrapper to run cross-validation for multiple configs (e.g. gen_loss,
-quadratic_resistor_gen_loss, quadratic_resistor_penalty_on_gen_loss), then the per-config
+quadratic_resistor_gen_loss), then the per-config
 max-pct-error barchart after each CV, and finally the by-config comparison barchart.
 
 Usage:
@@ -17,54 +17,14 @@ import sys
 
 from learn_lpns.config import get_pipeline_config
 from learn_lpns.tools.paths import repo_root
+from learn_lpns.zerod_calibration.cv_batch_common import (
+    DEFAULT_CONFIGS,
+    OPTIONAL_CONFIGS,
+    run_by_config_comparison_barchart,
+    resolve_configs_with_flags,
+)
 
 os.chdir(repo_root())  # ensure cwd is repo root for -m invocations
-
-# Configs to run: (run_config_suffix, list of run_cross_validation flags)
-# Order is the order of execution; barchart by-config will discover and sort by value.
-# Use --run_config SUFFIX as the single way to specify config.
-DEFAULT_CONFIGS = [
-    ("gen_loss", ["--run_config", "gen_loss"]),
-    ("base", ["--run_config", "base"]),
-    ("quadratic_resistor_gen_loss", ["--run_config", "quadratic_resistor_gen_loss"]),
-    (
-        "quadratic_resistor_penalty_on_gen_loss",
-        ["--run_config", "quadratic_resistor_penalty_on_gen_loss"],
-    ),
-    ("gen_loss:bifurcations", ["--run_config", "gen_loss"]),
-]
-
-# Valid for e.g. `--configs quadratic_resistor_penalty_on_gen_loss` but not part of the default batch.
-OPTIONAL_CONFIGS = {
-    "quadratic_resistor_gen_loss": ["--run_config", "quadratic_resistor_gen_loss"],
-    "quadratic_resistor_penalty_on_gen_loss": [
-        "--run_config",
-        "quadratic_resistor_penalty_on_gen_loss",
-    ],
-    "base": ["--run_config", "base"],
-    "gen_loss": ["--run_config", "gen_loss"],
-    "quadratic_resistor": ["--run_config", "quadratic_resistor"],
-    "quadratic_resistor_penalty_on": ["--run_config", "quadratic_resistor_penalty_on"],
-}
-
-
-def _parse_config_entry(entry: str, default_geometry_variant: str):
-    """
-    Parse config entry syntax:
-      - "config_suffix" -> (entry_key, run_config_suffix, geometry_variant_override)
-      - "config_suffix:geometry_variant" -> (entry_key, run_config_suffix, geometry_variant_override)
-    """
-    raw = (entry or "").strip()
-    if not raw:
-        raise ValueError("Empty config entry.")
-    if ":" in raw:
-        run_cfg, geom_var = raw.split(":", 1)
-        run_cfg = run_cfg.strip()
-        geom_var = geom_var.strip()
-        if not run_cfg or not geom_var:
-            raise ValueError(f"Invalid config entry {entry!r}. Use 'config' or 'config:geometry_variant'.")
-        return raw, run_cfg, geom_var
-    return raw, raw, default_geometry_variant
 
 
 def main():
@@ -116,23 +76,11 @@ def main():
     set_name = args.set_name
     geometry_variant = args.geometry_variant
     num_trials = args.num_trials
-    config_list = args.configs or [c[0] for c in DEFAULT_CONFIGS]
-    # Build (entry_key, run_config_suffix, geometry_variant_to_use, cv_flags) for each requested config
-    config_map = {**dict(DEFAULT_CONFIGS), **OPTIONAL_CONFIGS}
-    configs_with_flags = []
-    for c in config_list:
-        try:
-            entry_key, run_config_suffix, cfg_geometry_variant = _parse_config_entry(c, geometry_variant)
-        except ValueError as e:
-            print(str(e), file=sys.stderr)
-            sys.exit(1)
-        if run_config_suffix not in config_map:
-            print(
-                f"Unknown config: {run_config_suffix}. Known: {list(config_map.keys())}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        configs_with_flags.append((entry_key, run_config_suffix, cfg_geometry_variant, config_map[run_config_suffix]))
+    try:
+        configs_with_flags = resolve_configs_with_flags(args.configs, geometry_variant)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
 
     if not args.only_barcharts:
         for entry_key, run_config_suffix, cfg_geometry_variant, cv_flags in configs_with_flags:
@@ -166,7 +114,6 @@ def main():
                 )
                 sys.exit(ret.returncode)
     else:
-        # Only barcharts: run per-config barchart for each config that has data
         if not args.skip_per_config_barchart:
             for entry_key, run_config_suffix, cfg_geometry_variant, _ in configs_with_flags:
                 print(f"\nRunning per-config barchart for {entry_key}...")
@@ -186,30 +133,19 @@ def main():
     print(f"\n{'=' * 60}")
     print("Running by-config comparison barchart...")
     print(f"{'=' * 60}")
-    by_config_list = [c[0] for c in configs_with_flags]
-    # Extra bar: gen_loss config but using bifurcations (not bifurcations_EL) error CSV
-    if "gen_loss" in by_config_list:
-        by_config_list.append("gen_loss:bifurcations")
-    cmd_by = [
-        sys.executable,
-        "-m",
-        "learn_lpns.visualizations.cv_max_pct_error_by_config_barchart",
+    ret_by = run_by_config_comparison_barchart(
         set_name,
-        "--geometry",
-        geometry_variant,
-        "--configs",
-        *by_config_list,
-        "--data_root",
-        "results",
-        "--xmax",
-        "40",
-    ]
-    ret_by = subprocess.run(cmd_by, cwd=repo_root())
-    if ret_by.returncode != 0:
-        print(f"By-config barchart failed (exit {ret_by.returncode}).", file=sys.stderr)
-        sys.exit(ret_by.returncode)
+        geometry_variant=geometry_variant,
+        configs_with_flags=configs_with_flags,
+    )
+    if ret_by != 0:
+        print(f"By-config barchart failed (exit {ret_by}).", file=sys.stderr)
+        sys.exit(ret_by)
     print("Done.")
 
 
 if __name__ == "__main__":
     main()
+
+
+__all__ = ["DEFAULT_CONFIGS", "OPTIONAL_CONFIGS", "main"]

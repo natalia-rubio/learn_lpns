@@ -38,7 +38,6 @@ RUN_CONFIG_FALLBACK_ORDER = [
     "gen_loss",
     "base",
     "quadratic_resistor_gen_loss",
-    "quadratic_resistor_penalty_on_gen_loss",
     "asymmetric_loss_gen_loss",
     "asymmetric_loss",
 ]

@@ -88,7 +88,7 @@ def add_generate_zerod_inputs_arguments(
         help=(
             "Run-config tokens in any order, underscore-separated "
             f"(default: {DEFAULT_CLI_RUN_CONFIG}). "
-            "Examples: gen_loss, gen_loss_quadratic_resistor, quadratic_resistor_penalty_on_gen_loss. "
+            "Examples: gen_loss, quadratic_resistor_gen_loss, quadratic_resistor_penalty_on. "
             "Use base for the default physics config with no optional tokens. "
             "penalty_on requires quadratic_resistor."
         ),

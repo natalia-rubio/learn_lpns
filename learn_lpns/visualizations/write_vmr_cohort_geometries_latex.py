@@ -47,7 +47,6 @@ def _cohort_display_label(set_name: str) -> str:
 # Prefer run-config subfolders that contain per-geometry directories (not only standard-0d JSON).
 RUN_CONFIG_DIR_PREFERENCE: Sequence[str] = (
     "gen_loss",
-    "quadratic_resistor_penalty_on_gen_loss",
     "quadratic_resistor_gen_loss",
     "base",
 )
