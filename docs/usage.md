@@ -226,6 +226,59 @@ During training, **validation metrics are logged and plotted for monitoring only
 
 Each saved checkpoint stores `best_epoch`, `best_train_loss`, and `restored_from_best` for traceability.
 
+### Non-dimensional R/S/L training (optional)
+
+By default, junction and vessel networks learn physical `R_poiseuille`, `stenosis_coefficient`, and `L` directly. Set `training.nondimensionalize_rsl: true` to follow the physics-based scaling in [Rubio et al., arXiv:2508.21165](https://arxiv.org/abs/2508.21165) (Eqs. 9–12):
+
+1. **Data processing** converts calibrated targets to non-dimensional \(R^*, S^*, L^*\) using each row’s `inlet_max_inscribed_radius` as characteristic length \(l_c\), plus `physics.rho`, `physics.mu`, and `physics.reference_reynolds` (\(Re_c\), default 4500).
+2. **Training** fits the networks to those non-dimensional targets (clip bounds are stored in non-dimensional space).
+3. **Inference** maps predictions back to physical R/S/L before writing 0D JSON.
+
+Characteristic scales (per row, with inlet radius \(l_c\)):
+
+- \(U_c = Re_c \mu / (2 \rho l_c)\), \(Q_c = \pi l_c^2 U_c\), \(t_c = l_c / U_c\), \(P_c = \rho U_c^2\)
+- \(R^* = R\, Q_c / P_c\), \(S^* = S\, Q_c^2 / P_c\), \(L^* = L\, Q_c / (t_c P_c)\)
+
+Config knobs:
+
+```yaml
+physics:
+  reference_reynolds: 4500   # Re_c (arbitrary but must match at train and inference)
+
+training:
+  nondimensionalize_rsl: false   # set true to enable
+```
+
+Applies to **both** junction and vessel NNs. Re-run **data processing → training → inference** after toggling. Existing checkpoints trained without this flag are unchanged.
+
+### Per-cohort config overrides
+
+Per-cohort overrides are deep-merged whenever code loads `get_pipeline_config(set_name=...)` (training, CV, data processing, calibration all pass `set_name`).
+
+**Inline (recommended for per-coefficient tweaks):** under a `training.rri_coefficients` entry, add a `<set_name>:` block with only the fields to change. Entries are merged by coefficient `name`, so R/L and other S fields keep their defaults:
+
+```yaml
+training:
+  rri_coefficients:
+    - name: S
+      junction_layer_width: 10
+      VMR_all:
+        junction_layer_width: 20   # wider stenosis (S) junction MLP for VMR_all only
+```
+
+**Top-level `set_overrides:`** still works for broader overrides (any config section):
+
+```yaml
+set_overrides:
+  VMR_all:
+    training:
+      rri_coefficients:
+        - name: S
+          junction_layer_width: 20
+```
+
+Loader order when `set_name` is set: base config → `set_overrides.<set_name>` → inline blocks for that set → optional `config/sets/<set_name>.yaml` → programmatic overrides. Inline and `set_overrides` blocks are stripped before validation, so they never affect runs without a matching `set_name`.
+
 ## Notebook example (no C++ solver)
 
 [examples/nn_parameter_comparison.ipynb](../examples/nn_parameter_comparison.ipynb) walks through a five-geometry demo (`VMR_aorta_starter`: `0129_0000`, `0154_0001`, `0174_0000`, `0175_0000`, `0176_0000`) without running calibration or forward simulation:

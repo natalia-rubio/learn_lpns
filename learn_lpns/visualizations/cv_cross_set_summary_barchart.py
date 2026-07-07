@@ -16,6 +16,7 @@ Usage:
   python -m learn_lpns.visualizations.cv_cross_set_summary_barchart
   python -m learn_lpns.visualizations.cv_cross_set_summary_barchart --run_config gen_loss
   python -m learn_lpns.visualizations.cv_cross_set_summary_barchart --metric pressure_max_error
+  python -m learn_lpns.visualizations.cv_cross_set_summary_barchart --metric pressure_mean_rel_error
 """
 
 import argparse
@@ -73,6 +74,13 @@ METRIC_CONFIG = {
         "scale": 100.0,
         "ylabel": r"Max. Inlet Pressure Error over Cardiac Cycle (MPE) (\%)",
         "out_suffix": "pressure_max_rel_error",
+    },
+    "pressure_mean_rel_error": {
+        "csv_suffix": "_pressure_mean_rel_error.csv",
+        "col_prefix": "PressureMeanRelError_",
+        "scale": 100.0,
+        "ylabel": r"Mean Inlet Pressure Error over Cardiac Cycle (MAPE) (\%)",
+        "out_suffix": "pressure_mean_rel_error",
     },
     "pressure_max_error": {
         "csv_suffix": "_pressure_max_error.csv",
@@ -141,7 +149,7 @@ def _format_bar_label(mean, metric_key):
     if not np.isfinite(mean):
         return ""
     # text.usetex=True: plain % is a LaTeX comment; use \\%
-    if metric_key == "pressure_max_rel_error":
+    if metric_key in ("pressure_max_rel_error", "pressure_mean_rel_error"):
         return f"{mean:.1f}"
     if metric_key == "pressure_max_error":
         return f"{mean:.1f}"
@@ -336,9 +344,8 @@ def main():
                 bbox=label_bbox,
             )
 
-    ax.get_ylim()[1]
-    # ax.set_ylim(0.0, max(y_hi_auto, max_top * 1.06))
-    ax.set_ylim(0, 37)
+    # Adapt y-axis to the data (bar + 95% CI), leaving headroom for bar labels.
+    ax.set_ylim(0, max_top * 1.12 if max_top > 0 else 1.0)
 
     ax.set_xticks(x)
     ax.set_xticklabels([_format_set_label(s) for s in valid_sets], fontsize=18)

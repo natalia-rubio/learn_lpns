@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 # Order is execution order; by-config barchart discovers and sorts by value.
 DEFAULT_CONFIGS: list[tuple[str, list[str]]] = [
     ("gen_loss", ["--run_config", "gen_loss"]),
-    ("base", ["--run_config", "base"]),
+    ("quadratic_resistor", ["--run_config", "base"]),
     ("quadratic_resistor_gen_loss", ["--run_config", "quadratic_resistor_gen_loss"]),
-    ("gen_loss:bifurcations", ["--run_config", "gen_loss"]),
+    ("quadratic_resistor_gen_loss", ["--run_config", "gen_loss"]),
 ]
 
 # Valid for `--configs` but not part of the default batch unless listed explicitly.
@@ -129,17 +129,28 @@ def run_cross_set_summary_barchart(
     *,
     run_config_suffix: str,
     geometry_variant: str = "bifurcations_EL",
+    metrics: Sequence[str] | None = None,
 ) -> int:
-    """Run cv_cross_set_summary_barchart for one run config across sets; return exit code."""
-    cmd = [
-        sys.executable,
-        "-m",
-        "learn_lpns.visualizations.cv_cross_set_summary_barchart",
-        "--set_names",
-        *set_names,
-        "--geometry_variant",
-        geometry_variant,
-        "--run_config",
-        run_config_suffix,
-    ]
-    return subprocess.run(cmd, cwd=repo_root()).returncode
+    """Run cv_cross_set_summary_barchart for one run config across sets; return worst exit code."""
+    metric_list = list(metrics) if metrics is not None else (
+        "pressure_max_rel_error",
+        "pressure_mean_rel_error",
+    )
+    worst = 0
+    for metric in metric_list:
+        cmd = [
+            sys.executable,
+            "-m",
+            "learn_lpns.visualizations.cv_cross_set_summary_barchart",
+            "--set_names",
+            *set_names,
+            "--geometry_variant",
+            geometry_variant,
+            "--run_config",
+            run_config_suffix,
+            "--metric",
+            metric,
+        ]
+        ret = subprocess.run(cmd, cwd=repo_root()).returncode
+        worst = max(worst, ret)
+    return worst

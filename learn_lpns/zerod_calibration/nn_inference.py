@@ -9,6 +9,7 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
+from learn_lpns.data_processing.rsl_nondim import redimensionalize_rsl_predictions
 from learn_lpns.neural_network.activations import resolve_activation_from_model
 from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, predict
 from learn_lpns.neural_network.nn_util import clip_rsl_predictions, dill_load, resolve_train_output_bounds
@@ -121,6 +122,33 @@ def _resolve_clip_predictions(clip_predictions: bool | None, set_name: str) -> b
     from learn_lpns.config import get_pipeline_config
 
     return bool(get_pipeline_config(set_name=set_name).training.clip_predictions)
+
+
+def _maybe_redimensionalize_rsl_predictions(
+    pred_R: np.ndarray,
+    pred_S: np.ndarray,
+    pred_L: np.ndarray,
+    feature_matrix: np.ndarray,
+    feature_names: list[str],
+    model: Any,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Re-dimensionalize R*/S*/L* predictions when the checkpoint was trained with nondim_rsl."""
+    if not getattr(model, "nondim_rsl", False):
+        return pred_R, pred_S, pred_L
+    print(
+        "      nondim_rsl: re-dimensionalizing predictions "
+        f"(Re_c={model.reference_reynolds:g}, rho={model.nondim_rho:g}, mu={model.nondim_mu:g})"
+    )
+    return redimensionalize_rsl_predictions(
+        pred_R,
+        pred_S,
+        pred_L,
+        feature_matrix,
+        feature_names,
+        rho=float(model.nondim_rho),
+        mu=float(model.nondim_mu),
+        reference_reynolds=float(model.reference_reynolds),
+    )
 
 
 def run_nn_predict(
@@ -389,6 +417,10 @@ def run_junction_inference(
                 modality="junction",
             )
 
+    pred_R, pred_S, pred_L = _maybe_redimensionalize_rsl_predictions(
+        pred_R, pred_S, pred_L, X, feature_names, bounds_model
+    )
+
     apply_junction_predictions(
         nn_config,
         X=X,
@@ -436,8 +468,8 @@ def load_vessel_feature_matrix(
     geometric_input_path: str,
     *,
     verbose: bool = False,
-) -> tuple[np.ndarray, list[int], np.ndarray]:
-    """Load vessel NN features, ids, and per-row generation for inference."""
+) -> tuple[np.ndarray, list[int], np.ndarray, list[str]]:
+    """Load vessel NN features, ids, per-row generation, and feature names for inference."""
     from learn_lpns.data_processing.data_dict_from_csvs import (
         _clamp_tortuosity,
         filter_features_from_array,
@@ -460,7 +492,7 @@ def load_vessel_feature_matrix(
         include_features=get_default_include_features_vessel(),
     )
     _clamp_tortuosity(vessel_X, vessel_feature_names)
-    return np.array(vessel_X, dtype=np.float64), vessel_ids, generation
+    return np.array(vessel_X, dtype=np.float64), vessel_ids, generation, list(vessel_feature_names)
 
 
 def apply_vessel_predictions(
@@ -510,7 +542,7 @@ def run_vessel_inference(
     """
     validate_vessel_trial_geometry_variant(model_dir, geometry_variant)
 
-    vessel_X, vessel_ids, vessel_generation = load_vessel_feature_matrix(
+    vessel_X, vessel_ids, vessel_generation, vessel_feature_names = load_vessel_feature_matrix(
         variant_geometric_input, verbose=verbose
     )
     vessel_model_dir = resolve_vessel_model_dir(
@@ -545,6 +577,10 @@ def run_vessel_inference(
             max_generation=max_generation,
             modality="vessel",
         )
+
+    pred_R, pred_S, pred_L = _maybe_redimensionalize_rsl_predictions(
+        pred_R, pred_S, pred_L, vessel_X, vessel_feature_names, bounds_model
+    )
 
     junction_and_vessel_config = json.loads(json.dumps(junction_nn_config))
     apply_vessel_predictions(

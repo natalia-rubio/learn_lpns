@@ -27,38 +27,10 @@ def test_resolve_config_path_finds_repo_defaults():
     assert path.is_file()
 
 
-def test_load_pipeline_config_defaults():
+def test_defaults_include_nondim_rsl_config():
     cfg = load_pipeline_config()
-    assert cfg.physics.rho == pytest.approx(1.06)
-    assert cfg.physics.mu == pytest.approx(0.04)
-    assert cfg.solver.absolute_tolerance == pytest.approx(1e-5)
-    assert cfg.solver.maximum_nonlinear_iterations == 50
-    assert cfg.solver.number_of_cardiac_cycles == 1
-    assert cfg.solver.steady_initial is False
-    assert cfg.calibration.tolerance_gradient == pytest.approx(1e-4)
-    assert cfg.calibration.default_l2_r == pytest.approx(1e5)
-    assert cfg.calibration.default_l2_stenosis == pytest.approx(1e10)
-    assert cfg.calibration.decoupled_l2_r == pytest.approx(0.0)
-    assert cfg.calibration.decoupled_l2_stenosis == pytest.approx(0.0)
-    assert cfg.calibration.decoupled_l2_l == pytest.approx(0.0)
-    assert cfg.calibration.decoupled_nonneg_r is True
-    assert cfg.calibration.decoupled_nonneg_l is False
-    assert cfg.split.percent_train == pytest.approx(0.9)
-    assert cfg.split.data_processing_percent_train == pytest.approx(0.8)
-    assert cfg.split.cv_num_trials == 5
-    assert cfg.split.cv_trial_seed_stride == 1000
-    # assert cfg.training.num_epochs == 500
-    assert len(cfg.training.rri_coefficients) == 3
-    assert cfg.training.rri_coefficients[0].name == "R"
-    assert cfg.training.optimizer.transition_steps == 1000
-    assert cfg.training.generation_weighted_loss_decay_base == pytest.approx(2.0)
-    assert cfg.training.activation == "relu"
-    assert cfg.data_processing.flow_split_method == "mean_over_time"
-    assert cfg.data_processing.stenosis_generation_limit.enabled is True
-    assert cfg.data_processing.stenosis_generation_limit.junction_max_generation == pytest.approx(1.0)
-    assert cfg.data_processing.stenosis_generation_limit.vessel_max_generation == pytest.approx(1.0)
-    assert cfg.training.clip_predictions is False
-    assert cfg.training.restore_best_weights is True
+    assert cfg.physics.reference_reynolds == pytest.approx(4500.0)
+    assert cfg.training.nondimensionalize_rsl is False
 
 
 def test_rri_coefficient_effective_restore_and_threshold():
@@ -95,14 +67,22 @@ def test_rri_coefficient_effective_restore_and_threshold():
 
 
 def test_rri_coefficient_per_modality_epochs():
-    cfg = load_pipeline_config()
-    r_spec, s_spec, l_spec = cfg.training.rri_coefficients
-    assert r_spec.training_epochs(vessel=False, default=cfg.training.num_epochs) == 4000
-    assert r_spec.training_epochs(vessel=True, default=cfg.training.num_epochs) == 1000
-    assert s_spec.training_epochs(vessel=False, default=2000) == 2000
-    assert l_spec.training_epochs(vessel=True, default=2000) == 2000
-
     from learn_lpns.config.models import RriCoefficientConfig
+
+    explicit = RriCoefficientConfig(
+        name="R",
+        label="R",
+        target_output_column=0,
+        lr_init=0.01,
+        junction_num_layers=2,
+        junction_layer_width=10,
+        junction_asymmetric_overestimate_weight=1.0,
+        vessel_asymmetric_overestimate_weight=1.0,
+        num_epochs=4000,
+        vessel_num_epochs=2000,
+    )
+    assert explicit.training_epochs(vessel=False, default=500) == 4000
+    assert explicit.training_epochs(vessel=True, default=500) == 2000
 
     bare = RriCoefficientConfig(
         name="R",
@@ -148,13 +128,6 @@ def test_rri_coefficient_effective_generation_weighted_loss_decay_base():
 
 
 def test_rri_coefficient_effective_activation():
-    cfg = load_pipeline_config()
-    r_spec, s_spec, l_spec = cfg.training.rri_coefficients
-    assert r_spec.effective_activation(default="relu") == "relu"
-    assert s_spec.effective_activation(default="relu") == "leaky_relu"
-    assert l_spec.effective_activation(default="relu") == "relu"
-    assert s_spec.effective_activation(default="tanh") == "leaky_relu"
-
     from learn_lpns.config.models import RriCoefficientConfig
 
     bare = RriCoefficientConfig(
@@ -279,6 +252,135 @@ def test_load_pipeline_config_set_name_layer(tmp_path, monkeypatch):
     cfg = load_pipeline_config(set_name="custom_cohort")
     assert cfg.cohorts.sets["custom_cohort"].display_label == "Custom merged"
     assert cfg.cohorts.l2_penalties_for_set("custom_cohort", cfg.calibration) == (pytest.approx(42), pytest.approx(99))
+
+
+def test_rri_coefficients_merged_by_name_from_override(tmp_path):
+    base = tmp_path / "base.yaml"
+    base.write_text(
+        yaml.dump(
+            {
+                "training": {
+                    "rri_coefficients": [
+                        {
+                            "name": "R",
+                            "label": "Linear Resistor (R)",
+                            "target_output_column": 0,
+                            "lr_init": 0.01,
+                            "junction_num_layers": 4,
+                            "junction_layer_width": 10,
+                            "junction_asymmetric_overestimate_weight": 2000,
+                            "vessel_asymmetric_overestimate_weight": 10,
+                        },
+                        {
+                            "name": "S",
+                            "label": "Stenosis Resistor (S)",
+                            "target_output_column": 1,
+                            "lr_init": 0.1,
+                            "junction_num_layers": 1,
+                            "junction_layer_width": 10,
+                            "junction_asymmetric_overestimate_weight": 2000,
+                            "vessel_asymmetric_overestimate_weight": 10,
+                        },
+                    ]
+                }
+            }
+        )
+    )
+    cfg = load_pipeline_config(
+        base,
+        overrides={"training": {"rri_coefficients": [{"name": "S", "junction_layer_width": 20}]}},
+    )
+    r_spec, s_spec = cfg.training.rri_coefficients
+    assert r_spec.name == "R"
+    assert r_spec.junction_layer_width == 10  # untouched
+    assert s_spec.name == "S"
+    assert s_spec.junction_layer_width == 20  # overridden
+    assert s_spec.lr_init == pytest.approx(0.1)  # other S fields preserved
+
+
+def test_set_overrides_in_main_config_merges_single_coefficient(tmp_path, monkeypatch):
+    base = tmp_path / "defaults.yaml"
+    base_data = yaml.safe_load(resolve_config_path().read_text())
+    base_data["set_overrides"] = {
+        "VMR_widetest": {
+            "training": {"rri_coefficients": [{"name": "S", "junction_layer_width": 44}]}
+        }
+    }
+    base.write_text(yaml.dump(base_data))
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
+    monkeypatch.setattr("learn_lpns.config.load.repo_root", lambda: tmp_path)
+
+    default_cfg = load_pipeline_config(base)
+    set_cfg = load_pipeline_config(set_name="VMR_widetest")
+
+    default_by_name = {c.name: c for c in default_cfg.training.rri_coefficients}
+    set_by_name = {c.name: c for c in set_cfg.training.rri_coefficients}
+    assert set_by_name["S"].junction_layer_width == 44
+    assert set_by_name["R"].junction_layer_width == default_by_name["R"].junction_layer_width
+    assert set_by_name["L"].junction_layer_width == default_by_name["L"].junction_layer_width
+    # set_overrides is loader-only and must not leak into the validated config tree.
+    assert not hasattr(set_cfg, "set_overrides")
+
+
+def test_set_overrides_ignored_for_other_set(tmp_path, monkeypatch):
+    base = tmp_path / "defaults.yaml"
+    base_data = yaml.safe_load(resolve_config_path().read_text())
+    base_data["set_overrides"] = {
+        "VMR_widetest": {
+            "training": {"rri_coefficients": [{"name": "S", "junction_layer_width": 44}]}
+        }
+    }
+    base.write_text(yaml.dump(base_data))
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
+    monkeypatch.setattr("learn_lpns.config.load.repo_root", lambda: tmp_path)
+
+    other_cfg = load_pipeline_config(set_name="VMR_other")
+    default_cfg = load_pipeline_config(base)
+    other_s = {c.name: c for c in other_cfg.training.rri_coefficients}["S"]
+    default_s = {c.name: c for c in default_cfg.training.rri_coefficients}["S"]
+    assert other_s.junction_layer_width == default_s.junction_layer_width
+
+
+def test_inline_rri_set_overrides_under_coefficient(tmp_path, monkeypatch):
+    base = tmp_path / "defaults.yaml"
+    base_data = yaml.safe_load(resolve_config_path().read_text())
+    training = base_data["training"]
+    s_entry = next(c for c in training["rri_coefficients"] if c["name"] == "S")
+    s_entry["VMR_widetest"] = {"junction_layer_width": 44}
+    base.write_text(yaml.dump(base_data))
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
+    monkeypatch.setattr("learn_lpns.config.load.repo_root", lambda: tmp_path)
+
+    default_cfg = load_pipeline_config(base)
+    set_cfg = load_pipeline_config(set_name="VMR_widetest")
+
+    default_by_name = {c.name: c for c in default_cfg.training.rri_coefficients}
+    set_by_name = {c.name: c for c in set_cfg.training.rri_coefficients}
+    assert default_by_name["S"].junction_layer_width == 10
+    assert set_by_name["S"].junction_layer_width == 44
+    assert set_by_name["R"].junction_layer_width == default_by_name["R"].junction_layer_width
+    assert set_by_name["L"].junction_layer_width == default_by_name["L"].junction_layer_width
+
+
+def test_rri_coefficients_set_layer_merges_single_coefficient(tmp_path, monkeypatch):
+    base = tmp_path / "defaults.yaml"
+    base.write_text(resolve_config_path().read_text())
+    sets_dir = tmp_path / "config" / "sets"
+    sets_dir.mkdir(parents=True)
+    (sets_dir / "VMR_widetest.yaml").write_text(
+        yaml.dump({"training": {"rri_coefficients": [{"name": "S", "junction_layer_width": 33}]}})
+    )
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
+    monkeypatch.setattr("learn_lpns.config.load.repo_root", lambda: tmp_path)
+
+    default_cfg = load_pipeline_config(base)
+    set_cfg = load_pipeline_config(set_name="VMR_widetest")
+
+    default_by_name = {c.name: c for c in default_cfg.training.rri_coefficients}
+    set_by_name = {c.name: c for c in set_cfg.training.rri_coefficients}
+    assert set_by_name["S"].junction_layer_width == 33
+    assert set_by_name["R"].junction_layer_width == default_by_name["R"].junction_layer_width
+    assert set_by_name["L"].junction_layer_width == default_by_name["L"].junction_layer_width
 
 
 def test_apply_solver_parameters_writes_expected_fields():

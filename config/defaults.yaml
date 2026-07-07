@@ -3,6 +3,7 @@
 physics:
   rho: 1.06   # blood density (g/cm^3); used for Poiseuille R and L from geometry
   mu: 0.04    # blood dynamic viscosity (Poise); used for Poiseuille R and L from geometry
+  reference_reynolds: 5000   # Re_c for R/S/L non-dimensionalization (arXiv:2508.21165 Eq. 9)
 
 # svzerodsolver simulation parameters
 solver:
@@ -64,6 +65,7 @@ training:
   multi_output_rri: false                 # if true, train one 3-output network (R,S,L) instead of three separate nets
   activation: leaky_relu                         # default hidden-layer activation (relu | leaky_relu | tanh)
   clip_predictions: true         # if true, clip R/S/L predictions to train-set min/max at inference
+  nondimensionalize_rsl: true   # if true, train on R*/S*/L* and map back to physical R/S/L at inference
   optimizer:
     init: 0.02                            # default Adam learning rate (overridden per coefficient by lr_init)
     transition_steps: 1000                # Optax exponential decay: steps between LR multiplications
@@ -81,7 +83,10 @@ training:
       junction_num_layers: 4              # hidden layers in the junction R MLP
       junction_layer_width: 10          # neurons per hidden layer in the junction R MLP
       junction_asymmetric_overestimate_weight: 2000   # extra loss weight when predicted R > target (asymmetric_loss)
-      vessel_asymmetric_overestimate_weight: 10       # same for vessel R network
+      vessel_asymmetric_overestimate_weight: 10    
+      VMR_aorta:
+        #generation_weighted_loss_decay_base: 5.0
+        vessel_num_layers: 1   # same for vessel R network
     - name: S
       label: "Stenosis Resistor (S)"
       target_output_column: 1
@@ -90,9 +95,13 @@ training:
       vessel_num_epochs: 2000
       junction_num_layers: 1
       junction_layer_width: 10
-      generation_weighted_loss_decay_base: 3.0
+      #generation_weighted_loss_decay_base: 3.0
       junction_asymmetric_overestimate_weight: 2000
       vessel_asymmetric_overestimate_weight: 10
+      VMR_all:
+        junction_layer_width: 5
+      VMR_aorta:
+        junction_layer_width: 5
     - name: L
       label: "Inductor (L)"
       target_output_column: 2
@@ -103,3 +112,5 @@ training:
       junction_layer_width: 10
       junction_asymmetric_overestimate_weight: 10000
       vessel_asymmetric_overestimate_weight: 1000
+      VMR_aorta:
+        vessel_num_layers: 1

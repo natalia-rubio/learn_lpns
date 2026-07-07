@@ -89,3 +89,32 @@ def test_modality_csv_paths_includes_existing_files(tmp_path):
     assert paths[junction_type] == str(calibrated_csv)
     assert paths["BloodVesselJunction_NN"] == str(nn_csv)
     assert "Vessel_NN" not in paths
+
+
+def test_modality_csv_paths_skips_unregistered_extra_junction_type(tmp_path):
+    base_dir = tmp_path / "geo"
+    base_dir.mkdir()
+    geo_variant_name = "bifurcations_EL"
+    junction_type = "BloodVesselJunction"
+
+    calibrated_csv = base_dir / f"{geo_variant_name}_calibrated_results.csv"
+    calibrated_csv.write_text("t,p\n")
+
+    geo_variant_paths = {
+        "geometric_results": str(base_dir / "missing_geometric.csv"),
+        "junction_types": {
+            junction_type: {"calibrated_results": str(calibrated_csv)},
+        },
+    }
+
+    paths = modality_csv_paths(
+        geo_variant_paths,
+        str(base_dir),
+        geo_variant_name,
+        junction_type,
+        nn_vessel=False,
+        extra_junction_types=("NORMAL_JUNCTION",),
+    )
+
+    assert paths[junction_type] == str(calibrated_csv)
+    assert "NORMAL_JUNCTION" not in paths

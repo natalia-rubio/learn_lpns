@@ -27,6 +27,8 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
+from learn_lpns.data_processing.rsl_nondim import INLET_RADIUS_FEATURE, nondimensionalize_rsl
+
 # Try to import matplotlib for histogram generation
 try:
     import matplotlib
@@ -734,6 +736,10 @@ def _finalize_stacked_ml_data(
     row_junction_names: list[str] | None = None,
     row_primary_outlet_names: list[str] | None = None,
     outlet_vessel_ids: list[int] | None = None,
+    nondimensionalize: bool = False,
+    rho: float = 1.06,
+    mu: float = 0.04,
+    reference_reynolds: float = 4500.0,
 ) -> dict[str, Any]:
     """Shared post-stack pipeline: clamp, validate, optional plots, summary CSV, JAX dict.
 
@@ -746,6 +752,21 @@ def _finalize_stacked_ml_data(
     """
     _clamp_tortuosity(input_array, feature_order)
     _validate_no_nans(input_array, output_array, input_msg=input_nan_msg, output_msg=output_nan_msg)
+
+    if nondimensionalize:
+        if INLET_RADIUS_FEATURE not in feature_order:
+            raise ValueError(
+                f"nondimensionalize_rsl requires {INLET_RADIUS_FEATURE!r} in NN input features"
+            )
+        lc_idx = feature_order.index(INLET_RADIUS_FEATURE)
+        inlet_radius = input_array[:, lc_idx]
+        output_array = nondimensionalize_rsl(
+            output_array,
+            inlet_radius,
+            rho=rho,
+            mu=mu,
+            reference_reynolds=reference_reynolds,
+        )
 
     label_set_name = cohort_set_name if cohort_set_name is not None else set_name
     summary_dir = histogram_output_dir or feature_histograms_dir(
@@ -811,6 +832,11 @@ def _finalize_stacked_ml_data(
         "geometry_row_ranges": geometry_row_ranges,
         "geometry_names_order": list(geometries),
     }
+    if nondimensionalize:
+        result["nondim_rsl"] = True
+        result["reference_reynolds"] = float(reference_reynolds)
+        result["nondim_rho"] = float(rho)
+        result["nondim_mu"] = float(mu)
     if row_junction_names is not None:
         result["row_junction_names"] = list(row_junction_names)
         result["row_primary_outlet_names"] = list(row_primary_outlet_names)
@@ -831,6 +857,10 @@ def build_data_dict_from_csvs(
     run_config_suffix: str | None = None,
     set_type: str = "all",
     data_root: str = "data",
+    nondimensionalize: bool = False,
+    rho: float = 1.06,
+    mu: float = 0.04,
+    reference_reynolds: float = 4500.0,
 ) -> dict[str, Any]:
     """
     Concatenate junction CSVs across geometries and build a JAX ``data_dict``.
@@ -970,6 +1000,10 @@ def build_data_dict_from_csvs(
         run_config_suffix=run_config_suffix,
         set_type=set_type,
         data_root=data_root,
+        nondimensionalize=nondimensionalize,
+        rho=rho,
+        mu=mu,
+        reference_reynolds=reference_reynolds,
     )
 
 
@@ -985,6 +1019,10 @@ def build_data_dict_from_vessel_csvs(
     run_config_suffix: str | None = None,
     set_type: str = "all",
     data_root: str = "data",
+    nondimensionalize: bool = False,
+    rho: float = 1.06,
+    mu: float = 0.04,
+    reference_reynolds: float = 4500.0,
 ) -> dict[str, Any]:
     """
     Concatenate vessel CSVs across geometries and build a JAX ``data_dict``.
@@ -1090,6 +1128,10 @@ def build_data_dict_from_vessel_csvs(
         run_config_suffix=run_config_suffix,
         set_type=set_type,
         data_root=data_root,
+        nondimensionalize=nondimensionalize,
+        rho=rho,
+        mu=mu,
+        reference_reynolds=reference_reynolds,
     )
 
 

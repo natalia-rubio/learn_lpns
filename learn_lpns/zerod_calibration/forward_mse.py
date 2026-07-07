@@ -132,6 +132,9 @@ _MSE_SUMMARY_ROWS = (
     ("Overall Max Rel Error", "overall_max_rel_error", ".4f"),
     ("Mean Pressure Max Rel Error", "mean_pressure_max_rel_error", ".4f"),
     ("Mean Flow Max Rel Error", "mean_flow_max_rel_error", ".4f"),
+    ("Overall Mean Rel Error", "overall_mean_rel_error", ".4f"),
+    ("Mean Pressure Mean Rel Error", "mean_pressure_mean_rel_error", ".4f"),
+    ("Mean Flow Mean Rel Error", "mean_flow_mean_rel_error", ".4f"),
 )
 
 MSE_METRIC_KEYS = tuple(key for _, key, _ in _MSE_SUMMARY_ROWS)
@@ -329,10 +332,16 @@ def _compute_aligned_mse(obs_values_0d, obs_values_3d, obs_type):
     idx_max = int(np.argmax(np.abs(diff)))
     x3d_at_max = obs_values_3d[idx_max]
     rel_err_at_max = np.abs((x3d_at_max - obs_values_0d[idx_max]) / x3d_at_max) if x3d_at_max != 0 else np.nan
+    with np.errstate(divide="ignore", invalid="ignore"):
+        denom = np.abs(obs_values_3d)
+        rel_per_t = np.abs(obs_values_0d - obs_values_3d) / denom
+        rel_valid = rel_per_t[np.isfinite(rel_per_t) & (denom > 0)]
+    mean_rel_error = float(np.mean(rel_valid)) if rel_valid.size else np.nan
     return {
         "mse": float(np.mean(diff**2)),
         "max_error": float(np.max(np.abs(diff))),
         "rel_error_at_max": rel_err_at_max,
+        "mean_rel_error": mean_rel_error,
     }
 
 
@@ -344,6 +353,8 @@ def _aggregate_modality_mse(
     total_max_flow,
     total_max_pressure_rel,
     total_max_flow_rel,
+    total_mean_pressure_rel,
+    total_mean_flow_rel,
 ):
     return {
         "individual": modality_mse,
@@ -361,6 +372,11 @@ def _aggregate_modality_mse(
         "mean_flow_max_rel_error": np.nanmean(total_max_flow_rel) if total_max_flow_rel else np.nan,
         "overall_max_rel_error": np.nanmean(total_max_pressure_rel + total_max_flow_rel)
         if (total_max_pressure_rel or total_max_flow_rel)
+        else np.nan,
+        "mean_pressure_mean_rel_error": np.nanmean(total_mean_pressure_rel) if total_mean_pressure_rel else np.nan,
+        "mean_flow_mean_rel_error": np.nanmean(total_mean_flow_rel) if total_mean_flow_rel else np.nan,
+        "overall_mean_rel_error": np.nanmean(total_mean_pressure_rel + total_mean_flow_rel)
+        if (total_mean_pressure_rel or total_mean_flow_rel)
         else np.nan,
     }
 
@@ -524,6 +540,7 @@ def _compute_modality_mse(
     total_mse_pressure, total_mse_flow = [], []
     total_max_pressure, total_max_flow = [], []
     total_max_pressure_rel, total_max_flow_rel = [], []
+    total_mean_pressure_rel, total_mean_flow_rel = [], []
     locations_processed, locations_skipped = [], []
 
     for obs_key, obs_values_3d in obs_3d.items():
@@ -585,6 +602,7 @@ def _compute_modality_mse(
             "mse": metrics["mse"],
             "max_error": metrics["max_error"],
             "rel_error_at_max": metrics["rel_error_at_max"],
+            "mean_rel_error": metrics["mean_rel_error"],
             "type": obs_type,
             "vessel": vessel_name,
         }
@@ -594,11 +612,17 @@ def _compute_modality_mse(
             total_max_pressure_rel.append(
                 metrics["rel_error_at_max"] if np.isfinite(metrics["rel_error_at_max"]) else np.nan
             )
+            total_mean_pressure_rel.append(
+                metrics["mean_rel_error"] if np.isfinite(metrics["mean_rel_error"]) else np.nan
+            )
         else:
             total_mse_flow.append(metrics["mse"])
             total_max_flow.append(metrics["max_error"])
             total_max_flow_rel.append(
                 metrics["rel_error_at_max"] if np.isfinite(metrics["rel_error_at_max"]) else np.nan
+            )
+            total_mean_flow_rel.append(
+                metrics["mean_rel_error"] if np.isfinite(metrics["mean_rel_error"]) else np.nan
             )
 
     print(f"\n    Locations used for MSE calculation: {len(locations_processed)}")
@@ -628,6 +652,8 @@ def _compute_modality_mse(
             total_max_flow,
             total_max_pressure_rel,
             total_max_flow_rel,
+            total_mean_pressure_rel,
+            total_mean_flow_rel,
         ),
         zoom_start_idx,
         zoom_end_idx,

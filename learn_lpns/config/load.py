@@ -3,9 +3,26 @@ Load and cache pipeline configuration from YAML.
 
 Layering (each step deep-merges into the previous):
 
-  1. defaults.yaml (repo config/ or bundled learn_lpns/config/)
-  2. config/sets/<set_name>.yaml (optional, when set_name is passed)
-  3. overrides dict (programmatic patches, tests)
+  1. defaults.yaml base sections (repo config/ or bundled learn_lpns/config/)
+  2. defaults.yaml ``set_overrides.<set_name>`` (optional, when set_name is passed)
+  3. inline ``<set_name>:`` blocks under ``training.rri_coefficients`` entries (optional)
+  4. config/sets/<set_name>.yaml (optional external file, when set_name is passed)
+  5. overrides dict (programmatic patches, tests)
+
+Merge rule: nested mappings deep-merge; scalars/lists are replaced, except
+``training.rri_coefficients`` whose entries are merged by their ``name`` field. That lets
+a per-set override change a single coefficient (e.g. S) without redefining R/S/L.
+
+Inline per-set overrides may live under a coefficient entry::
+
+  rri_coefficients:
+    - name: S
+      junction_layer_width: 10
+      VMR_all:
+        junction_layer_width: 20
+
+``set_overrides`` is a loader-only top-level section (stripped before validation).
+Inline ``<set_name>`` blocks are also stripped before validation.
 """
 
 from __future__ import annotations
@@ -17,17 +34,105 @@ from typing import Any
 
 import yaml
 
-from learn_lpns.config.models import PipelineConfig
+from learn_lpns.config.models import PipelineConfig, RriCoefficientConfig
 from learn_lpns.tools.paths import repo_root
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
+
+# Keys allowed on each ``training.rri_coefficients`` entry; any other mapping child is treated
+# as an inline per-set override (e.g. ``VMR_all: { junction_layer_width: 20 }`` under ``S``).
+_RRI_COEFFICIENT_FIELD_KEYS = frozenset(RriCoefficientConfig.model_fields.keys())
+
+
+def _collect_inline_rri_set_overrides(training: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """
+    Scan coefficient entries for inline ``<set_name>: { ... }`` blocks.
+
+    Returns ``set_name -> partial config`` trees suitable for :func:`_deep_merge`.
+    """
+    if not training or not isinstance(training.get("rri_coefficients"), list):
+        return {}
+
+    by_set: dict[str, list[dict[str, Any]]] = {}
+    for entry in training["rri_coefficients"]:
+        if not isinstance(entry, dict) or "name" not in entry:
+            continue
+        coef_name = entry["name"]
+        for key, value in entry.items():
+            if key in _RRI_COEFFICIENT_FIELD_KEYS:
+                continue
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"Inline set override under rri_coefficients.{coef_name}.{key} must be a mapping, "
+                    f"got {type(value).__name__}."
+                )
+            by_set.setdefault(key, []).append({"name": coef_name, **value})
+
+    return {
+        set_name: {"training": {"rri_coefficients": coef_overrides}}
+        for set_name, coef_overrides in by_set.items()
+    }
+
+
+def _strip_inline_rri_set_overrides(training: dict[str, Any] | None) -> None:
+    """Remove inline ``<set_name>`` blocks from coefficient entries in place."""
+    if not training or not isinstance(training.get("rri_coefficients"), list):
+        return
+
+    cleaned: list[Any] = []
+    for entry in training["rri_coefficients"]:
+        if not isinstance(entry, dict):
+            cleaned.append(entry)
+            continue
+        cleaned.append(
+            {key: value for key, value in entry.items() if key in _RRI_COEFFICIENT_FIELD_KEYS}
+        )
+    training["rri_coefficients"] = cleaned
+
+
+def _merge_named_list(base: list[Any], override: list[Any]) -> list[Any]:
+    """
+    Merge two lists of mappings keyed by their ``name`` field (override fields win).
+
+    Entries in ``override`` that share a ``name`` with a base entry are deep-merged
+    into it; new names are appended in order. If either list contains an entry that is
+    not a mapping with a ``name`` key, fall back to full replacement by ``override``.
+    """
+    if not all(isinstance(e, dict) and "name" in e for e in base):
+        return override
+    if not all(isinstance(e, dict) and "name" in e for e in override):
+        return override
+
+    by_name: dict[Any, dict[str, Any]] = {}
+    order: list[Any] = []
+    for entry in base:
+        by_name[entry["name"]] = dict(entry)
+        order.append(entry["name"])
+    for entry in override:
+        name = entry["name"]
+        if name in by_name:
+            by_name[name] = _deep_merge(by_name[name], entry)
+        else:
+            by_name[name] = dict(entry)
+            order.append(name)
+    return [by_name[name] for name in order]
+
+
+# Config keys whose list values are merged element-wise by ``name`` rather than replaced.
+_NAMED_LIST_MERGE_KEYS = frozenset({"rri_coefficients"})
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge override into base (override wins on leaf conflicts)."""
     merged = dict(base)
     for key, value in override.items():
-        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+        if (
+            key in _NAMED_LIST_MERGE_KEYS
+            and isinstance(merged.get(key), list)
+            and isinstance(value, list)
+        ):
+            merged[key] = _merge_named_list(merged[key], value)
+        elif key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = _deep_merge(merged[key], value)
         else:
             merged[key] = value
@@ -92,7 +197,20 @@ def load_pipeline_config(
     path = resolve_config_path(config_path)
     data = _load_yaml_mapping(path)
 
+    # Loader-only top-level section (not part of PipelineConfig).
+    set_overrides = data.pop("set_overrides", None) or {}
+
+    # Inline per-set blocks under rri_coefficients (e.g. VMR_all: { junction_layer_width: 20 }).
+    inline_set_overrides = _collect_inline_rri_set_overrides(data.get("training"))
+    _strip_inline_rri_set_overrides(data.get("training"))
+
     if set_name:
+        cohort_override = set_overrides.get(set_name)
+        if isinstance(cohort_override, dict):
+            data = _deep_merge(data, cohort_override)
+        inline_override = inline_set_overrides.get(set_name)
+        if isinstance(inline_override, dict):
+            data = _deep_merge(data, inline_override)
         set_path = resolve_set_config_path(set_name)
         if set_path is not None:
             data = _deep_merge(data, _load_yaml_mapping(set_path))

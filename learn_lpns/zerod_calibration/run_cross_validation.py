@@ -882,7 +882,8 @@ def run_cross_validation(
     print(f"\nWrote CV summary to {summary_path}")
     print(
         "  Also wrote: pressure_mse, flow_mse, max_error, pressure_max_error, "
-        "flow_max_error, max_rel_error, pressure_max_rel_error, flow_max_rel_error"
+        "flow_max_error, max_rel_error, pressure_max_rel_error, flow_max_rel_error, "
+        "mean_rel_error, pressure_mean_rel_error, flow_mean_rel_error"
     )
     if not skip_barchart and data_paths_suffix:
         _generate_cv_barcharts(
@@ -975,7 +976,8 @@ def regenerate_cv_metrics_from_existing(
     print(
         f"  Wrote:   {base}_pressure_mse.csv, _flow_mse.csv, _max_error.csv, "
         "_pressure_max_error.csv, _flow_max_error.csv, _max_rel_error.csv, "
-        "_pressure_max_rel_error.csv, _flow_max_rel_error.csv"
+        "_pressure_max_rel_error.csv, _flow_max_rel_error.csv, "
+        "_mean_rel_error.csv, _pressure_mean_rel_error.csv, _flow_mean_rel_error.csv"
     )
     has_max = any(
         r.get(f"MaxError_{m}") is not None

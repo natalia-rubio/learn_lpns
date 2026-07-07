@@ -139,7 +139,10 @@ def modality_csv_paths(
     for extra_jtype in extra_junction_types:
         if extra_jtype == junction_type:
             continue
-        extra_results = geo_variant_paths["junction_types"][extra_jtype]["calibrated_results"]
+        jt = geo_variant_paths["junction_types"].get(extra_jtype)
+        if not jt:
+            continue
+        extra_results = jt["calibrated_results"]
         if os.path.exists(extra_results):
             results[extra_jtype] = str(extra_results)
     if geo_variant_name in ("bifurcations", "bifurcations_EL"):

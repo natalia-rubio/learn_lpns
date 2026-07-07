@@ -138,7 +138,14 @@ def main():
     args = parser.parse_args()
     run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
     dp_cfg = get_pipeline_config(set_name=args.set_name).data_processing
+    pipeline_cfg = get_pipeline_config(set_name=args.set_name)
     flow_split_method = dp_cfg.flow_split_method if args.flow_split_method is None else args.flow_split_method
+    nondim_kwargs = {
+        "nondimensionalize": pipeline_cfg.training.nondimensionalize_rsl,
+        "rho": pipeline_cfg.physics.rho,
+        "mu": pipeline_cfg.physics.mu,
+        "reference_reynolds": pipeline_cfg.physics.reference_reynolds,
+    }
 
     # Determine which geometry variants to process
     if args.geometry_variant == "all":
@@ -349,6 +356,7 @@ def main():
                 run_config_suffix=run_config_suffix or None,
                 set_type=args.set_type,
                 data_root=args.data_root,
+                **nondim_kwargs,
             )
 
             if run_config_suffix:
@@ -377,6 +385,7 @@ def main():
                 run_config_suffix=run_config_suffix or None,
                 set_type=args.set_type,
                 data_root=args.data_root,
+                **nondim_kwargs,
             )
             vessel_jax_path = os.path.join(jax_out_dir, f"jax_arrays_vessel_num_geos_{num_geos}.pkl")
             save_dict(vessel_data_dict, vessel_jax_path)

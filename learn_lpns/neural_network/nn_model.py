@@ -6,7 +6,7 @@ import optax
 from jax import grad, jit
 
 from learn_lpns.neural_network.activations import resolve_activation_from_network_params
-from learn_lpns.neural_network.nn_util import batched_forward_pass, get_L2, init_weights
+from learn_lpns.neural_network.nn_util import attach_nondim_metadata_from_data_dict, batched_forward_pass, get_L2, init_weights
 from learn_lpns.tools.basic import load_dict
 
 # Column indices in output_rri (each trained by a separate single-output network, or jointly).
@@ -47,6 +47,8 @@ class NeuralNet:
                 jax_arrays_path = os.path.join(*path_parts)
             print(f"  Loading jax_arrays from: {jax_arrays_path}")
             self.data_dict = load_dict(jax_arrays_path)
+
+        attach_nondim_metadata_from_data_dict(self, self.data_dict)
 
         self.model_name_suffix = network_params.get("model_name_suffix", "")
         self.activation = resolve_activation_from_network_params(network_params)

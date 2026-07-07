@@ -11,11 +11,11 @@ Usage:
 
 import argparse
 import os
-import subprocess
 import sys
 
 from learn_lpns.config import get_pipeline_config
 from learn_lpns.tools.paths import repo_root
+from learn_lpns.zerod_calibration.cv_batch_common import run_cross_set_summary_barchart
 from learn_lpns.zerod_calibration.run_config_canonical import (
     DEFAULT_CLI_RUN_CONFIG,
     resolve_run_config_suffix,
@@ -103,22 +103,15 @@ def run_cv_all_sets(
         return
 
     print(f"\n{'=' * 60}")
-    print("Running cross-set summary barchart...")
+    print("Running cross-set summary barcharts (MPE and MAPE)...")
     print(f"{'=' * 60}")
-    cmd = [
-        sys.executable,
-        "-m",
-        "learn_lpns.visualizations.cv_cross_set_summary_barchart",
-        "--set_names",
-        *set_names,
-        "--geometry_variant",
-        geometry_variant,
-        "--run_config",
-        run_config_suffix,
-    ]
-    ret = subprocess.run(cmd, cwd=repo_root())
-    if ret.returncode != 0:
-        raise RuntimeError(f"Cross-set summary barchart failed (exit {ret.returncode}).")
+    ret = run_cross_set_summary_barchart(
+        set_names,
+        run_config_suffix=run_config_suffix,
+        geometry_variant=geometry_variant,
+    )
+    if ret != 0:
+        raise RuntimeError(f"Cross-set summary barchart failed (exit {ret}).")
 
 
 def main():

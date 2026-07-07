@@ -59,6 +59,17 @@ def attach_train_output_bounds(model, train_inds) -> None:
     model.train_output_max = np.max(outputs, axis=0)
 
 
+def attach_nondim_metadata_from_data_dict(model, data_dict: dict) -> None:
+    """Copy non-dimensional R/S/L training metadata from jax pickle onto the model checkpoint."""
+    if data_dict.get("nondim_rsl"):
+        model.nondim_rsl = True
+        model.reference_reynolds = float(data_dict["reference_reynolds"])
+        model.nondim_rho = float(data_dict["nondim_rho"])
+        model.nondim_mu = float(data_dict["nondim_mu"])
+    else:
+        model.nondim_rsl = False
+
+
 def compute_train_output_bounds_from_split(
     model,
     *,

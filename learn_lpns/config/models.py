@@ -14,6 +14,14 @@ class PhysicsConfig(BaseModel):
 
     rho: float = Field(default=1.06, gt=0, description="Blood density (g/cm^3)")
     mu: float = Field(default=0.04, gt=0, description="Blood viscosity (Poise)")
+    reference_reynolds: float = Field(
+        default=4500.0,
+        gt=0,
+        description=(
+            "Reference Reynolds number Re_c for physics-based R/S/L non-dimensionalization "
+            "(arXiv:2508.21165 Eq. 9)."
+        ),
+    )
 
 
 class SolverConfig(BaseModel):
@@ -338,6 +346,13 @@ class TrainingConfig(BaseModel):
         description=(
             "Clip R/S/L NN predictions at inference to train-set output_rri min/max "
             "stored on the model checkpoint."
+        ),
+    )
+    nondimensionalize_rsl: bool = Field(
+        default=False,
+        description=(
+            "Train on physics-non-dimensionalized R*, S*, L* targets and re-dimensionalize "
+            "predictions to physical units at inference (arXiv:2508.21165)."
         ),
     )
     restore_best_weights: bool = Field(

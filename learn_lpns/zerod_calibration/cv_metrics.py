@@ -15,6 +15,9 @@ MSE_METRIC_KEYS = (
     "overall_max_rel_error",
     "mean_pressure_max_rel_error",
     "mean_flow_max_rel_error",
+    "overall_mean_rel_error",
+    "mean_pressure_mean_rel_error",
+    "mean_flow_mean_rel_error",
 )
 
 METRIC_CSV_SUFFIXES = (
@@ -26,6 +29,9 @@ METRIC_CSV_SUFFIXES = (
     ("_max_rel_error.csv", "MaxRelError_"),
     ("_pressure_max_rel_error.csv", "PressureMaxRelError_"),
     ("_flow_max_rel_error.csv", "FlowMaxRelError_"),
+    ("_mean_rel_error.csv", "MeanRelError_"),
+    ("_pressure_mean_rel_error.csv", "PressureMeanRelError_"),
+    ("_flow_mean_rel_error.csv", "FlowMeanRelError_"),
 )
 
 _MODALITY_PREFIXES = (
@@ -38,6 +44,9 @@ _MODALITY_PREFIXES = (
     ("MaxRelError_", len("MaxRelError_")),
     ("PressureMaxRelError_", len("PressureMaxRelError_")),
     ("FlowMaxRelError_", len("FlowMaxRelError_")),
+    ("MeanRelError_", len("MeanRelError_")),
+    ("PressureMeanRelError_", len("PressureMeanRelError_")),
+    ("FlowMeanRelError_", len("FlowMeanRelError_")),
 )
 
 
@@ -112,6 +121,15 @@ def trial_metrics_to_row(trial_id, val_geometries_str, trial_metrics):
         )
         row[f"FlowMaxRelError_{mod}"] = (
             np.nanmean(data["mean_flow_max_rel_error"]) if data.get("mean_flow_max_rel_error") else np.nan
+        )
+        row[f"MeanRelError_{mod}"] = (
+            np.nanmean(data["overall_mean_rel_error"]) if data.get("overall_mean_rel_error") else np.nan
+        )
+        row[f"PressureMeanRelError_{mod}"] = (
+            np.nanmean(data["mean_pressure_mean_rel_error"]) if data.get("mean_pressure_mean_rel_error") else np.nan
+        )
+        row[f"FlowMeanRelError_{mod}"] = (
+            np.nanmean(data["mean_flow_mean_rel_error"]) if data.get("mean_flow_mean_rel_error") else np.nan
         )
     return row
 

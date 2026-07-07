@@ -7,6 +7,7 @@ Requires matplotlib.
 Supported metrics (--metric):
   all                     (default) – generate all three plots below
   pressure_max_rel_error  – max relative error, displayed as %
+  pressure_mean_rel_error – mean abs % error (MAPE) over cardiac window, displayed as %
   pressure_max_error      – max absolute error (mmHg)
   pressure_mse            – mean squared error (mmHg²)
 
@@ -61,6 +62,13 @@ METRIC_CONFIG = {
         "scale": 100.0,
         "ylabel": r"Max. Inlet Pressure Error over Cardiac Cycle (\%)",
         "out_suffix": "_max_pct_error.pdf",
+    },
+    "pressure_mean_rel_error": {
+        "csv_suffix": "_pressure_mean_rel_error.csv",
+        "col_prefix": "PressureMeanRelError_",
+        "scale": 100.0,
+        "ylabel": r"Mean Inlet Pressure Error over Cardiac Cycle (MAPE) (\%)",
+        "out_suffix": "_mean_pct_error.pdf",
     },
     "pressure_max_error": {
         "csv_suffix": "_pressure_max_error.csv",
