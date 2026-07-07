@@ -117,6 +117,26 @@ def test_rri_checkpoint_paths(tmp_path):
     assert rri_models_complete(model_dir, set_name, vessel=False, multi_output=True)
 
 
+def test_rri_checkpoint_paths_without_quadratic_resistor(tmp_path):
+    model_dir = str(tmp_path)
+    set_name = "VMR_aorta"
+    separate = rri_separate_model_checkpoint_paths(
+        model_dir, set_name, vessel=False, quadratic_resistor=False
+    )
+    assert len(separate) == 2
+    assert separate[0].endswith("pred_0_model")
+    assert separate[1].endswith("pred_2_model")
+    assert not rri_models_complete(
+        model_dir, set_name, vessel=False, multi_output=False, quadratic_resistor=False
+    )
+    for path in separate:
+        with open(path, "wb") as f:
+            f.write(b"y")
+    assert rri_models_complete(
+        model_dir, set_name, vessel=False, multi_output=False, quadratic_resistor=False
+    )
+
+
 def test_resolve_rri_model_paths_respects_multi_output_flag(tmp_path):
     model_dir = str(tmp_path)
     set_name = "VMR_aorta"
@@ -130,6 +150,10 @@ def test_resolve_rri_model_paths_respects_multi_output_flag(tmp_path):
 
     assert resolve_rri_model_paths(model_dir, set_name, multi_output_rri=True) == [multi]
     assert resolve_rri_model_paths(model_dir, set_name, multi_output_rri=False) == separate
+    ri_only = rri_separate_model_checkpoint_paths(model_dir, set_name, quadratic_resistor=False)
+    assert resolve_rri_model_paths(
+        model_dir, set_name, multi_output_rri=False, quadratic_resistor=False
+    ) == ri_only
 
 
 def test_neural_net_pure_vs_training_loss_with_generation_weights():

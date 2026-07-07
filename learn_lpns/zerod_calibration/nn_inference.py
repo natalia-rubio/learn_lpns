@@ -38,23 +38,54 @@ def forward_jax_pickle_path(
     )
 
 
+def rri_trained_coefficient_columns(*, quadratic_resistor: bool = True) -> list[int]:
+    """Output columns trained as separate single-output nets (0=R, 1=S, 2=L)."""
+    if quadratic_resistor:
+        return [0, 1, 2]
+    return [0, 2]
+
+
 def rri_model_checkpoint_path(model_dir: str, set_name: str, *, vessel: bool = False) -> str:
     """Expected checkpoint path for a single multi-output R/S/L model."""
     base = "vessel_pred" if vessel else "pred"
     return os.path.join(model_dir, f"rri_{set_name}_{base}_rsl_model")
 
 
-def rri_separate_model_checkpoint_paths(model_dir: str, set_name: str, *, vessel: bool = False) -> list[str]:
-    """Expected checkpoint paths for three single-output R/S/L models."""
+def rri_separate_model_checkpoint_paths(
+    model_dir: str,
+    set_name: str,
+    *,
+    vessel: bool = False,
+    quadratic_resistor: bool = True,
+) -> list[str]:
+    """Expected checkpoint paths for single-output R/S/L models (S omitted when quadratic_resistor is off)."""
     base = "vessel_pred" if vessel else "pred"
-    return [os.path.join(model_dir, f"rri_{set_name}_{base}_{i}_model") for i in range(RRI_NUM_OUTPUTS)]
+    return [
+        os.path.join(model_dir, f"rri_{set_name}_{base}_{col}_model")
+        for col in rri_trained_coefficient_columns(quadratic_resistor=quadratic_resistor)
+    ]
 
 
-def rri_models_complete(model_dir: str, set_name: str, *, vessel: bool = False, multi_output: bool) -> bool:
+def rri_models_complete(
+    model_dir: str,
+    set_name: str,
+    *,
+    vessel: bool = False,
+    multi_output: bool,
+    quadratic_resistor: bool = True,
+) -> bool:
     """Return True when all expected checkpoint files exist for the training mode."""
     if multi_output:
         return os.path.exists(rri_model_checkpoint_path(model_dir, set_name, vessel=vessel))
-    return all(os.path.exists(p) for p in rri_separate_model_checkpoint_paths(model_dir, set_name, vessel=vessel))
+    return all(
+        os.path.exists(p)
+        for p in rri_separate_model_checkpoint_paths(
+            model_dir,
+            set_name,
+            vessel=vessel,
+            quadratic_resistor=quadratic_resistor,
+        )
+    )
 
 
 def resolve_rri_model_paths(
@@ -63,11 +94,17 @@ def resolve_rri_model_paths(
     *,
     vessel: bool = False,
     multi_output_rri: bool,
+    quadratic_resistor: bool = True,
 ) -> list[str]:
     """Checkpoint paths for inference; must match how models were trained."""
     if multi_output_rri:
         return [rri_model_checkpoint_path(model_dir, set_name, vessel=vessel)]
-    return rri_separate_model_checkpoint_paths(model_dir, set_name, vessel=vessel)
+    return rri_separate_model_checkpoint_paths(
+        model_dir,
+        set_name,
+        vessel=vessel,
+        quadratic_resistor=quadratic_resistor,
+    )
 
 
 def _resolve_multi_output_rri(multi_output_rri: bool | None) -> bool:
@@ -93,17 +130,19 @@ def run_nn_predict(
     *,
     vessel: bool = False,
     multi_output_rri: bool | None = None,
+    quadratic_resistor: bool = True,
     clip_predictions: bool | None = None,
     run_config_suffix: str | None = None,
     data_root: str = "data",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Run three NN heads (R, stenosis, L); return prediction arrays."""
+    """Run NN heads for R, stenosis (when trained), and L; return prediction arrays."""
     use_multi_output = _resolve_multi_output_rri(multi_output_rri)
     model_paths = resolve_rri_model_paths(
         model_dir,
         set_name,
         vessel=vessel,
         multi_output_rri=use_multi_output,
+        quadratic_resistor=quadratic_resistor,
     )
     for model_path in model_paths:
         if not os.path.exists(model_path):
@@ -124,15 +163,20 @@ def run_nn_predict(
             raise ValueError(f"Expected {RRI_NUM_OUTPUTS} outputs from {model_path}, got shape {pred.shape}.")
         raw_predictions = [pred[:, i] for i in range(RRI_NUM_OUTPUTS)]
     else:
-        raw_predictions = []
-        for i, model_path in enumerate(model_paths):
-            print(f"      Loading model {i + 1}/3: {model_path}")
+        coef_columns = rri_trained_coefficient_columns(quadratic_resistor=quadratic_resistor)
+        preds_by_col: dict[int, np.ndarray] = {}
+        for load_i, (col, model_path) in enumerate(zip(coef_columns, model_paths, strict=True)):
+            print(f"      Loading model {load_i + 1}/{len(model_paths)} (column {col}): {model_path}")
             model = dill_load(model_path)
             if bounds_model is None:
                 bounds_model = model
             activation = resolve_activation_from_model(model)
             pred = predict(X_jax, model.weights, activation)
-            raw_predictions.append(np.array(pred).flatten())
+            preds_by_col[col] = np.array(pred).flatten()
+        n_rows = len(next(iter(preds_by_col.values())))
+        raw_predictions = [
+            preds_by_col.get(col, np.zeros(n_rows, dtype=np.float64)) for col in range(RRI_NUM_OUTPUTS)
+        ]
 
     if _resolve_clip_predictions(clip_predictions, set_name):
         if bounds_model is None:
@@ -317,6 +361,7 @@ def run_junction_inference(
         set_name,
         vessel=False,
         multi_output_rri=multi_output_rri,
+        quadratic_resistor=quadratic_resistor,
         clip_predictions=clip_predictions,
         run_config_suffix=run_config_suffix,
         data_root=data_root,
@@ -479,6 +524,7 @@ def run_vessel_inference(
         set_name,
         vessel=True,
         multi_output_rri=multi_output_rri,
+        quadratic_resistor=quadratic_resistor,
         clip_predictions=clip_predictions,
         run_config_suffix=run_config_suffix,
         data_root=data_root,

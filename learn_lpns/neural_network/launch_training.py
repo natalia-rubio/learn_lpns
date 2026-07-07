@@ -264,6 +264,7 @@ def launch_training(
     training_cfg: TrainingConfig | None = None,
     *,
     multi_output_rri: bool | None = None,
+    quadratic_resistor: bool = True,
 ):
     """Train RRI models: one network per coefficient (default) or one 3-output network."""
     training_cfg = training_cfg or get_pipeline_config().training
@@ -285,6 +286,10 @@ def launch_training(
     print("Training RRI models (one network per coefficient)...")
 
     for spec in training_cfg.rri_coefficients:
+        if not quadratic_resistor and spec.target_output_column == 1:
+            print(f"Skipping {spec.label}: quadratic_resistor is off (stenosis network not trained)")
+            continue
+
         print(f"training model {spec.target_output_column + 1}:  {spec.label}")
         print(f"{network_params['num_input_features']} input features")
 
@@ -573,6 +578,8 @@ def main():
                 f"Stenosis generation limit: ON ({modality_label} S training for generation <= "
                 f"{stenosis_generation_max:g})"
             )
+        if not quadratic_resistor_eff:
+            print("quadratic_resistor: OFF (skipping stenosis S network; inference uses S=0)")
         if multi_output_rri:
             print("Multi-output RRI: one network with R, S, L outputs")
         if cli_args.oracle_inputs:
@@ -632,6 +639,7 @@ def main():
             training_params,
             training_cfg=training_cfg,
             multi_output_rri=multi_output_rri,
+            quadratic_resistor=quadratic_resistor_eff,
         )
 
 

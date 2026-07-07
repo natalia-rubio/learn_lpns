@@ -729,7 +729,11 @@ def run_cross_validation(
 
         # Junction model file names (must match launch_training / train_nn output)
         skip_junction = skip_training_if_exists and rri_models_complete(
-            model_dir, set_name, vessel=False, multi_output=use_multi_output_rri
+            model_dir,
+            set_name,
+            vessel=False,
+            multi_output=use_multi_output_rri,
+            quadratic_resistor=quadratic_resistor,
         )
 
         # Train
@@ -773,7 +777,11 @@ def run_cross_validation(
         if nn_vessel:
             vessel_model_dir = os.path.join(model_dir_base, f"{geometry_variant}_vessel_trial_{trial}")
             skip_vessel = skip_training_if_exists and rri_models_complete(
-                vessel_model_dir, set_name, vessel=True, multi_output=use_multi_output_rri
+                vessel_model_dir,
+                set_name,
+                vessel=True,
+                multi_output=use_multi_output_rri,
+                quadratic_resistor=quadratic_resistor,
             )
             if skip_vessel:
                 print(f"  Skipping vessel training (models already exist in {vessel_model_dir})")
