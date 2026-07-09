@@ -482,6 +482,8 @@ def main():
             "1",
             "--run_config",
             run_config_suffix,
+            "--forward_geo_name",
+            args.geo_name,
         ]
         if verbose:
             run_data_processing_cmd.append("--verbose")
@@ -492,6 +494,7 @@ def main():
             args.set_name,
             run_config_suffix,
             args.geometry_variant,
+            args.geo_name,
             num_geos=1,
         )
         try:

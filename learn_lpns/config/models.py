@@ -143,6 +143,19 @@ class SplitConfig(BaseModel):
         gt=0,
         description="CV trial RNG seed = trial_index * stride + resample_attempt.",
     )
+    cv_max_parallel_trials: int = Field(
+        default=1,
+        ge=1,
+        description="Max CV trials to run in parallel (1 = serial, current default).",
+    )
+    cv_worker_cpu_threads: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "When cv_max_parallel_trials > 1, cap OMP/XLA CPU threads per worker subprocess. "
+            "Omit to leave environment defaults unchanged."
+        ),
+    )
 
 
 FlowSplitMethod = Literal["mean_over_time", "peak_inlet_flow"]
@@ -365,6 +378,10 @@ class TrainingConfig(BaseModel):
         default=1e-7,
         gt=0,
         description="Stop when weighted train training loss drops below this.",
+    )
+    quiet_epochs: bool = Field(
+        default=False,
+        description="Suppress per-epoch train/validation loss lines during train_nn.",
     )
     batch_size_divisor: int = Field(
         default=10,

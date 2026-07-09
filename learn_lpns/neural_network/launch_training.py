@@ -440,8 +440,12 @@ def main():
     )
     parser.add_argument(
         "--quiet_epochs",
-        action="store_true",
-        help="Suppress per-epoch train/validation loss output during train_nn.",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Suppress per-epoch train/validation loss output during train_nn "
+            "(default: training.quiet_epochs in config)."
+        ),
     )
     parser.add_argument(
         "--asymmetric_loss",
@@ -631,7 +635,10 @@ def main():
             stenosis_generation_max=stenosis_generation_max,
         )
         training_params["print_gradients"] = getattr(cli_args, "print_gradients", False)
-        training_params["verbose_epochs"] = not cli_args.quiet_epochs
+        quiet_epochs_eff = (
+            training_cfg.quiet_epochs if cli_args.quiet_epochs is None else cli_args.quiet_epochs
+        )
+        training_params["verbose_epochs"] = not quiet_epochs_eff
 
         launch_training(
             network_params,

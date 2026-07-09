@@ -64,6 +64,15 @@ results/models/<set_name>/<run_config>/...
 results/cross_validation/<set_name>/<run_config>/...
 ```
 
+For **`set_type=forward`** (per-geometry NN inference during deploy), jax pickles and split indices are scoped by geometry so parallel deploy jobs do not overwrite each other:
+
+```text
+data/jax_arrays/<set_name>/<run_config>/<geometry_variant>/forward/<geo_name>/jax_arrays_num_geos_1.pkl
+data/split_indices/<set_name>/<run_config>/<geometry_variant>/forward/<geo_name>/train_val_ind_<set>_num_geos_1
+```
+
+The flat `.../forward/jax_arrays_num_geos_1.pkl` layout is no longer used; re-run deploy or data processing for a geometry to regenerate under `forward/<geo_name>/`.
+
 Implementation: `run_config_canonical.py` (token parsing, composition, flag derivation) and `generate_zerod_inputs_cli.py` (shared argparse).
 
 ## Batch 0D generation
@@ -127,6 +136,12 @@ Prerequisite generation runs when any of the following is true:
 
 When that step runs, batch processing generates only missing geometries. Data processing uses all geometries if jax must be rebuilt, otherwise only the batch subset.
 
+### Parallel CV trials
+
+By default CV runs one trial at a time (`split.cv_max_parallel_trials: 1`). Set `cv_max_parallel_trials` greater than 1 in `config/defaults.yaml` (or pass `--max_parallel_trials N` on `learn-lpns-cv` and batch wrappers) to run independent trials in parallel. Splits are pre-computed sequentially in the parent process before workers start; only training, deploy, and per-trial metrics run in parallel.
+
+When parallelizing on CPU, set `split.cv_worker_cpu_threads` (e.g. `2`) so each worker subprocess caps `OMP_NUM_THREADS` and XLA intra-op threads and avoids oversubscribing the machine. Consider `training.quiet_epochs: true` (or `--quiet_epochs` on `learn-lpns-train`) to reduce interleaved per-epoch log noise. Batch drivers (`learn-lpns-cv-all-sets`, `learn-lpns-cv-all-configs-and-sets`) still run sets and configs **serially**; parallelism is within one CV run only.
+
 ### CV flags
 
 
@@ -138,6 +153,7 @@ When that step runs, batch processing generates only missing geometries. Data pr
 | `--metrics_only`            | Rebuild summary CSVs from existing MSE files (no train/deploy)                   |
 | `--plots_only`              | Regenerate location comparison plots from existing zeroD data                    |
 | `--skip_barchart`           | Skip automatic barchart generation                                               |
+| `--max_parallel_trials N`   | Override `split.cv_max_parallel_trials` (parallel trial workers within one CV run) |
 
 
 ### CV outputs
@@ -195,7 +211,7 @@ learn-lpns-train --set_name VMR_aorta_starter --geometry_variant all
 
 **Defaults:** `geometry_variant=bifurcations_EL`, `run_config=gen_loss`. If `--num_geos` is omitted, it is inferred from `data/jax_arrays/{set_name}/{run_config}/bifurcations_EL/all/jax_arrays_num_geos_*.pkl`, choosing the **largest** cohort size that also has a matching file under `data/split_indices/...`. Pass `--split_path` (as CV does for trial splits) to take `num_geos` from that path instead.
 
-**Note on `all`:** The string `all` appears in two unrelated places today. As `--geometry_variant all`, it means train **both** `bifurcations` and `bifurcations_EL`. As the **`set_type`** path segment under `jax_arrays/` and `split_indices/` (e.g. `.../bifurcations_EL/all/...`), it labels a cohort folder tier—the default tier used by training and data processing (other tiers such as `forward` exist for per-geometry inference pickles). This is confusing; naming will be revised in a future release to separate geometry-variant “train both” from path-tier labels.
+**Note on `all`:** The string `all` appears in two unrelated places today. As `--geometry_variant all`, it means train **both** `bifurcations` and `bifurcations_EL`. As the **`set_type`** path segment under `jax_arrays/` and `split_indices/` (e.g. `.../bifurcations_EL/all/...`), it labels a cohort folder tier—the default tier used by training and data processing. The separate **`forward`** tier holds per-geometry inference pickles under `forward/<geo_name>/` (see [On-disk layout](#on-disk-layout)). Naming will be revised in a future release to separate geometry-variant “train both” from path-tier labels.
 
 
 | Flag                               | Purpose                                                                 |
@@ -210,7 +226,7 @@ learn-lpns-train --set_name VMR_aorta_starter --geometry_variant all
 | `--oracle_inputs`                  | Append R/S/L targets to inputs for training sanity check (not for deploy) |
 | `--vessel`                         | Train vessel NNs                                                        |
 | `--activation` | Hidden-layer activation for all coefficients without a per-coef override (`relu`, `leaky_relu`, `tanh`; default from `training.activation` in config) |
-| `--quiet_epochs`                   | Suppress per-epoch loss logging                                         |
+| `--quiet_epochs` / `--no-quiet-epochs` | Suppress per-epoch loss logging (default: `training.quiet_epochs` in config) |
 | `--split_path` / `--model_dir`     | Override split pickle or output directory                               |
 
 
@@ -266,6 +282,18 @@ training:
         junction_layer_width: 20   # wider stenosis (S) junction MLP for VMR_all only
 ```
 
+**Inline stenosis limits:** under `data_processing.stenosis_generation_limit`, add a `<set_name>:` block to override junction/vessel generation bounds for one cohort:
+
+```yaml
+data_processing:
+  stenosis_generation_limit:
+    enabled: true
+    junction_max_generation: 1
+    vessel_max_generation: 0
+    VMR_aorta:
+      junction_max_generation: 0   # proximal junction S only for VMR_aorta
+```
+
 **Top-level `set_overrides:`** still works for broader overrides (any config section):
 
 ```yaml
@@ -277,7 +305,7 @@ set_overrides:
           junction_layer_width: 20
 ```
 
-Loader order when `set_name` is set: base config → `set_overrides.<set_name>` → inline blocks for that set → optional `config/sets/<set_name>.yaml` → programmatic overrides. Inline and `set_overrides` blocks are stripped before validation, so they never affect runs without a matching `set_name`.
+Loader order when `set_name` is set: base config → `set_overrides.<set_name>` → inline RRI blocks → inline stenosis blocks → optional `config/sets/<set_name>.yaml` → programmatic overrides. Inline and `set_overrides` blocks are stripped before validation, so they never affect runs without a matching `set_name`.
 
 ## Notebook example (no C++ solver)
 

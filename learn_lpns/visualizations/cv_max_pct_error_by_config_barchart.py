@@ -39,22 +39,16 @@ from learn_lpns.zerod_calibration.modality_paths import read_cv_metric_from_row
 # Value can be a string (single line) or a list/tuple of strings (multiple lines, joined by newline).
 # Add or override entries to customize; configs not listed use the folder name.
 CONFIG_DISPLAY_NAME = {
-    "base": [r"No $R_{\mathrm{quad}}$ (RI),", "entrance-length adjustment"],
+    "base": [r"RI Model,", "No generation-weighted loss"],
     "gen_loss": [
-        r"No $R_{\mathrm{quad}}$ (RI),",
-        "proximity-weighted NN loss,",
-        "entrance-length adjustment",
+        r"RI Model,",
     ],
     "gen_loss:bifurcations": [
-        r"No $R_{\mathrm{quad}}$ (RI),",
-        "proximity-weighted NN loss,",
+        r"RI Model,",
         "no entrance-length adjustment",
     ],
     "quadratic_resistor_gen_loss": [
-        r"$R_{\mathrm{quad}}$ (RRI),",
-        "no calibrator penalty,",
-        "proximity-weighted NN loss,",
-        "entrance-length adjustment",
+        r"RRI Model,",
     ],
     "quadratic_resistor_penalty_on_gen_loss": [
         r"$R_{\mathrm{quad}}$ (RRI),",

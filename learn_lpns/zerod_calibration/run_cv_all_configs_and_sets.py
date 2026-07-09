@@ -60,6 +60,7 @@ def run_cv_all_configs_and_sets(
     only_barcharts: bool = False,
     metrics_only: bool = False,
     plots_only: bool = False,
+    max_parallel_trials: int | None = None,
 ) -> int:
     split_defaults = get_pipeline_config().split
     if num_trials is None:
@@ -113,6 +114,7 @@ def run_cv_all_configs_and_sets(
                         percent_train=percent_train,
                         run_config_suffix=run_config_suffix,
                         skip_barchart=skip_barchart,
+                        max_parallel_trials=max_parallel_trials,
                     )
                     if result is None:
                         failures.append((set_name, entry_key, "no trial results"))
@@ -263,6 +265,15 @@ def main() -> None:
         action="store_true",
         help="Regenerate comparison plots for CV validation geometries for each set/config.",
     )
+    parser.add_argument(
+        "--max_parallel_trials",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Run up to N CV trials in parallel per CV job (default: split.cv_max_parallel_trials from config)."
+        ),
+    )
     args = parser.parse_args()
 
     set_names = args.set_names or default_set_names
@@ -289,6 +300,7 @@ def main() -> None:
             only_barcharts=args.only_barcharts,
             metrics_only=args.metrics_only,
             plots_only=args.plots_only,
+            max_parallel_trials=args.max_parallel_trials,
         )
     except ValueError as exc:
         parser.error(str(exc))

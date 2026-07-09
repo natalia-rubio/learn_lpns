@@ -33,6 +33,11 @@ def test_defaults_include_nondim_rsl_config():
     assert cfg.training.nondimensionalize_rsl is False
 
 
+def test_training_quiet_epochs_defaults_false():
+    cfg = load_pipeline_config()
+    assert cfg.training.quiet_epochs is False
+
+
 def test_rri_coefficient_effective_restore_and_threshold():
     from learn_lpns.config.models import RriCoefficientConfig
 
@@ -360,6 +365,55 @@ def test_inline_rri_set_overrides_under_coefficient(tmp_path, monkeypatch):
     assert set_by_name["S"].junction_layer_width == 44
     assert set_by_name["R"].junction_layer_width == default_by_name["R"].junction_layer_width
     assert set_by_name["L"].junction_layer_width == default_by_name["L"].junction_layer_width
+
+
+def test_inline_stenosis_set_overrides_under_limit(tmp_path, monkeypatch):
+    base = tmp_path / "defaults.yaml"
+    base_data = yaml.safe_load(resolve_config_path().read_text())
+    limit = base_data["data_processing"]["stenosis_generation_limit"]
+    limit["VMR_widetest"] = {"junction_max_generation": 0}
+    base.write_text(yaml.dump(base_data))
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
+    monkeypatch.setattr("learn_lpns.config.load.repo_root", lambda: tmp_path)
+
+    default_cfg = load_pipeline_config(base)
+    set_cfg = load_pipeline_config(set_name="VMR_widetest")
+
+    default_limit = default_cfg.data_processing.stenosis_generation_limit
+    set_limit = set_cfg.data_processing.stenosis_generation_limit
+    assert default_limit.junction_max_generation == pytest.approx(1.0)
+    assert set_limit.junction_max_generation == pytest.approx(0.0)
+    assert set_limit.vessel_max_generation == default_limit.vessel_max_generation
+    assert set_limit.enabled == default_limit.enabled
+
+
+def test_inline_stenosis_set_overrides_ignored_for_other_set(tmp_path, monkeypatch):
+    base = tmp_path / "defaults.yaml"
+    base_data = yaml.safe_load(resolve_config_path().read_text())
+    base_data["data_processing"]["stenosis_generation_limit"]["VMR_widetest"] = {
+        "junction_max_generation": 0
+    }
+    base.write_text(yaml.dump(base_data))
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
+    monkeypatch.setattr("learn_lpns.config.load.repo_root", lambda: tmp_path)
+
+    other_cfg = load_pipeline_config(set_name="VMR_other")
+    default_cfg = load_pipeline_config(base)
+    assert other_cfg.data_processing.stenosis_generation_limit.junction_max_generation == pytest.approx(
+        default_cfg.data_processing.stenosis_generation_limit.junction_max_generation
+    )
+
+
+def test_inline_stenosis_set_override_invalid_type_raises(tmp_path, monkeypatch):
+    base = tmp_path / "defaults.yaml"
+    base_data = yaml.safe_load(resolve_config_path().read_text())
+    base_data["data_processing"]["stenosis_generation_limit"]["VMR_widetest"] = 0
+    base.write_text(yaml.dump(base_data))
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
+    monkeypatch.setattr("learn_lpns.config.load.repo_root", lambda: tmp_path)
+
+    with pytest.raises(ValueError, match="stenosis_generation_limit.VMR_widetest"):
+        load_pipeline_config(base)
 
 
 def test_rri_coefficients_set_layer_merges_single_coefficient(tmp_path, monkeypatch):

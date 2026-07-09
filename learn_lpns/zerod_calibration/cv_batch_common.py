@@ -15,9 +15,11 @@ if TYPE_CHECKING:
 # Order is execution order; by-config barchart discovers and sorts by value.
 DEFAULT_CONFIGS: list[tuple[str, list[str]]] = [
     ("gen_loss", ["--run_config", "gen_loss"]),
-    ("quadratic_resistor", ["--run_config", "base"]),
+    ("quadratic_resistor", ["--run_config", "quadratic_resistor"]),
     ("quadratic_resistor_gen_loss", ["--run_config", "quadratic_resistor_gen_loss"]),
-    ("quadratic_resistor_gen_loss", ["--run_config", "gen_loss"]),
+    ("base", ["--run_config", "base"]),
+    ("gen_loss:bifurcations", ["--run_config", "gen_loss"]),
+    ("quadratic_resistor_gen_loss:bifurcations", ["--run_config", "quadratic_resistor_gen_loss"]),
 ]
 
 # Valid for `--configs` but not part of the default batch unless listed explicitly.

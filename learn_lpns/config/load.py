@@ -6,8 +6,9 @@ Layering (each step deep-merges into the previous):
   1. defaults.yaml base sections (repo config/ or bundled learn_lpns/config/)
   2. defaults.yaml ``set_overrides.<set_name>`` (optional, when set_name is passed)
   3. inline ``<set_name>:`` blocks under ``training.rri_coefficients`` entries (optional)
-  4. config/sets/<set_name>.yaml (optional external file, when set_name is passed)
-  5. overrides dict (programmatic patches, tests)
+  4. inline ``<set_name>:`` blocks under ``data_processing.stenosis_generation_limit`` (optional)
+  5. config/sets/<set_name>.yaml (optional external file, when set_name is passed)
+  6. overrides dict (programmatic patches, tests)
 
 Merge rule: nested mappings deep-merge; scalars/lists are replaced, except
 ``training.rri_coefficients`` whose entries are merged by their ``name`` field. That lets
@@ -20,6 +21,13 @@ Inline per-set overrides may live under a coefficient entry::
       junction_layer_width: 10
       VMR_all:
         junction_layer_width: 20
+
+or under ``data_processing.stenosis_generation_limit``::
+
+  stenosis_generation_limit:
+    junction_max_generation: 1
+    VMR_aorta:
+      junction_max_generation: 0
 
 ``set_overrides`` is a loader-only top-level section (stripped before validation).
 Inline ``<set_name>`` blocks are also stripped before validation.
@@ -34,7 +42,11 @@ from typing import Any
 
 import yaml
 
-from learn_lpns.config.models import PipelineConfig, RriCoefficientConfig
+from learn_lpns.config.models import (
+    PipelineConfig,
+    RriCoefficientConfig,
+    StenosisGenerationLimitConfig,
+)
 from learn_lpns.tools.paths import repo_root
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -42,6 +54,9 @@ _PACKAGE_DIR = Path(__file__).resolve().parent
 # Keys allowed on each ``training.rri_coefficients`` entry; any other mapping child is treated
 # as an inline per-set override (e.g. ``VMR_all: { junction_layer_width: 20 }`` under ``S``).
 _RRI_COEFFICIENT_FIELD_KEYS = frozenset(RriCoefficientConfig.model_fields.keys())
+
+# Keys allowed on ``data_processing.stenosis_generation_limit``; any other child is an inline set override.
+_STENOSIS_LIMIT_FIELD_KEYS = frozenset(StenosisGenerationLimitConfig.model_fields.keys())
 
 
 def _collect_inline_rri_set_overrides(training: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -88,6 +103,43 @@ def _strip_inline_rri_set_overrides(training: dict[str, Any] | None) -> None:
             {key: value for key, value in entry.items() if key in _RRI_COEFFICIENT_FIELD_KEYS}
         )
     training["rri_coefficients"] = cleaned
+
+
+def _collect_inline_stenosis_set_overrides(
+    data_processing: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """
+    Scan stenosis_generation_limit for inline ``<set_name>: { ... }`` blocks.
+
+    Returns ``set_name -> partial config`` trees suitable for :func:`_deep_merge`.
+    """
+    if not data_processing or not isinstance(data_processing.get("stenosis_generation_limit"), dict):
+        return {}
+
+    limit = data_processing["stenosis_generation_limit"]
+    by_set: dict[str, dict[str, Any]] = {}
+    for key, value in limit.items():
+        if key in _STENOSIS_LIMIT_FIELD_KEYS:
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(
+                f"Inline set override under stenosis_generation_limit.{key} must be a mapping, "
+                f"got {type(value).__name__}."
+            )
+        by_set[key] = {"data_processing": {"stenosis_generation_limit": dict(value)}}
+
+    return by_set
+
+
+def _strip_inline_stenosis_set_overrides(data_processing: dict[str, Any] | None) -> None:
+    """Remove inline ``<set_name>`` blocks from stenosis_generation_limit in place."""
+    if not data_processing or not isinstance(data_processing.get("stenosis_generation_limit"), dict):
+        return
+
+    limit = data_processing["stenosis_generation_limit"]
+    data_processing["stenosis_generation_limit"] = {
+        key: value for key, value in limit.items() if key in _STENOSIS_LIMIT_FIELD_KEYS
+    }
 
 
 def _merge_named_list(base: list[Any], override: list[Any]) -> list[Any]:
@@ -204,6 +256,10 @@ def load_pipeline_config(
     inline_set_overrides = _collect_inline_rri_set_overrides(data.get("training"))
     _strip_inline_rri_set_overrides(data.get("training"))
 
+    # Inline per-set blocks under stenosis_generation_limit (e.g. VMR_aorta: { junction_max_generation: 0 }).
+    inline_stenosis_overrides = _collect_inline_stenosis_set_overrides(data.get("data_processing"))
+    _strip_inline_stenosis_set_overrides(data.get("data_processing"))
+
     if set_name:
         cohort_override = set_overrides.get(set_name)
         if isinstance(cohort_override, dict):
@@ -211,6 +267,9 @@ def load_pipeline_config(
         inline_override = inline_set_overrides.get(set_name)
         if isinstance(inline_override, dict):
             data = _deep_merge(data, inline_override)
+        stenosis_override = inline_stenosis_overrides.get(set_name)
+        if isinstance(stenosis_override, dict):
+            data = _deep_merge(data, stenosis_override)
         set_path = resolve_set_config_path(set_name)
         if set_path is not None:
             data = _deep_merge(data, _load_yaml_mapping(set_path))

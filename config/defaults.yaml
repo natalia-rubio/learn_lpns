@@ -45,21 +45,25 @@ cohorts:
 data_processing:
   flow_split_method: peak_inlet_flow         # mean_over_time | peak_inlet_flow (flow_split from geometric 0D CSV)
   stenosis_generation_limit:
-    enabled: true                        # RSL/S training/inference only below junction/vessel generation limits
+    enabled: true                     # RSL/S training/inference only below junction/vessel generation limits
     junction_max_generation: 1           # inclusive; junction inlet-vessel generation
-    vessel_max_generation: 0         # inclusive; each vessel's own bifurcation generation
-
+    vessel_max_generation: 0      
+    VMR_aorta:
+      junction_max_generation: 0   # stricter junction S limit for aortic cohort only
 split:
   percent_train: 0.9                      # default train fraction for learn-lpns-cv geometry splits
   data_processing_percent_train: 0.8      # default train fraction for learn-lpns-data-processing / notebook demo
   cv_num_trials: 5                        # default k in k-fold cross-validation (learn-lpns-cv)
   seed: 0                                 # default RNG seed for standalone split-index generation
   cv_trial_seed_stride: 1000              # CV trial seed = trial_index * stride + resample_attempt
+  cv_max_parallel_trials: 3               # parallel CV trial workers (1 = serial)
+  cv_worker_cpu_threads: 4             # optional OMP/XLA thread cap per worker when parallel > 1
 
 training:
   num_epochs: 2000                         # default max epochs when a coefficient omits num_epochs / vessel_num_epochs
   restore_best_weights: false             # save weights from epoch with lowest weighted train training loss
   early_stop_loss_threshold: 1.0e-7       # stop when weighted train training loss (MSE) drops below this; retune after policy change
+  quiet_epochs: true                   # suppress per-epoch train/val loss lines during training (also --quiet_epochs on learn-lpns-train)
   batch_size_divisor: 10                  # batch_size = ceil(n_train / batch_size_divisor)
   generation_weighted_loss_decay_base: 3.0   # default gen_loss weight = 1/base^generation; override per R/S/L below
   multi_output_rri: false                 # if true, train one 3-output network (R,S,L) instead of three separate nets
@@ -85,7 +89,6 @@ training:
       junction_asymmetric_overestimate_weight: 2000   # extra loss weight when predicted R > target (asymmetric_loss)
       vessel_asymmetric_overestimate_weight: 10    
       VMR_aorta:
-        #generation_weighted_loss_decay_base: 5.0
         vessel_num_layers: 1   # same for vessel R network
     - name: S
       label: "Stenosis Resistor (S)"
@@ -99,9 +102,9 @@ training:
       junction_asymmetric_overestimate_weight: 2000
       vessel_asymmetric_overestimate_weight: 10
       VMR_all:
-        junction_layer_width: 5
+        junction_layer_width: 10
       VMR_aorta:
-        junction_layer_width: 5
+        junction_layer_width: 10
     - name: L
       label: "Inductor (L)"
       target_output_column: 2
@@ -114,3 +117,5 @@ training:
       vessel_asymmetric_overestimate_weight: 1000
       VMR_aorta:
         vessel_num_layers: 1
+        junction_num_layers: 4
+        junction_layer_width: 10

@@ -46,6 +46,7 @@ def run_cv_all_sets(
     skip_cross_set_barchart=False,
     metrics_only=False,
     plots_only=False,
+    max_parallel_trials=None,
 ):
     split_defaults = get_pipeline_config().split
     if num_trials is None:
@@ -97,6 +98,7 @@ def run_cv_all_sets(
             percent_train=percent_train,
             run_config_suffix=run_config_suffix,
             skip_barchart=skip_barchart,
+            max_parallel_trials=max_parallel_trials,
         )
 
     if skip_cross_set_barchart or plots_only:
@@ -202,6 +204,15 @@ def main():
         action="store_true",
         help="Do not run cv_cross_set_summary_barchart after all sets finish.",
     )
+    parser.add_argument(
+        "--max_parallel_trials",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Run up to N CV trials in parallel per set (default: split.cv_max_parallel_trials from config)."
+        ),
+    )
     args = parser.parse_args()
 
     set_names = args.set_names or default_set_names
@@ -221,6 +232,7 @@ def main():
             skip_cross_set_barchart=args.skip_cross_set_barchart,
             metrics_only=args.metrics_only,
             plots_only=args.plots_only,
+            max_parallel_trials=args.max_parallel_trials,
         )
     except ValueError as exc:
         parser.error(str(exc))

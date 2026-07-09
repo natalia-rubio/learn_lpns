@@ -25,9 +25,15 @@ def forward_jax_pickle_path(
     set_name: str,
     run_config_suffix: str,
     geometry_variant: str,
+    geo_name: str,
     num_geos: int = 1,
+    *,
+    vessel: bool = False,
 ) -> str:
-    """Path to per-forward-pass jax pickle (default: single geometry, set_type=forward)."""
+    """Path to per-forward-pass jax pickle under ``forward/<geo_name>/`` (set_type=forward)."""
+    if not geo_name:
+        raise ValueError("geo_name is required for forward jax pickle path")
+    prefix = "jax_arrays_vessel" if vessel else "jax_arrays"
     return os.path.join(
         data_root,
         "jax_arrays",
@@ -35,7 +41,31 @@ def forward_jax_pickle_path(
         run_config_suffix,
         geometry_variant,
         "forward",
-        f"jax_arrays_num_geos_{num_geos}.pkl",
+        geo_name,
+        f"{prefix}_num_geos_{num_geos}.pkl",
+    )
+
+
+def forward_split_indices_path(
+    data_root: str,
+    set_name: str,
+    run_config_suffix: str,
+    geometry_variant: str,
+    geo_name: str,
+    num_geos: int = 1,
+) -> str:
+    """Path to split-indices pickle for a single-geometry forward data-processing run."""
+    if not geo_name:
+        raise ValueError("geo_name is required for forward split indices path")
+    return os.path.join(
+        data_root,
+        "split_indices",
+        set_name,
+        run_config_suffix,
+        geometry_variant,
+        "forward",
+        geo_name,
+        f"train_val_ind_{set_name}_num_geos_{num_geos}",
     )
 
 

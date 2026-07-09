@@ -135,6 +135,14 @@ def main():
             "(data_processing.flow_split_method)."
         ),
     )
+    parser.add_argument(
+        "--forward_geo_name",
+        default=None,
+        help=(
+            "When set_type is forward, write jax_arrays/split_indices under forward/<geo_name>/ "
+            "(default: sole entry in --geometries)."
+        ),
+    )
     args = parser.parse_args()
     run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
     dp_cfg = get_pipeline_config(set_name=args.set_name).data_processing
@@ -370,6 +378,17 @@ def main():
                 )
             else:
                 jax_out_dir = os.path.join(args.data_root, "jax_arrays", args.set_name, geometry_variant, args.set_type)
+
+            forward_geo_subdir: str | None = None
+            if args.set_type == "forward":
+                forward_geo_subdir = args.forward_geo_name or (geometries[0] if len(geometries) == 1 else None)
+                if forward_geo_subdir is None:
+                    raise ValueError(
+                        "set_type forward requires a single geometry or --forward_geo_name "
+                        f"(got {len(geometries)} geometries)"
+                    )
+                jax_out_dir = os.path.join(jax_out_dir, forward_geo_subdir)
+
             os.makedirs(jax_out_dir, exist_ok=True)
             jax_out_path = os.path.join(jax_out_dir, f"jax_arrays_num_geos_{num_geos}.pkl")
             save_dict(data_dict, jax_out_path)
@@ -424,6 +443,8 @@ def main():
                 split_out_dir = os.path.join(
                     args.data_root, "split_indices", args.set_name, geometry_variant, args.set_type
                 )
+            if forward_geo_subdir is not None:
+                split_out_dir = os.path.join(split_out_dir, forward_geo_subdir)
             os.makedirs(split_out_dir, exist_ok=True)
             split_out_path = os.path.join(split_out_dir, f"train_val_ind_{args.set_name}_num_geos_{num_geos}")
             save_dict(split_dict, split_out_path)
