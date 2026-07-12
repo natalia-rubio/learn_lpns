@@ -28,7 +28,7 @@ Related tokens:
 Default calibration is **decoupled least squares** per vessel/junction outlet:
 
 \[
-P_{in}(t) - P_{out}(t) \approx R\,Q_{in}(t) + S\,|Q_{in}(t)|\,Q_{in}(t) + L\,\dot Q_{out}(t)
+P_{in}(t) - P_{out}(t) \approx R\,Q_{in}(t) + S\,|Q_{in}(t)|\,Q_{in}(t) + L\,\dot Q_{in}(t)
 \]
 
 Implementation: `learn_lpns/zerod_calibration/decoupled_ls_calibration.py`.

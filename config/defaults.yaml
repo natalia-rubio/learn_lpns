@@ -22,7 +22,7 @@ calibration:
   decoupled_l2_r: 0                 # decoupled_ls Tikhonov: lambda * R^2 toward 0
   decoupled_l2_stenosis: 0        # decoupled_ls Tikhonov: lambda * S^2 toward 0
   decoupled_l2_l: 0                # decoupled_ls Tikhonov: lambda * L^2 toward 0
-  decoupled_nonneg_r: true             # decoupled_ls: bound R >= 0 only when quadratic_resistor (S) is calibrated
+  decoupled_nonneg_r: false             # decoupled_ls: bound R >= 0 only when quadratic_resistor (S) is calibrated
   decoupled_nonneg_l: true              # decoupled_ls: bound L >= 0 in each element fit
   plot_rsl_fits: false                    # decoupled_ls: save dP vs Q diagnostic plots under results/RSL_fits/
 
@@ -43,13 +43,15 @@ cohorts:
       display_label: All
 
 data_processing:
-  flow_split_method: peak_inlet_flow         # mean_over_time | peak_inlet_flow (flow_split from geometric 0D CSV)
+  flow_split_method: mean_over_time         # mean_over_time | peak_inlet_flow (flow_split from geometric 0D CSV)
   stenosis_generation_limit:
-    enabled: true                     # RSL/S training/inference only below junction/vessel generation limits
+    enabled: false                     # RSL/S training/inference only below junction/vessel generation limits
     junction_max_generation: 1           # inclusive; junction inlet-vessel generation
     vessel_max_generation: 0      
-    VMR_aorta:
-      junction_max_generation: 0   # stricter junction S limit for aortic cohort only
+    # VMR_aorta:
+    #   junction_max_generation: 0   # stricter junction S limit for aortic cohort only
+    # VMR_all:
+    #   junction_max_generation: 0   # stricter junction S limit for aortic cohort only
 split:
   percent_train: 0.9                      # default train fraction for learn-lpns-cv geometry splits
   data_processing_percent_train: 0.8      # default train fraction for learn-lpns-data-processing / notebook demo
@@ -65,11 +67,11 @@ training:
   early_stop_loss_threshold: 1.0e-7       # stop when weighted train training loss (MSE) drops below this; retune after policy change
   quiet_epochs: true                   # suppress per-epoch train/val loss lines during training (also --quiet_epochs on learn-lpns-train)
   batch_size_divisor: 10                  # batch_size = ceil(n_train / batch_size_divisor)
-  generation_weighted_loss_decay_base: 3.0   # default gen_loss weight = 1/base^generation; override per R/S/L below
+  generation_weighted_loss_decay_base: 2.0   # default gen_loss weight = 1/base^generation; override per R/S/L below
   multi_output_rri: false                 # if true, train one 3-output network (R,S,L) instead of three separate nets
-  activation: leaky_relu                         # default hidden-layer activation (relu | leaky_relu | tanh)
-  clip_predictions: true         # if true, clip R/S/L predictions to train-set min/max at inference
-  nondimensionalize_rsl: true   # if true, train on R*/S*/L* and map back to physical R/S/L at inference
+  activation: relu #leaky_relu                         # default hidden-layer activation (relu | leaky_relu | tanh)
+  clip_predictions: false         # if true, clip R/S/L predictions to train-set min/max at inference
+  nondimensionalize_rsl: false   # if true, train on R*/S*/L* and map back to physical R/S/L at inference
   optimizer:
     init: 0.02                            # default Adam learning rate (overridden per coefficient by lr_init)
     transition_steps: 1000                # Optax exponential decay: steps between LR multiplications
@@ -84,12 +86,12 @@ training:
       lr_init: 0.01                       # Adam initial learning rate for the R network
       num_epochs: 4000                    # junction; omit to use training.num_epochs
       vessel_num_epochs: 2000             # vessel; omit to use num_epochs then training.num_epochs
-      junction_num_layers: 4              # hidden layers in the junction R MLP
+      junction_num_layers: 2              # hidden layers in the junction R MLP
       junction_layer_width: 10          # neurons per hidden layer in the junction R MLP
       junction_asymmetric_overestimate_weight: 2000   # extra loss weight when predicted R > target (asymmetric_loss)
       vessel_asymmetric_overestimate_weight: 10    
-      VMR_aorta:
-        vessel_num_layers: 1   # same for vessel R network
+      # VMR_aorta:
+      #   vessel_num_layers: 1   # same for vessel R network
     - name: S
       label: "Stenosis Resistor (S)"
       target_output_column: 1
@@ -103,19 +105,19 @@ training:
       vessel_asymmetric_overestimate_weight: 10
       VMR_all:
         junction_layer_width: 10
-      VMR_aorta:
-        junction_layer_width: 10
+      # VMR_aorta:
+      #   junction_layer_width: 10
     - name: L
       label: "Inductor (L)"
       target_output_column: 2
       lr_init: 0.01
       num_epochs: 2000
       vessel_num_epochs: 2000
-      junction_num_layers: 2             # deeper/wider net for inductance (typically harder to fit)
+      junction_num_layers: 4             # deeper/wider net for inductance (typically harder to fit)
       junction_layer_width: 10
       junction_asymmetric_overestimate_weight: 10000
       vessel_asymmetric_overestimate_weight: 1000
-      VMR_aorta:
-        vessel_num_layers: 1
-        junction_num_layers: 4
-        junction_layer_width: 10
+      # VMR_aorta:
+      #   vessel_num_layers: 1
+      #   junction_num_layers: 4
+      #   junction_layer_width: 10

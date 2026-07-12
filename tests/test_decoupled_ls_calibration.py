@@ -48,8 +48,8 @@ def _synthetic_vessel_config(
 ) -> dict:
     t = np.linspace(0.0, 1.0, n, endpoint=False)
     q_in = 2.0 + np.sin(2 * np.pi * t)
-    dq_out = np.gradient(q_in)
-    delta_p = r_true * q_in + s_true * np.abs(q_in) * q_in + l_true * dq_out
+    dq_in = np.gradient(q_in)
+    delta_p = r_true * q_in + s_true * np.abs(q_in) * q_in + l_true * dq_in
 
     vessel_name = "branch0_seg0"
     outlet_bc = "OUT"
@@ -66,9 +66,9 @@ def _synthetic_vessel_config(
         },
         "dy": {
             f"pressure:INFLOW:{vessel_name}": np.zeros(n).tolist(),
-            f"flow:INFLOW:{vessel_name}": dq_out.tolist(),
+            f"flow:INFLOW:{vessel_name}": dq_in.tolist(),
             f"pressure:{vessel_name}:{outlet_bc}": np.zeros(n).tolist(),
-            f"flow:{vessel_name}:{outlet_bc}": dq_out.tolist(),
+            f"flow:{vessel_name}:{outlet_bc}": dq_in.tolist(),
         },
         "vessels": [
             {
@@ -94,10 +94,10 @@ def test_fit_rlc_recovers_known_parameters_without_stenosis():
     y = config["y"]
     vessel_name = "branch0_seg0"
     q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
-    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
-    r_fit, s_fit, l_fit, rel_err = _fit_rlc(delta_p, q_in, dq_out, fit_stenosis=False)
+    r_fit, s_fit, l_fit, rel_err = _fit_rlc(delta_p, q_in, dq_in, fit_stenosis=False)
 
     assert s_fit == 0.0
     assert rel_err < 1e-10
@@ -111,14 +111,14 @@ def test_fit_rlc_l2_shrinks_coefficients_toward_zero():
     y = config["y"]
     vessel_name = "branch0_seg0"
     q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
-    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
-    r_unreg, _, l_unreg, _ = _fit_rlc(delta_p, q_in, dq_out, fit_stenosis=False)
+    r_unreg, _, l_unreg, _ = _fit_rlc(delta_p, q_in, dq_in, fit_stenosis=False)
     r_reg, _, l_reg, _ = _fit_rlc(
         delta_p,
         q_in,
-        dq_out,
+        dq_in,
         fit_stenosis=False,
         l2_r=10.0,
         l2_l=10.0,
@@ -141,11 +141,11 @@ def test_fit_rlc_enforces_nonnegative_r_and_l():
     y = config["y"]
     vessel_name = "branch0_seg0"
     q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
-    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
     r_fit, s_fit, l_fit, _rel_err = _fit_rlc(
-        delta_p, q_in, dq_out, fit_stenosis=True, nonneg_r=True, nonneg_l=True
+        delta_p, q_in, dq_in, fit_stenosis=True, nonneg_r=True, nonneg_l=True
     )
 
     assert r_fit >= 0.0
@@ -159,13 +159,13 @@ def test_fit_rlc_allows_negative_r_and_l_when_nonneg_disabled():
     y = config["y"]
     vessel_name = "branch0_seg0"
     q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
-    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
     r_fit, s_fit, l_fit, rel_err = _fit_rlc(
         delta_p,
         q_in,
-        dq_out,
+        dq_in,
         fit_stenosis=False,
         nonneg_r=False,
         nonneg_l=False,
@@ -188,10 +188,10 @@ def test_fit_rlc_recovers_known_parameters_with_stenosis():
     y = config["y"]
     vessel_name = "branch0_seg0"
     q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
-    dq_out = np.asarray(config["dy"]["flow:branch0_seg0:OUT"])
+    dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
-    r_fit, s_fit, l_fit, rel_err = _fit_rlc(delta_p, q_in, dq_out, fit_stenosis=True)
+    r_fit, s_fit, l_fit, rel_err = _fit_rlc(delta_p, q_in, dq_in, fit_stenosis=True)
 
     assert rel_err < 1e-10
     assert r_fit == pytest.approx(r_true, rel=1e-5)
@@ -206,6 +206,20 @@ def test_calibrate_decoupled_ls_skips_nonneg_r_without_stenosis():
     values = out["vessels"][0]["zero_d_element_values"]
     assert values["R_poiseuille"] == pytest.approx(-0.05, rel=1e-4)
     assert values["L"] == pytest.approx(0.15, rel=1e-6)
+
+
+def test_calibrate_decoupled_ls_uses_inlet_flow_derivative():
+    """Vessel fits use dQ from the inlet flow series, not the outlet."""
+    r_true, l_true = 0.07, 0.15
+    config = _synthetic_vessel_config(r_true=r_true, l_true=l_true, s_true=0.0, fit_stenosis=False)
+    n = len(config["y"]["flow:INFLOW:branch0_seg0"])
+    # Inlet dy matches the generating model; outlet dy is deliberately wrong.
+    config["dy"]["flow:branch0_seg0:OUT"] = np.full(n, 999.0).tolist()
+
+    out = calibrate_decoupled_ls(config)
+    values = out["vessels"][0]["zero_d_element_values"]
+    assert values["R_poiseuille"] == pytest.approx(r_true, rel=1e-6)
+    assert values["L"] == pytest.approx(l_true, rel=1e-6)
 
 
 def test_calibrate_decoupled_ls_end_to_end_synthetic():

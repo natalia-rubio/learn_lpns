@@ -78,8 +78,8 @@ def _resolve_vessel_observations(
     config: dict,
     vessel: dict,
     junctions: list[dict],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
-    """Return (delta_p, q_in, dq_out, dq_out_full) or None if observations are missing."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    """Return (delta_p, q_in, dq_in) or None if observations are missing."""
     y = config["y"]
     dy = config["dy"]
     vessel_name = vessel["vessel_name"]
@@ -112,23 +112,20 @@ def _resolve_vessel_observations(
 
     if outlet_bc is not None:
         outlet_p = _get_series(y, dy, f"pressure:{vessel_name}:{outlet_bc}")
-        outlet_q = _get_series(y, dy, f"flow:{vessel_name}:{outlet_bc}")
     elif outlet_junc is not None:
         outlet_p = _get_series(y, dy, f"pressure:{vessel_name}:{outlet_junc}")
-        outlet_q = _get_series(y, dy, f"flow:{vessel_name}:{outlet_junc}")
     else:
         return None
 
-    if inlet_p is None or inlet_q is None or outlet_p is None or outlet_q is None:
+    if inlet_p is None or inlet_q is None or outlet_p is None:
         return None
 
     p_in, _ = inlet_p
-    q_in, _ = inlet_q
+    q_in, dq_in = inlet_q
     p_out, _ = outlet_p
-    _, dq_out = outlet_q
 
     delta_p = p_in - p_out
-    return delta_p, q_in, dq_out, dq_out
+    return delta_p, q_in, dq_in
 
 
 def _resolve_junction_outlet_observations(
@@ -138,7 +135,7 @@ def _resolve_junction_outlet_observations(
     outlet_name: str,
     vessel_id_map: dict[int, dict],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    """Return (delta_p, q_in, dq_out) for one junction outlet leg."""
+    """Return (delta_p, q_in, dq_in) for one junction outlet leg."""
     y = config["y"]
     dy = config["dy"]
     junc_name = junction["junction_name"]
@@ -167,35 +164,35 @@ def _resolve_junction_outlet_observations(
 
     p_upstream = np.mean(np.column_stack(inlet_pressures), axis=1)
     p_out, _ = outlet_p
-    q_in, dq_out = outlet_q
+    q_in, dq_in = outlet_q
     delta_p = p_upstream - p_out
-    return delta_p, q_in, dq_out
+    return delta_p, q_in, dq_in
 
 
 def _predict_delta_p(
     q_in: np.ndarray,
-    dq_out: np.ndarray,
+    dq_in: np.ndarray,
     r_poiseuille: float,
     stenosis: float,
     inductance: float,
 ) -> np.ndarray:
     q_in = np.asarray(q_in, dtype=float)
-    dq_out = np.asarray(dq_out, dtype=float)
-    return r_poiseuille * q_in + stenosis * np.abs(q_in) * q_in + inductance * dq_out
+    dq_in = np.asarray(dq_in, dtype=float)
+    return r_poiseuille * q_in + stenosis * np.abs(q_in) * q_in + inductance * dq_in
 
 
 def _relative_fit_error(
     delta_p: np.ndarray,
     q_in: np.ndarray,
-    dq_out: np.ndarray,
+    dq_in: np.ndarray,
     r_poiseuille: float,
     stenosis: float,
     inductance: float,
 ) -> float:
     delta_p = np.asarray(delta_p, dtype=float)
     q_in = np.asarray(q_in, dtype=float)
-    dq_out = np.asarray(dq_out, dtype=float)
-    predicted = _predict_delta_p(q_in, dq_out, r_poiseuille, stenosis, inductance)
+    dq_in = np.asarray(dq_in, dtype=float)
+    predicted = _predict_delta_p(q_in, dq_in, r_poiseuille, stenosis, inductance)
     residual = delta_p - predicted
     rms_delta_p = float(np.sqrt(np.mean(delta_p**2)))
     if rms_delta_p < RMS_DELTA_P_MIN:
@@ -207,7 +204,7 @@ def _relative_fit_error(
 def _fit_rlc(
     delta_p: np.ndarray,
     q_in: np.ndarray,
-    dq_out: np.ndarray,
+    dq_in: np.ndarray,
     *,
     fit_stenosis: bool,
     l2_r: float = 0.0,
@@ -219,14 +216,14 @@ def _fit_rlc(
     """Fit R, S, L from local pressure drop; optional R/L lower bounds; optional L2 toward 0."""
     delta_p = np.asarray(delta_p, dtype=float)
     q_in = np.asarray(q_in, dtype=float)
-    dq_out = np.asarray(dq_out, dtype=float)
+    dq_in = np.asarray(dq_in, dtype=float)
 
     mask = np.abs(q_in) >= Q_MIN_MASK
     if not np.any(mask):
         mask = np.ones_like(q_in, dtype=bool)
 
     q = q_in[mask]
-    dq = dq_out[mask]
+    dq = dq_in[mask]
     dp = delta_p[mask]
 
     r_lower = 0.0 if nonneg_r else -np.inf
@@ -255,7 +252,7 @@ def _fit_rlc(
         r_poiseuille, inductance = (float(c) for c in coeffs)
         stenosis = 0.0
 
-    rel_err = _relative_fit_error(delta_p, q_in, dq_out, r_poiseuille, stenosis, inductance)
+    rel_err = _relative_fit_error(delta_p, q_in, dq_in, r_poiseuille, stenosis, inductance)
     return r_poiseuille, stenosis, inductance, rel_err
 
 
@@ -321,7 +318,7 @@ def _save_rsl_fit_plot(
     r_poiseuille: float,
     stenosis: float,
     inductance: float,
-    dq_out: np.ndarray,
+    dq_in: np.ndarray,
     output_path: Path,
 ) -> None:
     import matplotlib
@@ -331,8 +328,8 @@ def _save_rsl_fit_plot(
 
     q_in = np.asarray(q_in, dtype=float)
     delta_p = np.asarray(delta_p, dtype=float)
-    dq_out = np.asarray(dq_out, dtype=float)
-    delta_p_fit = _predict_delta_p(q_in, dq_out, r_poiseuille, stenosis, inductance)
+    dq_in = np.asarray(dq_in, dtype=float)
+    delta_p_fit = _predict_delta_p(q_in, dq_in, r_poiseuille, stenosis, inductance)
 
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.scatter(q_in, delta_p, s=12, c="0.35", alpha=0.65, label="observations", zorder=2)
@@ -454,7 +451,7 @@ def calibrate_decoupled_ls(
         element_name: str,
         delta_p: np.ndarray,
         q_in: np.ndarray,
-        dq_out: np.ndarray,
+        dq_in: np.ndarray,
         r_poiseuille: float,
         stenosis: float,
         inductance: float,
@@ -469,7 +466,7 @@ def calibrate_decoupled_ls(
             r_poiseuille,
             stenosis,
             inductance,
-            dq_out,
+            dq_in,
             out_path,
         )
 
@@ -491,7 +488,7 @@ def calibrate_decoupled_ls(
         if resolved is None:
             continue
 
-        delta_p, q_in, dq_out, _ = resolved
+        delta_p, q_in, dq_in = resolved
         element_gen = (
             vessel_generation(int(vessel["vessel_id"]), gen_by_vessel)
             if gen_by_vessel is not None
@@ -501,7 +498,7 @@ def calibrate_decoupled_ls(
         r_poiseuille, stenosis, inductance, rel_err = _fit_rlc(
             delta_p,
             q_in,
-            dq_out,
+            dq_in,
             fit_stenosis=fit_stenosis_element,
             l2_r=l2_r,
             l2_stenosis=l2_stenosis,
@@ -516,7 +513,7 @@ def calibrate_decoupled_ls(
         values["L"] = inductance
         values["stenosis_coefficient"] = stenosis
         _warn_if_poor_fit(vessel_name, rel_err)
-        _maybe_plot(vessel_name, delta_p, q_in, dq_out, r_poiseuille, stenosis, inductance)
+        _maybe_plot(vessel_name, delta_p, q_in, dq_in, r_poiseuille, stenosis, inductance)
 
     for junction in junctions:
         if junction.get("junction_type") != "BloodVesselJunction":
@@ -566,11 +563,11 @@ def calibrate_decoupled_ls(
             if resolved is None:
                 continue
 
-            delta_p, q_in, dq_out = resolved
+            delta_p, q_in, dq_in = resolved
             r_poiseuille, stenosis, inductance, rel_err = _fit_rlc(
                 delta_p,
                 q_in,
-                dq_out,
+                dq_in,
                 fit_stenosis=fit_stenosis_junction,
                 l2_r=l2_r,
                 l2_stenosis=l2_stenosis,
@@ -585,7 +582,7 @@ def calibrate_decoupled_ls(
             l_list[outlet_index] = inductance
             s_list[outlet_index] = stenosis
             _warn_if_poor_fit(element_label, rel_err)
-            _maybe_plot(element_label, delta_p, q_in, dq_out, r_poiseuille, stenosis, inductance)
+            _maybe_plot(element_label, delta_p, q_in, dq_in, r_poiseuille, stenosis, inductance)
 
         junc_values["R_poiseuille"] = r_list
         junc_values["L"] = l_list

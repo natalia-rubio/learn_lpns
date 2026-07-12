@@ -10,7 +10,7 @@ Shell helpers for environment setup and sample data. Run from the **repository r
 | [`cv_env.sh`](cv_env.sh) | **Generated** — sets `SVZEROD_INSTALL_DIR`, prepends solver to `PATH`, activates `.venv`, `cd` to repo | `source scripts/cv_env.sh` before CV |
 | [`notebook_env.sh`](notebook_env.sh) | **Generated** — activates `.venv`, `cd` to repo | `source scripts/notebook_env.sh` before Jupyter |
 | [`git-freeze-sample-data.sh`](git-freeze-sample-data.sh) | `git update-index --skip-worktree` on tracked files under `data/` so local pipeline edits do not show in `git status` | Optional after clone; `--unfreeze` to undo |
-| [`clean_zerod_generated.py`](clean_zerod_generated.py) | Delete all subfolders under `data/zeroD/<set_name>/` except `standard-0d/` (run-config outputs). Skips bundled `VMR_aorta_starter`. | Regenerate pipeline from seed JSONs; use `--dry_run` first |
+| [`clean_zerod_generated.py`](clean_zerod_generated.py) | Delete run-config folders under `data/zeroD/<set_name>/` (keeps `standard-0d/`). By default also removes matching `jax_arrays`, `split_indices`, `results/models`, and `results/cross_validation` so config changes (e.g. `training.nondimensionalize_rsl`) take effect on the next CV run. Skips bundled `VMR_aorta_starter`. | After toggling nondim or other training config; `--run_config` to scope; `--no-also_derived` for zeroD-only; use `--dry_run` first |
 
 ## Makefile targets
 
