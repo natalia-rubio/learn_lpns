@@ -145,8 +145,8 @@ def main():
     )
     args = parser.parse_args()
     run_config_suffix = (args.run_config or DEFAULT_CLI_RUN_CONFIG).strip()
-    dp_cfg = get_pipeline_config(set_name=args.set_name).data_processing
-    pipeline_cfg = get_pipeline_config(set_name=args.set_name)
+    dp_cfg = get_pipeline_config(set_name=args.set_name, run_config=run_config_suffix).data_processing
+    pipeline_cfg = get_pipeline_config(set_name=args.set_name, run_config=run_config_suffix)
     flow_split_method = dp_cfg.flow_split_method if args.flow_split_method is None else args.flow_split_method
     nondim_kwargs = {
         "nondimensionalize": pipeline_cfg.training.nondimensionalize_rsl,

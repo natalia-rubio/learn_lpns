@@ -166,7 +166,7 @@ def train_nn(model, training_params):
                     "Val: N/A (100% train)"
                 )
 
-        if train_training < early_stop_threshold:
+        if early_stop_threshold is not None and train_training < early_stop_threshold:
             print(
                 f"\n  Early stopping: train training loss ({train_training:.2e}) "
                 f"is below threshold ({early_stop_threshold:g})"

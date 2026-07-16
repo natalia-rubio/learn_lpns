@@ -339,14 +339,9 @@ def main():
                 variant_calibration_input = geo_variant_paths["calibration_input"]
                 variant_junction_paths = geo_variant_paths["junction_types"]
 
-                if fitted_outlet_bcs:
-                    apply_fitted_outlet_bcs_to_file(
-                        variant_geometric_input,
-                        fitted_outlet_bcs,
-                        f"{geo_variant_name} geometric input",
-                    )
-
-                # Create base calibration input for this geometry variant
+                # Create base calibration input for this geometry variant.
+                # Geometric inputs keep standard/unfitted outlet BCs (used for geometric
+                # forward → flow_split). Fitted outlets are written only onto calibration inputs.
                 if check_and_track_file(variant_calibration_input, f"base calibration input for {geo_variant_name}"):
                     # File exists and no-redo is set, skip creation
                     pass
@@ -368,7 +363,15 @@ def main():
                         generated_files.append(variant_calibration_input)
                         print(f"    ✓ Base calibration input saved to: {variant_calibration_input}")
 
-                        # Update geometric input with BC from calibration input
+                        if fitted_outlet_bcs:
+                            apply_fitted_outlet_bcs_to_file(
+                                variant_calibration_input,
+                                fitted_outlet_bcs,
+                                f"{geo_variant_name} calibration input",
+                            )
+
+                        # Update geometric input with inflow BC from calibration input
+                        # (outlet BCs on geometric stay standard/unfitted)
                         update_geometric_input_with_calibration_bc(variant_geometric_input, variant_calibration_input)
                     except Exception as e:
                         raise Exception(f"Failed to create calibration input for {geo_variant_name}: {e}") from e

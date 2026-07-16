@@ -324,8 +324,8 @@ class RriCoefficientConfig(BaseModel):
             return self.restore_best_weights
         return default
 
-    def effective_early_stop_loss_threshold(self, default: float) -> float:
-        """Resolve early-stop threshold for this coefficient."""
+    def effective_early_stop_loss_threshold(self, default: float | None) -> float | None:
+        """Resolve early-stop threshold for this coefficient (None = disabled)."""
         if self.early_stop_loss_threshold is not None:
             return float(self.early_stop_loss_threshold)
         return default
@@ -374,10 +374,13 @@ class TrainingConfig(BaseModel):
             "When true, restore and save weights from the epoch with lowest weighted train training loss."
         ),
     )
-    early_stop_loss_threshold: float = Field(
+    early_stop_loss_threshold: float | None = Field(
         default=1e-7,
         gt=0,
-        description="Stop when weighted train training loss drops below this.",
+        description=(
+            "Stop when weighted train training loss drops below this. "
+            "Null/omit disables early stopping."
+        ),
     )
     quiet_epochs: bool = Field(
         default=False,
@@ -394,6 +397,14 @@ class TrainingConfig(BaseModel):
         description=(
             "Default gen_loss decay base per R/S/L network when a coefficient omits "
             "generation_weighted_loss_decay_base (sample weight = 1 / base^generation)."
+        ),
+    )
+    include_speed_change: bool = Field(
+        default=False,
+        description=(
+            "Include the junction feature speed_change in NN inputs. "
+            "Off for gen_loss recovery (matches orig gold); enable via "
+            "training_run_configs for quadratic_resistor profiles when desired."
         ),
     )
     optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)

@@ -505,8 +505,10 @@ def main():
     )
     cli_args = parser.parse_args()
 
-    training_cfg = get_pipeline_config(set_name=cli_args.set_name).training
     set_name = cli_args.set_name
+    run_config_raw = (cli_args.run_config or "").strip() or None
+    data_paths_suffix = run_config_raw
+    training_cfg = get_pipeline_config(set_name=set_name, run_config=run_config_raw).training
     multi_output_rri = bool(cli_args.multi_output_rri or training_cfg.multi_output_rri)
     default_activation = training_cfg.resolved_activation()
     if cli_args.activation is not None:
@@ -518,8 +520,6 @@ def main():
             f"Invalid --geometry_variant {geometry_variant_arg!r}. "
             f"Expected one of: {', '.join(sorted(GEOMETRY_VARIANT_NAMES))}."
         )
-    run_config_raw = (cli_args.run_config or "").strip() or None
-    data_paths_suffix = run_config_raw
     if run_config_raw:
         rc_flags = run_config_suffix_to_flags(run_config_raw)
         asymmetric_loss_eff = bool(cli_args.asymmetric_loss or rc_flags["asymmetric_loss"])
@@ -530,7 +530,7 @@ def main():
         generation_weighted_loss_eff = bool(cli_args.generation_weighted_loss)
         quadratic_resistor_eff = False
     vessel = bool(cli_args.vessel)
-    dp_limit = get_pipeline_config(set_name=set_name).data_processing.stenosis_generation_limit
+    dp_limit = get_pipeline_config(set_name=set_name, run_config=run_config_raw).data_processing.stenosis_generation_limit
     stenosis_generation_limit_enabled = bool(dp_limit.enabled and quadratic_resistor_eff)
     stenosis_generation_max = float(
         dp_limit.vessel_limit() if vessel else dp_limit.junction_limit()

@@ -71,14 +71,24 @@ def _feature_name_to_latex(name: str) -> str:
     return rf"\texttt{{{escaped}}}"
 
 
-def get_default_include_features() -> list[str]:
+def get_default_include_features(
+    *,
+    set_name: str | None = None,
+    run_config: str | None = None,
+) -> list[str]:
     """
     Default junction NN input column names (primary-outlet feature set).
+
+    When ``training.include_speed_change`` is true for the resolved pipeline config
+    (base + optional ``training_run_configs`` overlay), inserts ``speed_change``
+    after ``flow_split_inv``.
 
     Called by: :func:`filter_features_from_array`, :func:`build_data_dict_from_csvs`,
     ``generate_zerod_inputs.py``.
     """
-    return [
+    from learn_lpns.config import get_pipeline_config
+
+    features = [
         "inlet_max_inscribed_radius",
         "outlet0_max_inscribed_radius_local",
         "outlet0_max_inscribed_radius_min_on_path",
@@ -95,11 +105,15 @@ def get_default_include_features() -> list[str]:
         "outlet0_absorbed_L",
         "outlet0_absorbed_stenosis_coefficient",
         "flow_split_inv",
-        "speed_change",
         "outlet0_rneg4",
         "outlet0_rneg2",
         "outlet0_nd_length",
     ]
+    if get_pipeline_config(set_name=set_name, run_config=run_config).training.include_speed_change:
+        # Insert after flow_split_inv (same position as the former always-on feature).
+        insert_at = features.index("flow_split_inv") + 1
+        features.insert(insert_at, "speed_change")
+    return features
     # return [
     #     "inlet_max_inscribed_radius",
     #     "outlet0_max_inscribed_radius_local",
@@ -888,7 +902,10 @@ def build_data_dict_from_csvs(
     row_primary_outlet_names: list[str] = []
     all_outlet_vessel_ids: list[int] = []
 
-    include_features = get_default_include_features()
+    include_features = get_default_include_features(
+        set_name=cohort_set_name or set_name or None,
+        run_config=run_config_suffix,
+    )
     include_outputs = get_default_include_outputs()
     feature_order: list[str] | None = None
     output_order: list[str] | None = None

@@ -230,8 +230,12 @@ def fit_bcs_from_observations(geometric_input_path, observations, dt=None, fit_p
     Supports RESISTANCE (linear P = R*Q + Pd) and RCR (Windkessel) outlets.
     Raises ValueError for unsupported outlet bc_type values.
 
+    Geometric inputs are left unchanged (unfitted/standard outlet policy for
+    geometric forward). Callers should apply the returned params to calibration
+    inputs via ``apply_fitted_outlet_bcs_to_file``.
+
     Args:
-        geometric_input_path: Path to geometric 0D input JSON (updated in place)
+        geometric_input_path: Path to geometric 0D input JSON (read-only; used for BC types/names)
         observations: Dict with 'y' containing outlet pressure/flow time series
         dt: Timestep for RCR fitting; if None, RCR outlets are skipped with a warning
         fit_pd: Whether to fit Pd in RCR outlets (default False)
@@ -240,6 +244,7 @@ def fit_bcs_from_observations(geometric_input_path, observations, dt=None, fit_p
         Dict mapping bc_name -> fitted parameter dict (includes 'bc_type' key).
     """
     print("\nFitting outlet boundary conditions from observations...")
+    print("  (geometric inputs keep standard/unfitted outlets; fits go to calibration inputs)")
 
     with open(geometric_input_path) as f:
         inp = json.load(f)
@@ -276,38 +281,7 @@ def fit_bcs_from_observations(geometric_input_path, observations, dt=None, fit_p
         if result is not None:
             fitted_bcs[bc_name] = result
 
-    if fitted_bcs:
-        print("\n  Updating geometric input with fitted outlet BC parameters...")
-        for bc_name, params in fitted_bcs.items():
-            bc_cfg = bc_by_name.get(bc_name)
-            if not bc_cfg:
-                continue
-            bc_type = params["bc_type"]
-            if bc_type == "RESISTANCE":
-                old = bc_cfg.get("bc_values", {})
-                bc_cfg["bc_values"]["R"] = float(params["R"])
-                bc_cfg["bc_values"]["Pd"] = float(params["Pd"])
-                print(
-                    f"    {bc_name}: R {old.get('R', 0):.4f}->{params['R']:.4f}, "
-                    f"Pd {old.get('Pd', 0):.4f}->{params['Pd']:.4f}"
-                )
-            elif bc_type == "RCR":
-                old = bc_cfg.get("bc_values", {})
-                bc_cfg["bc_values"]["Rp"] = float(params["Rp"])
-                bc_cfg["bc_values"]["C"] = float(params["C"])
-                bc_cfg["bc_values"]["Rd"] = float(params["Rd"])
-                bc_cfg["bc_values"]["Pd"] = float(params["Pd"])
-                print(
-                    f"    {bc_name}: Rp {old.get('Rp', 0):.4f}->{params['Rp']:.4f}, "
-                    f"C {old.get('C', 0):.6e}->{params['C']:.6e}, "
-                    f"Rd {old.get('Rd', 0):.4f}->{params['Rd']:.4f}, "
-                    f"Pd {old.get('Pd', 0):.4f}->{params['Pd']:.4f}"
-                )
-
-        with open(geometric_input_path, "w") as f:
-            json.dump(inp, f, indent=4)
-        print(f"  ✓ Updated geometric input saved to: {geometric_input_path}")
-    else:
+    if not fitted_bcs:
         print("  No outlet BC parameters were fitted.")
 
     return fitted_bcs

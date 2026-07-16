@@ -8,11 +8,13 @@ Layering (each step deep-merges into the previous):
   3. inline ``<set_name>:`` blocks under ``training.rri_coefficients`` entries (optional)
   4. inline ``<set_name>:`` blocks under ``data_processing.stenosis_generation_limit`` (optional)
   5. config/sets/<set_name>.yaml (optional external file, when set_name is passed)
-  6. overrides dict (programmatic patches, tests)
+  6. defaults.yaml ``training_run_configs.<run_config>`` onto ``training`` (optional)
+  7. overrides dict (programmatic patches, tests)
 
 Merge rule: nested mappings deep-merge; scalars/lists are replaced, except
 ``training.rri_coefficients`` whose entries are merged by their ``name`` field. That lets
 a per-set override change a single coefficient (e.g. S) without redefining R/S/L.
+The same named-list rule applies when merging a ``training_run_configs`` overlay.
 
 Inline per-set overrides may live under a coefficient entry::
 
@@ -29,8 +31,15 @@ or under ``data_processing.stenosis_generation_limit``::
     VMR_aorta:
       junction_max_generation: 0
 
-``set_overrides`` is a loader-only top-level section (stripped before validation).
-Inline ``<set_name>`` blocks are also stripped before validation.
+Per-run-config training overlays (e.g. ``quadratic_resistor_gen_loss`` vs ``gen_loss``)::
+
+  training_run_configs:
+    quadratic_resistor_gen_loss:
+      optimizer:
+        decay_rate: 0.99
+
+``set_overrides`` and ``training_run_configs`` are loader-only top-level sections
+(stripped before validation). Inline ``<set_name>`` blocks are also stripped.
 """
 
 from __future__ import annotations
@@ -205,6 +214,42 @@ def resolve_set_config_path(set_name: str) -> Path | None:
     return path if path.is_file() else None
 
 
+def _lookup_training_run_overlay(
+    training_run_configs: dict[str, Any],
+    run_config: str | None,
+) -> dict[str, Any] | None:
+    """
+    Resolve ``run_config`` to a canonical suffix and return the matching training overlay.
+
+    Keys in ``training_run_configs`` should be canonical path suffixes (e.g.
+    ``gen_loss``, ``quadratic_resistor_gen_loss``). Unordered token strings are
+    accepted via :func:`resolve_run_config_suffix`.
+    """
+    if not run_config or not training_run_configs:
+        return None
+
+    from learn_lpns.zerod_calibration.run_config_canonical import resolve_run_config_suffix
+
+    raw = str(run_config).strip()
+    if not raw:
+        return None
+    try:
+        key = resolve_run_config_suffix(raw)
+    except ValueError:
+        key = raw
+
+    overlay = training_run_configs.get(key)
+    if overlay is None and raw != key:
+        overlay = training_run_configs.get(raw)
+    if overlay is None:
+        return None
+    if not isinstance(overlay, dict):
+        raise ValueError(
+            f"training_run_configs[{key!r}] must be a mapping, got {type(overlay).__name__}."
+        )
+    return overlay
+
+
 def resolve_config_path(config_path: str | Path | None = None) -> Path:
     """
     Resolve base defaults YAML path.
@@ -243,14 +288,20 @@ def load_pipeline_config(
     config_path: str | Path | None = None,
     *,
     set_name: str | None = None,
+    run_config: str | None = None,
     overrides: dict[str, Any] | None = None,
 ) -> PipelineConfig:
-    """Load YAML, merge optional per-set layer and overrides, validate with Pydantic."""
+    """Load YAML, merge optional per-set / per-run-config layers and overrides, validate."""
     path = resolve_config_path(config_path)
     data = _load_yaml_mapping(path)
 
-    # Loader-only top-level section (not part of PipelineConfig).
+    # Loader-only top-level sections (not part of PipelineConfig).
     set_overrides = data.pop("set_overrides", None) or {}
+    training_run_configs = data.pop("training_run_configs", None) or {}
+    if training_run_configs and not isinstance(training_run_configs, dict):
+        raise ValueError(
+            f"training_run_configs must be a mapping, got {type(training_run_configs).__name__}."
+        )
 
     # Inline per-set blocks under rri_coefficients (e.g. VMR_all: { junction_layer_width: 20 }).
     inline_set_overrides = _collect_inline_rri_set_overrides(data.get("training"))
@@ -274,31 +325,44 @@ def load_pipeline_config(
         if set_path is not None:
             data = _deep_merge(data, _load_yaml_mapping(set_path))
 
+    run_overlay = _lookup_training_run_overlay(training_run_configs, run_config)
+    if run_overlay:
+        training = data.get("training")
+        if not isinstance(training, dict):
+            training = {}
+        data["training"] = _deep_merge(training, run_overlay)
+
     if overrides:
         data = _deep_merge(data, overrides)
 
     return PipelineConfig.model_validate(data)
 
 
-@lru_cache(maxsize=16)
-def _cached_pipeline_config(resolved_path: str, set_name: str) -> PipelineConfig:
-    # set_name is normalized to "" when not provided so lru_cache stays hashable
-    return load_pipeline_config(resolved_path, set_name=set_name or None)
+@lru_cache(maxsize=64)
+def _cached_pipeline_config(resolved_path: str, set_name: str, run_config: str) -> PipelineConfig:
+    # set_name / run_config normalized to "" when not provided so lru_cache stays hashable
+    return load_pipeline_config(
+        resolved_path,
+        set_name=set_name or None,
+        run_config=run_config or None,
+    )
 
 
 def get_pipeline_config(
     config_path: str | Path | None = None,
     *,
     set_name: str | None = None,
+    run_config: str | None = None,
     reload: bool = False,
 ) -> PipelineConfig:
     """
-    Return cached pipeline config (keyed by defaults path + set_name).
+    Return cached pipeline config (keyed by defaults path + set_name + run_config).
 
     Pass set_name when loading cohort-specific overrides from config/sets/.
+    Pass run_config to apply ``training_run_configs.<suffix>`` onto ``training``.
     Pass reload=True after editing YAML on disk.
     """
     path = resolve_config_path(config_path)
     if reload:
         _cached_pipeline_config.cache_clear()
-    return _cached_pipeline_config(str(path), set_name or "")
+    return _cached_pipeline_config(str(path), set_name or "", run_config or "")

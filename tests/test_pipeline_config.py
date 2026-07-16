@@ -29,13 +29,13 @@ def test_resolve_config_path_finds_repo_defaults():
 
 def test_defaults_include_nondim_rsl_config():
     cfg = load_pipeline_config()
-    assert cfg.physics.reference_reynolds == pytest.approx(4500.0)
+    assert cfg.physics.reference_reynolds == pytest.approx(5000.0)
     assert cfg.training.nondimensionalize_rsl is False
 
 
-def test_training_quiet_epochs_defaults_false():
+def test_training_quiet_epochs_defaults_true():
     cfg = load_pipeline_config()
-    assert cfg.training.quiet_epochs is False
+    assert cfg.training.quiet_epochs is True
 
 
 def test_rri_coefficient_effective_restore_and_threshold():
@@ -483,3 +483,99 @@ def test_learn_lpns_config_env_must_exist(tmp_path, monkeypatch):
     monkeypatch.setenv("LEARN_LPNS_CONFIG", str(missing))
     with pytest.raises(FileNotFoundError):
         resolve_config_path()
+
+
+def test_training_run_configs_overlay_by_run_config(tmp_path, monkeypatch):
+    custom = tmp_path / "custom.yaml"
+    custom.write_text(
+        yaml.dump(
+            {
+                "training": {
+                    "include_speed_change": False,
+                    "early_stop_loss_threshold": None,
+                    "optimizer": {"init": 0.02, "transition_steps": 1000, "decay_rate": 0.8},
+                    "vessel": {"num_layers": 2, "layer_width": 10},
+                    "rri_coefficients": [
+                        {
+                            "name": "L",
+                            "label": "Inductor (L)",
+                            "target_output_column": 2,
+                            "lr_init": 0.01,
+                            "junction_num_layers": 4,
+                            "junction_layer_width": 20,
+                            "junction_asymmetric_overestimate_weight": 1,
+                            "vessel_asymmetric_overestimate_weight": 1,
+                        }
+                    ],
+                },
+                "training_run_configs": {
+                    "gen_loss": {},
+                    "quadratic_resistor_gen_loss": {
+                        "include_speed_change": True,
+                        "early_stop_loss_threshold": 1.0e-7,
+                        "optimizer": {"decay_rate": 0.99},
+                        "vessel": {"num_layers": 1},
+                        "rri_coefficients": [{"name": "L", "junction_layer_width": 10}],
+                    },
+                },
+            }
+        )
+    )
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(custom))
+
+    base = load_pipeline_config()
+    assert base.training.optimizer.decay_rate == pytest.approx(0.8)
+    assert base.training.include_speed_change is False
+    assert base.training.early_stop_loss_threshold is None
+    assert base.training.vessel.num_layers == 2
+    assert base.training.rri_coefficients[0].junction_layer_width == 20
+
+    gen = load_pipeline_config(run_config="gen_loss")
+    assert gen.training.optimizer.decay_rate == pytest.approx(0.8)
+    assert gen.training.include_speed_change is False
+
+    qr = load_pipeline_config(run_config="quadratic_resistor_gen_loss")
+    assert qr.training.optimizer.decay_rate == pytest.approx(0.99)
+    assert qr.training.include_speed_change is True
+    assert qr.training.early_stop_loss_threshold == pytest.approx(1.0e-7)
+    assert qr.training.vessel.num_layers == 1
+    assert qr.training.rri_coefficients[0].junction_layer_width == 10
+
+    # Unordered tokens canonicalize to the same overlay key.
+    qr_alias = load_pipeline_config(run_config="gen_loss_quadratic_resistor")
+    assert qr_alias.training.optimizer.decay_rate == pytest.approx(0.99)
+
+
+def test_get_pipeline_config_cached_per_run_config(tmp_path, monkeypatch):
+    custom = tmp_path / "custom.yaml"
+    custom.write_text(
+        yaml.dump(
+            {
+                "training": {"optimizer": {"init": 0.02, "transition_steps": 1000, "decay_rate": 0.8}},
+                "training_run_configs": {
+                    "quadratic_resistor_gen_loss": {"optimizer": {"decay_rate": 0.99}},
+                },
+            }
+        )
+    )
+    monkeypatch.setenv("LEARN_LPNS_CONFIG", str(custom))
+    cfg_gen = get_pipeline_config(run_config="gen_loss")
+    cfg_qr = get_pipeline_config(run_config="quadratic_resistor_gen_loss")
+    assert cfg_gen is not cfg_qr
+    assert cfg_gen.training.optimizer.decay_rate == pytest.approx(0.8)
+    assert cfg_qr.training.optimizer.decay_rate == pytest.approx(0.99)
+
+
+def test_defaults_gen_loss_vs_quadratic_resistor_profiles():
+    gen = load_pipeline_config(run_config="gen_loss")
+    qr = load_pipeline_config(run_config="quadratic_resistor_gen_loss")
+    assert gen.training.optimizer.decay_rate == pytest.approx(0.8)
+    assert gen.training.include_speed_change is False
+    assert gen.training.vessel.num_layers == 2
+    assert qr.training.optimizer.decay_rate == pytest.approx(0.99)
+    assert qr.training.include_speed_change is True
+    assert qr.training.vessel.num_layers == 1
+    l_gen = next(c for c in gen.training.rri_coefficients if c.name == "L")
+    l_qr = next(c for c in qr.training.rri_coefficients if c.name == "L")
+    assert l_gen.junction_layer_width == 20
+    assert l_qr.junction_layer_width == 10

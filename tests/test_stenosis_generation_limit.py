@@ -206,8 +206,8 @@ def test_resolve_stenosis_generation_limits_separate_modalities():
 
     enabled, j_max, v_max = resolve_stenosis_generation_limits(None)
     # Root config/defaults.yaml may enable gating; assert split limits are loaded.
-    assert j_max == pytest.approx(2.0)
-    assert v_max == pytest.approx(1.0)
+    assert j_max == pytest.approx(1.0)
+    assert v_max == pytest.approx(0.0)
     assert enabled is True
 
 

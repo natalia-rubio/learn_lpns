@@ -141,7 +141,10 @@ def add_generate_zerod_inputs_arguments(
     parser.add_argument(
         "--NN_only",
         action="store_true",
-        help="Only NN inference + forward sim (skips observation and calibration)",
+        help=(
+            "Only NN inference + forward sim (skips base generation, observation, "
+            "and calibration). Leaves existing geometric inputs/results untouched."
+        ),
     )
     parser.add_argument(
         "--plots_only",
@@ -242,7 +245,10 @@ def _init_skip_flags(ns: argparse.Namespace) -> None:
 
 def prepare_generate_zerod_namespace(ns: argparse.Namespace) -> str:
     """
-    Apply NN-only mode, skip-steps, and run-config resolution.
+    Apply NN-only / plots-only mode, skip-steps, and run-config resolution.
+
+    ``NN_only`` skips base generation, observation, and calibration so CV deploy
+    does not regenerate geometric inputs while leaving stale geometric results.
 
     Returns the resolved run-config suffix.
     """
@@ -257,6 +263,9 @@ def prepare_generate_zerod_namespace(ns: argparse.Namespace) -> str:
         ns.skip_forward = True
         ns.skip_mse_calculation = True
     elif getattr(ns, "NN_only", False):
+        # Do not regenerate geometric inputs from standard-0d: that would wipe
+        # existing files while leaving stale geometric_results (and flow_split).
+        ns.skip_base_generation = True
         ns.skip_observation = True
         ns.skip_calibration = True
     apply_skip_steps_to_namespace(ns)
@@ -266,9 +275,15 @@ def prepare_generate_zerod_namespace(ns: argparse.Namespace) -> str:
     ns.penalty_on = flags["penalty_on"]
     ns.asymmetric_loss = flags["asymmetric_loss"]
     if getattr(ns, "multi_output_rri", None) is None:
-        ns.multi_output_rri = get_pipeline_config(set_name=getattr(ns, "set_name", None)).training.multi_output_rri
+        ns.multi_output_rri = get_pipeline_config(
+            set_name=getattr(ns, "set_name", None),
+            run_config=suffix,
+        ).training.multi_output_rri
     if getattr(ns, "clip_predictions", None) is None:
-        ns.clip_predictions = get_pipeline_config(set_name=getattr(ns, "set_name", None)).training.clip_predictions
+        ns.clip_predictions = get_pipeline_config(
+            set_name=getattr(ns, "set_name", None),
+            run_config=suffix,
+        ).training.clip_predictions
     if getattr(ns, "plot_rsl_fits", None) is None:
         ns.plot_rsl_fits = get_pipeline_config().calibration.plot_rsl_fits
     return suffix

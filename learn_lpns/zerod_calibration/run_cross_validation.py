@@ -608,7 +608,14 @@ def _run_single_cv_trial(spec: CvTrialSpec, ctx: CvTrialRunContext) -> dict:
     val_ind = resolve_flat_indices(split_dict, "junction", "val", split_path=split_path)
 
     data_dict = load_dict(ctx.jax_path)
-    feature_names = get_default_include_features()
+    stored_names = data_dict.get("input_feature_names")
+    if stored_names:
+        feature_names = [str(n) for n in stored_names]
+    else:
+        feature_names = get_default_include_features(
+            set_name=ctx.set_name,
+            run_config=ctx.data_paths_suffix or None,
+        )
     X_input = np.asarray(data_dict["input"])
     row_ranges = [tuple(r) for r in ctx.row_ranges]
     geometries = list(ctx.geometries)
@@ -813,8 +820,9 @@ def run_cv_plots_only(
 ):
     """Re-run Step 6 plots for each validation geometry listed in the existing CV summary."""
     if multi_output_rri is None:
-        multi_output_rri = get_pipeline_config(set_name=set_name).training.multi_output_rri
-    _out_dir, summary_path = _cv_results_paths(set_name, geometry_variant, run_config_suffix)
+        multi_output_rri = get_pipeline_config(
+            set_name=set_name, run_config=run_config_suffix or None
+        ).training.multi_output_rri
     summary_rows = read_cv_summary_rows(summary_path)
     if not summary_rows:
         print(f"Existing CV summary not found or empty: {summary_path}")
@@ -870,7 +878,7 @@ def run_cross_validation(
     quadratic_resistor = config["quadratic_resistor"]
     asymmetric_loss = config["asymmetric_loss"]
     penalty_on = config["penalty_on"]
-    pipeline_cfg = get_pipeline_config(set_name=set_name)
+    pipeline_cfg = get_pipeline_config(set_name=set_name, run_config=data_paths_suffix)
     training_cfg = pipeline_cfg.training
     split_cfg = pipeline_cfg.split
     use_multi_output_rri = training_cfg.multi_output_rri if multi_output_rri is None else bool(multi_output_rri)
@@ -1315,7 +1323,8 @@ def main():
         run_config_suffix=run_config_suffix,
         skip_barchart=args.skip_barchart,
         no_redo=args.no_redo,
-        multi_output_rri=args.multi_output_rri or get_pipeline_config(set_name=args.set_name).training.multi_output_rri,
+        multi_output_rri=args.multi_output_rri
+        or get_pipeline_config(set_name=args.set_name, run_config=run_config_suffix).training.multi_output_rri,
         max_parallel_trials=args.max_parallel_trials,
     )
 
