@@ -283,6 +283,12 @@ def launch_training(
     is_vessel = network_params.get("model_name_suffix") == "_vessel"
 
     shared_data_dict = network_params.get("data_dict")
+    default_decay_base = float(
+        network_params.get(
+            "generation_weighted_loss_decay_base",
+            training_cfg.generation_weighted_loss_decay_base,
+        )
+    )
     print("Training RRI models (one network per coefficient)...")
 
     for spec in training_cfg.rri_coefficients:
@@ -315,12 +321,6 @@ def launch_training(
         )
         network_params["activation"] = spec.effective_activation(default_activation)
         print(f"  activation: {network_params['activation']}")
-        default_decay_base = float(
-            network_params.get(
-                "generation_weighted_loss_decay_base",
-                training_cfg.generation_weighted_loss_decay_base,
-            )
-        )
         network_params["generation_weighted_loss_decay_base"] = (
             spec.effective_generation_weighted_loss_decay_base(default_decay_base)
         )
@@ -477,13 +477,13 @@ def main():
     parser.add_argument(
         "--generation_weighted_loss_decay_base",
         type=float,
-        default=training_defaults.generation_weighted_loss_decay_base,
+        default=None,
         dest="generation_weighted_loss_decay_base",
         metavar="B",
         help=(
             "Default gen_loss decay base when a coefficient omits generation_weighted_loss_decay_base "
             f"(weight = 1 / B^generation; must be > 1). "
-            f"Default: {training_defaults.generation_weighted_loss_decay_base} from config."
+            "Default: resolved run-config profile."
         ),
     )
     parser.add_argument(
@@ -509,6 +509,11 @@ def main():
     run_config_raw = (cli_args.run_config or "").strip() or None
     data_paths_suffix = run_config_raw
     training_cfg = get_pipeline_config(set_name=set_name, run_config=run_config_raw).training
+    generation_weighted_loss_decay_base = (
+        training_cfg.generation_weighted_loss_decay_base
+        if cli_args.generation_weighted_loss_decay_base is None
+        else float(cli_args.generation_weighted_loss_decay_base)
+    )
     multi_output_rri = bool(cli_args.multi_output_rri or training_cfg.multi_output_rri)
     default_activation = training_cfg.resolved_activation()
     if cli_args.activation is not None:
@@ -573,7 +578,7 @@ def main():
         if generation_weighted_loss_eff:
             print(
                 "Generation-weighted loss: ON "
-                f"(default decay_base={float(cli_args.generation_weighted_loss_decay_base):g}; "
+                f"(default decay_base={generation_weighted_loss_decay_base:g}; "
                 "per-coef override via rri_coefficients.<R|S|L>.generation_weighted_loss_decay_base)"
             )
         if stenosis_generation_limit_enabled:
@@ -626,7 +631,7 @@ def main():
             output_type=output_type,
             asymmetric_loss_eff=asymmetric_loss_eff,
             generation_weighted_loss_eff=generation_weighted_loss_eff,
-            generation_weighted_loss_decay_base=float(cli_args.generation_weighted_loss_decay_base),
+            generation_weighted_loss_decay_base=generation_weighted_loss_decay_base,
             activation=default_activation,
             model_dir=cli_args.model_dir,
             training_cfg=training_cfg,

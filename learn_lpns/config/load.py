@@ -8,8 +8,9 @@ Layering (each step deep-merges into the previous):
   3. inline ``<set_name>:`` blocks under ``training.rri_coefficients`` entries (optional)
   4. inline ``<set_name>:`` blocks under ``data_processing.stenosis_generation_limit`` (optional)
   5. config/sets/<set_name>.yaml (optional external file, when set_name is passed)
-  6. defaults.yaml ``training_run_configs.<run_config>`` onto ``training`` (optional)
-  7. overrides dict (programmatic patches, tests)
+  6. defaults.yaml ``run_config_overrides.<run_config>`` onto the full config (optional)
+  7. defaults.yaml ``training_run_configs.<run_config>`` onto ``training`` (optional)
+  8. overrides dict (programmatic patches, tests)
 
 Merge rule: nested mappings deep-merge; scalars/lists are replaced, except
 ``training.rri_coefficients`` whose entries are merged by their ``name`` field. That lets
@@ -38,7 +39,7 @@ Per-run-config training overlays (e.g. ``quadratic_resistor_gen_loss`` vs ``gen_
       optimizer:
         decay_rate: 0.99
 
-``set_overrides`` and ``training_run_configs`` are loader-only top-level sections
+``set_overrides``, ``run_config_overrides``, and ``training_run_configs`` are loader-only top-level sections
 (stripped before validation). Inline ``<set_name>`` blocks are also stripped.
 """
 
@@ -214,18 +215,20 @@ def resolve_set_config_path(set_name: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def _lookup_training_run_overlay(
-    training_run_configs: dict[str, Any],
+def _lookup_run_overlay(
+    overlays: dict[str, Any],
     run_config: str | None,
+    *,
+    section_name: str,
 ) -> dict[str, Any] | None:
     """
-    Resolve ``run_config`` to a canonical suffix and return the matching training overlay.
+    Resolve ``run_config`` to a canonical suffix and return the matching overlay.
 
-    Keys in ``training_run_configs`` should be canonical path suffixes (e.g.
+    Keys in the overlay section should be canonical path suffixes (e.g.
     ``gen_loss``, ``quadratic_resistor_gen_loss``). Unordered token strings are
     accepted via :func:`resolve_run_config_suffix`.
     """
-    if not run_config or not training_run_configs:
+    if not run_config or not overlays:
         return None
 
     from learn_lpns.zerod_calibration.run_config_canonical import resolve_run_config_suffix
@@ -238,14 +241,14 @@ def _lookup_training_run_overlay(
     except ValueError:
         key = raw
 
-    overlay = training_run_configs.get(key)
+    overlay = overlays.get(key)
     if overlay is None and raw != key:
-        overlay = training_run_configs.get(raw)
+        overlay = overlays.get(raw)
     if overlay is None:
         return None
     if not isinstance(overlay, dict):
         raise ValueError(
-            f"training_run_configs[{key!r}] must be a mapping, got {type(overlay).__name__}."
+            f"{section_name}[{key!r}] must be a mapping, got {type(overlay).__name__}."
         )
     return overlay
 
@@ -297,7 +300,12 @@ def load_pipeline_config(
 
     # Loader-only top-level sections (not part of PipelineConfig).
     set_overrides = data.pop("set_overrides", None) or {}
+    run_config_overrides = data.pop("run_config_overrides", None) or {}
     training_run_configs = data.pop("training_run_configs", None) or {}
+    if run_config_overrides and not isinstance(run_config_overrides, dict):
+        raise ValueError(
+            f"run_config_overrides must be a mapping, got {type(run_config_overrides).__name__}."
+        )
     if training_run_configs and not isinstance(training_run_configs, dict):
         raise ValueError(
             f"training_run_configs must be a mapping, got {type(training_run_configs).__name__}."
@@ -325,7 +333,19 @@ def load_pipeline_config(
         if set_path is not None:
             data = _deep_merge(data, _load_yaml_mapping(set_path))
 
-    run_overlay = _lookup_training_run_overlay(training_run_configs, run_config)
+    run_overlay = _lookup_run_overlay(
+        run_config_overrides,
+        run_config,
+        section_name="run_config_overrides",
+    )
+    if run_overlay:
+        data = _deep_merge(data, run_overlay)
+
+    run_overlay = _lookup_run_overlay(
+        training_run_configs,
+        run_config,
+        section_name="training_run_configs",
+    )
     if run_overlay:
         training = data.get("training")
         if not isinstance(training, dict):

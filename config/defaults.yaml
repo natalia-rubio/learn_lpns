@@ -22,7 +22,7 @@ calibration:
   decoupled_l2_r: 0                 # decoupled_ls Tikhonov: lambda * R^2 toward 0
   decoupled_l2_stenosis: 0        # decoupled_ls Tikhonov: lambda * S^2 toward 0
   decoupled_l2_l: 0                # decoupled_ls Tikhonov: lambda * L^2 toward 0
-  decoupled_nonneg_r: false          # decoupled_ls: bound R >= 0 only when quadratic_resistor (S) is calibrated
+  decoupled_nonneg_r: true           # decoupled_ls: bound R >= 0 only when quadratic_resistor (S) is calibrated
   decoupled_nonneg_l: true              # decoupled_ls: bound L >= 0 in each element fit
   plot_rsl_fits: false                    # decoupled_ls: save dP vs Q diagnostic plots under results/RSL_fits/
 
@@ -125,16 +125,36 @@ training:
       #   junction_num_layers: 4
       #   junction_layer_width: 10
 
-# Loader-only: deep-merged onto training after set overrides (keys = canonical --run_config suffixes).
+# Loader-only: non-training settings recovered for specific run configurations.
+run_config_overrides:
+  quadratic_resistor_gen_loss:
+    data_processing:
+      flow_split_method: peak_inlet_flow
+
+# Loader-only: deep-merged onto training after set/run overrides (keys = canonical --run_config suffixes).
 training_run_configs:
   gen_loss: {}                            # explicit no-op; base training already matches gen_loss gold
   quadratic_resistor_gen_loss:
-    include_speed_change: true            # QR used speed_change before gen_loss recovery
-    early_stop_loss_threshold: 1.0e-7     # re-enable early stop for joint R/S training
+    # Operational QR profile recovered from 197c6c ("both configs working").
+    # The corrected geometric/calibration BC policy remains unchanged.
+    include_speed_change: true
+    clip_predictions: true
+    activation: leaky_relu
+    generation_weighted_loss_decay_base: 3.0
+    early_stop_loss_threshold: 1.0e-7
     optimizer:
-      decay_rate: 0.99                    # slower anneal; helps keep QR R from exploding
+      decay_rate: 0.99
     vessel:
-      num_layers: 1                       # pre-recovery vessel depth for QR
+      num_layers: 1
+      layer_width: 10
     rri_coefficients:
+      - name: R
+        junction_num_layers: 4
+        junction_layer_width: 10
+      - name: S
+        generation_weighted_loss_decay_base: 3.0
+        junction_num_layers: 1
+        junction_layer_width: 10
       - name: L
-        junction_layer_width: 10          # pre-recovery L width for QR
+        junction_num_layers: 2
+        junction_layer_width: 10

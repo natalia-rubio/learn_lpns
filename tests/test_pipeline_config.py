@@ -518,6 +518,11 @@ def test_training_run_configs_overlay_by_run_config(tmp_path, monkeypatch):
                         "rri_coefficients": [{"name": "L", "junction_layer_width": 10}],
                     },
                 },
+                "run_config_overrides": {
+                    "quadratic_resistor_gen_loss": {
+                        "data_processing": {"flow_split_method": "peak_inlet_flow"}
+                    }
+                },
             }
         )
     )
@@ -540,6 +545,7 @@ def test_training_run_configs_overlay_by_run_config(tmp_path, monkeypatch):
     assert qr.training.early_stop_loss_threshold == pytest.approx(1.0e-7)
     assert qr.training.vessel.num_layers == 1
     assert qr.training.rri_coefficients[0].junction_layer_width == 10
+    assert qr.data_processing.flow_split_method == "peak_inlet_flow"
 
     # Unordered tokens canonicalize to the same overlay key.
     qr_alias = load_pipeline_config(run_config="gen_loss_quadratic_resistor")
@@ -569,13 +575,42 @@ def test_get_pipeline_config_cached_per_run_config(tmp_path, monkeypatch):
 def test_defaults_gen_loss_vs_quadratic_resistor_profiles():
     gen = load_pipeline_config(run_config="gen_loss")
     qr = load_pipeline_config(run_config="quadratic_resistor_gen_loss")
+
+    # Recovered RI/gen_loss defaults remain isolated from the QR profile.
     assert gen.training.optimizer.decay_rate == pytest.approx(0.8)
     assert gen.training.include_speed_change is False
+    assert gen.training.clip_predictions is False
+    assert gen.training.resolved_activation() == "relu"
+    assert gen.training.generation_weighted_loss_decay_base == pytest.approx(2.0)
     assert gen.training.vessel.num_layers == 2
+    assert gen.data_processing.flow_split_method == "mean_over_time"
+
+    # QR reproduces the complete operational package from 197c6c while sharing
+    # the corrected BC pipeline.
     assert qr.training.optimizer.decay_rate == pytest.approx(0.99)
     assert qr.training.include_speed_change is True
+    assert qr.training.clip_predictions is True
+    assert qr.training.resolved_activation() == "leaky_relu"
+    assert qr.training.generation_weighted_loss_decay_base == pytest.approx(3.0)
     assert qr.training.vessel.num_layers == 1
+    assert qr.training.vessel.layer_width == 10
+    assert qr.data_processing.flow_split_method == "peak_inlet_flow"
+
+    r_gen = next(c for c in gen.training.rri_coefficients if c.name == "R")
+    r_qr = next(c for c in qr.training.rri_coefficients if c.name == "R")
+    s_qr = next(c for c in qr.training.rri_coefficients if c.name == "S")
     l_gen = next(c for c in gen.training.rri_coefficients if c.name == "L")
     l_qr = next(c for c in qr.training.rri_coefficients if c.name == "L")
+    assert r_gen.junction_num_layers == 2
+    assert r_qr.junction_num_layers == 4
+    assert s_qr.junction_num_layers == 1
+    assert s_qr.generation_weighted_loss_decay_base == pytest.approx(3.0)
+    assert l_gen.junction_num_layers == 4
     assert l_gen.junction_layer_width == 20
+    assert l_qr.junction_num_layers == 2
     assert l_qr.junction_layer_width == 10
+
+    assert qr.data_processing.stenosis_generation_limit.enabled is True
+    assert qr.data_processing.stenosis_generation_limit.junction_max_generation == pytest.approx(1.0)
+    assert qr.data_processing.stenosis_generation_limit.vessel_max_generation == pytest.approx(0.0)
+    assert qr.calibration.decoupled_nonneg_r is True
