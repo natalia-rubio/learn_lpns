@@ -33,6 +33,7 @@ from learn_lpns.tools.paths import repo_root
 from learn_lpns.zerod_calibration.batch_generate_zerod_inputs_vmr import check_geometry_complete
 from learn_lpns.zerod_calibration.cv_metrics import (
     accumulate_trial_metrics,
+    load_existing_trial_metric_rows,
     read_cv_summary_rows,
     trial_metrics_to_row,
     write_all_cv_summary_csvs,
@@ -1005,31 +1006,11 @@ def run_cross_validation(
 
     out_dir, summary_path = _cv_results_paths(set_name, geometry_variant, data_paths_suffix)
 
-    # If we re-ran a single trial and summary already exists, merge this result into it
+    # If we re-ran a single trial and summary already exists, merge this result into it.
+    # Load companion metric CSVs too — the main summary only has MSE_* columns, and
+    # without companions a later --trial would wipe MAPE / max-rel columns for prior trials.
     if trial_index is not None and os.path.exists(summary_path):
-        existing_by_trial = {}
-        with open(summary_path, newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            if header and header[0] == "trial_id":
-                modalities_existing = header[2:]
-                for row in reader:
-                    if not row or row[0] in ("", "mean", "std"):
-                        break
-                    try:
-                        tid = int(row[0])
-                    except ValueError:
-                        break
-                    existing_by_trial[tid] = {
-                        "trial_id": tid,
-                        "val_geometries": row[1] if len(row) > 1 else "",
-                    }
-                    for i, mod in enumerate(modalities_existing):
-                        if i + 2 < len(row) and row[i + 2].strip() != "":
-                            try:
-                                existing_by_trial[tid][mod] = float(row[i + 2])
-                            except ValueError:
-                                existing_by_trial[tid][mod] = np.nan
+        existing_by_trial = load_existing_trial_metric_rows(summary_path, out_dir, geometry_variant)
         for r in all_trial_results:
             existing_by_trial[r["trial_id"]] = r
         all_trial_results = [existing_by_trial[tid] for tid in sorted(existing_by_trial)]

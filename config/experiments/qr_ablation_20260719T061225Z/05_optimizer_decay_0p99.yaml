@@ -1,0 +1,112 @@
+physics:
+  rho: 1.06
+  mu: 0.04
+  reference_reynolds: 5000
+solver:
+  absolute_tolerance: 1.0e-05
+  maximum_nonlinear_iterations: 50
+  number_of_cardiac_cycles: 1
+  steady_initial: false
+calibration:
+  tolerance_gradient: 0.0001
+  tolerance_increment: 0.0001
+  maximum_iterations: 20
+  default_l2_r: 1.0e5
+  default_l2_stenosis: 1.0e10
+  decoupled_l2_r: 0
+  decoupled_l2_stenosis: 0
+  decoupled_l2_l: 0
+  decoupled_nonneg_r: true
+  decoupled_nonneg_l: true
+  plot_rsl_fits: false
+cohorts:
+  default_cv_set_names:
+  - VMR_aorta
+  - VMR_abdo
+  - VMR_pulmo
+  - VMR_all
+  sets:
+    VMR_aorta:
+      display_label: Aortic
+    VMR_abdo:
+      display_label: Aortofemoral
+    VMR_pulmo:
+      display_label: Pulmonary
+    VMR_all:
+      display_label: All
+data_processing:
+  flow_split_method: mean_over_time
+  stenosis_generation_limit:
+    enabled: true
+    junction_max_generation: 0
+    vessel_max_generation: 0
+split:
+  percent_train: 0.9
+  data_processing_percent_train: 0.8
+  cv_num_trials: 5
+  seed: 0
+  cv_trial_seed_stride: 1000
+  cv_max_parallel_trials: 3
+  cv_worker_cpu_threads: 4
+training:
+  num_epochs: 2000
+  restore_best_weights: false
+  early_stop_loss_threshold: 1.0e-07
+  quiet_epochs: true
+  batch_size_divisor: 10
+  generation_weighted_loss_decay_base: 2.0
+  multi_output_rri: false
+  activation: relu
+  clip_predictions: false
+  clip_input_features: false
+  nondimensionalize_rsl: false
+  include_speed_change: false
+  optimizer:
+    init: 0.02
+    transition_steps: 1000
+    decay_rate: 0.8
+  vessel:
+    num_layers: 2
+    layer_width: 10
+  rri_coefficients:
+  - name: R
+    label: Linear Resistor (R)
+    target_output_column: 0
+    lr_init: 0.01
+    num_epochs: 4000
+    vessel_num_epochs: 2000
+    junction_num_layers: 2
+    junction_layer_width: 10
+    junction_asymmetric_overestimate_weight: 2000
+    vessel_asymmetric_overestimate_weight: 10
+  - name: S
+    label: Stenosis Resistor (S)
+    target_output_column: 1
+    lr_init: 0.1
+    num_epochs: 2000
+    vessel_num_epochs: 2000
+    junction_num_layers: 1
+    junction_layer_width: 10
+    junction_asymmetric_overestimate_weight: 2000
+    vessel_asymmetric_overestimate_weight: 10
+    VMR_all:
+      junction_layer_width: 10
+  - name: L
+    label: Inductor (L)
+    target_output_column: 2
+    lr_init: 0.01
+    num_epochs: 2000
+    vessel_num_epochs: 2000
+    junction_num_layers: 4
+    junction_layer_width: 20
+    junction_asymmetric_overestimate_weight: 10000
+    vessel_asymmetric_overestimate_weight: 1000
+run_config_overrides:
+  quadratic_resistor_gen_loss:
+    data_processing:
+      flow_split_method: mean_over_time
+training_run_configs:
+  gen_loss: {}
+  quadratic_resistor_gen_loss:
+    optimizer:
+      decay_rate: 0.99

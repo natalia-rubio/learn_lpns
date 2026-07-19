@@ -135,28 +135,28 @@ run_config_overrides:
 # Loader-only: deep-merged onto training after set/run overrides (keys = canonical --run_config suffixes).
 training_run_configs:
   gen_loss: {}                            # explicit no-op; base training already matches gen_loss gold
-  # quadratic_resistor_gen_loss:
-  #   # Operational QR profile recovered from 197c6c ("both configs working").
-  #   # The corrected geometric/calibration BC policy remains unchanged.
-  #   include_speed_change: true
-  #   clip_predictions: true
-  #   clip_input_features: true
-  #   activation: leaky_relu
-  #   generation_weighted_loss_decay_base: 2.0
-  #   early_stop_loss_threshold: 1.0e-7
-  #   optimizer:
-  #     decay_rate: 0.99
-  #   vessel:
-  #     num_layers: 1
-  #     layer_width: 10
-  #   rri_coefficients:
-  #     - name: R
-  #       junction_num_layers: 4
-  #       junction_layer_width: 10
-  #     - name: S
-  #       generation_weighted_loss_decay_base: 3.0
-  #       junction_num_layers: 1
-  #       junction_layer_width: 10
-  #     - name: L
-  #       junction_num_layers: 2
-  #       junction_layer_width: 10
+  quadratic_resistor_gen_loss:
+    # Operational QR profile recovered from 197c6c ("both configs working").
+    # The corrected geometric/calibration BC policy remains unchanged.
+    include_speed_change: true
+    clip_predictions: true
+    clip_input_features: true
+    activation: leaky_relu
+    generation_weighted_loss_decay_base: 2.0
+    early_stop_loss_threshold: 1.0e-7
+    optimizer:
+      decay_rate: 0.99
+    vessel:
+      num_layers: 1
+      layer_width: 10
+    rri_coefficients:
+      - name: R
+        junction_num_layers: 4
+        junction_layer_width: 10
+      - name: S
+        generation_weighted_loss_decay_base: 3.0
+        junction_num_layers: 1
+        junction_layer_width: 10
+      - name: L
+        junction_num_layers: 2
+        junction_layer_width: 10

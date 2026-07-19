@@ -73,6 +73,78 @@ def read_cv_summary_rows(summary_path):
     return rows
 
 
+def load_existing_trial_metric_rows(summary_path, out_dir, geometry_variant):
+    """Load per-trial metric dicts from the main MSE summary plus companion CSVs.
+
+    Used when re-running a single ``--trial`` so previously computed MAPE/max-rel
+    columns are not dropped (the main summary only stores ``MSE_*`` columns).
+    """
+    if not os.path.exists(summary_path):
+        return {}
+    existing_by_trial: dict[int, dict] = {}
+    with open(summary_path, newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if not header or header[0] != "trial_id":
+            return {}
+        columns = header[2:]
+        for row in reader:
+            if not row or row[0] in ("", "mean", "std"):
+                break
+            try:
+                tid = int(row[0])
+            except ValueError:
+                break
+            existing_by_trial[tid] = {
+                "trial_id": tid,
+                "val_geometries": row[1] if len(row) > 1 else "",
+            }
+            for i, col in enumerate(columns):
+                if i + 2 < len(row) and row[i + 2].strip() != "":
+                    try:
+                        existing_by_trial[tid][col] = float(row[i + 2])
+                    except ValueError:
+                        existing_by_trial[tid][col] = np.nan
+
+    # Companion files are named like bifurcations_EL_cv_summary_pressure_mean_rel_error.csv
+    if geometry_variant == "original":
+        companion_base = os.path.join(out_dir, "cv_summary")
+    else:
+        companion_base = os.path.join(out_dir, f"{geometry_variant}_cv_summary")
+
+    for suffix, _col_prefix in METRIC_CSV_SUFFIXES:
+        path = companion_base + suffix
+        if not os.path.exists(path):
+            continue
+        with open(path, newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            if not header or header[0] != "trial_id":
+                continue
+            columns = header[2:]
+            for row in reader:
+                if not row or row[0] in ("", "mean", "std"):
+                    break
+                try:
+                    tid = int(row[0])
+                except ValueError:
+                    break
+                dest = existing_by_trial.setdefault(
+                    tid,
+                    {"trial_id": tid, "val_geometries": row[1] if len(row) > 1 else ""},
+                )
+                if len(row) > 1 and row[1] and not dest.get("val_geometries"):
+                    dest["val_geometries"] = row[1]
+                for i, col in enumerate(columns):
+                    # Companion headers are already fully-qualified (PressureMeanRelError_...).
+                    if i + 2 < len(row) and row[i + 2].strip() != "":
+                        try:
+                            dest[col] = float(row[i + 2])
+                        except ValueError:
+                            dest[col] = np.nan
+    return existing_by_trial
+
+
 def collect_modalities(results):
     """Collect sorted modality names from trial result row dicts."""
     out = set()

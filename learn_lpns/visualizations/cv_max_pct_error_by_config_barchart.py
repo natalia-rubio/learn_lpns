@@ -35,7 +35,11 @@ from scipy import stats
 
 from learn_lpns.config import get_pipeline_config
 from learn_lpns.visualizations.cv_pressure_max_pct_error_barchart import METRIC_CONFIG
-from learn_lpns.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
+from learn_lpns.visualizations.matplotlib_tex import (
+    configure_matplotlib_latex,
+    plot_label,
+    savefig_with_latex_fallback,
+)
 from learn_lpns.zerod_calibration.modality_paths import read_cv_metric_from_row
 
 DEFAULT_METRIC = "pressure_max_rel_error"
@@ -85,8 +89,8 @@ DEFAULT_RUN_CONFIGS = None
 # Example:
 DEFAULT_RUN_CONFIGS = [
     "gen_loss",
-    "base",
     "quadratic_resistor_gen_loss",
+    "base",
     "gen_loss:bifurcations",
 ]
 
@@ -264,6 +268,14 @@ def main():
             "Very large values can make grouped bars overlap between rows."
         ),
     )
+    parser.add_argument(
+        "--sort",
+        action="store_true",
+        help=(
+            "Sort configs by mean metric (best/lowest at top after invert_yaxis). "
+            "Default: keep --configs / DEFAULT_RUN_CONFIGS / discovery order."
+        ),
+    )
     args = parser.parse_args()
 
     data_root = args.data_root.rstrip(os.sep)
@@ -372,18 +384,25 @@ def main():
             "No config CSVs found. Check paths or run cross-validation for the requested geometry variants."
         )
 
-    def _row_sort_key(r):
-        xs = [v for v in r["values"] if not _isnan(v)]
-        if not xs:
-            return float("inf")
-        return float(np.nanmean(xs))
+    if args.sort:
+        def _row_sort_key(r):
+            xs = [v for v in r["values"] if not _isnan(v)]
+            if not xs:
+                return float("inf")
+            return float(np.nanmean(xs))
 
-    rows.sort(key=_row_sort_key)
+        rows.sort(key=_row_sort_key)
     config_labels = [r["label"] for r in rows]
     values = np.array([r["values"] for r in rows], dtype=float)
     ci_half_widths = np.array([r["ci_half"] for r in rows], dtype=float)
 
     use_latex = configure_matplotlib_latex(plt)
+    if not use_latex:
+        detail = getattr(configure_matplotlib_latex, "last_error", None) or "unknown reason"
+        warnings.warn(
+            f"LaTeX not available for matplotlib text.usetex; using mathtext fallback ({detail}).",
+            stacklevel=1,
+        )
     plt.rcParams.update(
         {
             "font.size": PLOT_FONT_SIZE,
@@ -477,7 +496,7 @@ def main():
     #     r"MPE by Pipeline Configuration",
     #     fontsize=PLOT_FONT_SIZE,
     # )
-    ax.invert_yaxis()  # smallest (best) at top
+    ax.invert_yaxis()  # first config at top (or best when --sort)
     ax.grid(axis="x", alpha=0.3)
     for spine in ax.spines.values():
         spine.set_visible(False)
@@ -528,9 +547,15 @@ def main():
             ha = "left"
             ci_show = 0.0 if _isnan(ci) else ci
             if is_percent:
-                label_text = rf"{val:.1f}\% $\pm$ {ci_show:.1f}\%"
+                label_text = plot_label(
+                    rf"{val:.1f}\% $\pm$ {ci_show:.1f}\%",
+                    use_latex=use_latex,
+                )
             else:
-                label_text = rf"{val:.3g} $\pm$ {ci_show:.3g}"
+                label_text = plot_label(
+                    rf"{val:.3g} $\pm$ {ci_show:.3g}",
+                    use_latex=use_latex,
+                )
             ax.text(
                 x_text,
                 y[i],
@@ -560,9 +585,9 @@ def main():
                 f"{geometry_variant}{metric_out_stem}_by_config_{len(set_names)}sets__{set_slug}.pdf",
             )
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
+    savefig_with_latex_fallback(fig, out_path, plt, dpi=args.dpi, bbox_inches="tight")
     plt.close()
-    print(f"Saved: {out_path}")
+    print(f"Saved: {out_path} (LaTeX={'on' if use_latex else 'off'})")
 
 
 if __name__ == "__main__":
