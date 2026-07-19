@@ -46,8 +46,8 @@ data_processing:
   flow_split_method: mean_over_time         # mean_over_time | peak_inlet_flow (flow_split from geometric 0D CSV)
   stenosis_generation_limit:
     enabled: true                  # RSL/S training/inference only below junction/vessel generation limits
-    junction_max_generation: 1           # inclusive; junction inlet-vessel generation
-    vessel_max_generation: 0      
+    junction_max_generation: 0         # inclusive; junction inlet-vessel generation (-1 = no junction S)
+    vessel_max_generation: 0           # inclusive; vessel generation (-1 = no vessel S)
     # VMR_aorta:
     #   junction_max_generation: 0   # stricter junction S limit for aortic cohort only
     # VMR_all:
@@ -72,7 +72,8 @@ training:
   generation_weighted_loss_decay_base: 2.0   # default gen_loss weight = 1/base^generation; override per R/S/L below
   multi_output_rri: false                 # if true, train one 3-output network (R,S,L) instead of three separate nets
   activation: relu #leaky_relu                         # default hidden-layer activation (relu | leaky_relu | tanh)
-  clip_predictions: false         # if true, clip R/S/L predictions to train-set min/max at inference
+  clip_predictions: false        # if true, clip R/S/L predictions to train-set min/max at inference
+  clip_input_features: false     # if true, clip validation/inference inputs to train-set feature min/max
   nondimensionalize_rsl: false   # if true, train on R*/S*/L* and map back to physical R/S/L at inference
   include_speed_change: false     # junction feature; off for gen_loss gold; QR overlay may enable
   optimizer:
@@ -129,7 +130,7 @@ training:
 run_config_overrides:
   quadratic_resistor_gen_loss:
     data_processing:
-      flow_split_method: peak_inlet_flow
+      flow_split_method: mean_over_time
 
 # Loader-only: deep-merged onto training after set/run overrides (keys = canonical --run_config suffixes).
 training_run_configs:
@@ -139,8 +140,9 @@ training_run_configs:
     # The corrected geometric/calibration BC policy remains unchanged.
     include_speed_change: true
     clip_predictions: true
+    clip_input_features: true
     activation: leaky_relu
-    generation_weighted_loss_decay_base: 3.0
+    generation_weighted_loss_decay_base: 2.0
     early_stop_loss_threshold: 1.0e-7
     optimizer:
       decay_rate: 0.99

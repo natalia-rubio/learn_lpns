@@ -30,7 +30,10 @@ def resolve_stenosis_generation_limit(
 
 
 def generation_allows_stenosis(generation: float, max_generation: float) -> bool:
-    """True when stenosis should be fit, trained, or predicted (inclusive bound)."""
+    """True when stenosis should be fit, trained, or predicted (inclusive bound).
+
+    Generations are non-negative, so ``max_generation=-1`` disables stenosis for all elements.
+    """
     return float(generation) <= float(max_generation)
 
 

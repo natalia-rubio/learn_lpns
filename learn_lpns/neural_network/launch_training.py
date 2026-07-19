@@ -9,7 +9,10 @@ from learn_lpns.data_processing.generate_split_indices import (
     resolve_flat_indices,
 )
 from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, NeuralNet
-from learn_lpns.neural_network.nn_util import append_output_rri_to_input
+from learn_lpns.neural_network.nn_util import (
+    append_output_rri_to_input,
+    clip_data_dict_inputs_to_train_bounds,
+)
 from learn_lpns.neural_network.train_nn import train_nn
 from learn_lpns.tools.basic import load_dict
 from learn_lpns.zerod_calibration.run_config_canonical import (
@@ -196,6 +199,18 @@ def _build_training_params_for_modality(
     train_inds = resolve_flat_indices(split_dict, modality, "train", split_path=split_path)
     val_inds = resolve_flat_indices(split_dict, modality, "val", split_path=split_path)
     num_offsets = int(split_dict.get("num_offsets", 1))
+    if training_cfg.clip_input_features:
+        effective_offsets = 1 if vessel else num_offsets
+        expanded_train_inds = [
+            int(index) * effective_offsets + offset
+            for index in train_inds
+            for offset in range(effective_offsets)
+        ]
+        jax_data = clip_data_dict_inputs_to_train_bounds(jax_data, expanded_train_inds)
+        print(
+            "  clip_input_features: ON "
+            f"(clipping validation/inference to {len(expanded_train_inds)} training-row bounds)"
+        )
 
     if vessel and len(train_inds) == 0 and len(val_inds) == 0:
         train_geos = split_dict.get("train_geometries", [])

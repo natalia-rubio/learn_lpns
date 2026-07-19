@@ -191,6 +191,32 @@ def test_generation_allows_stenosis_inclusive():
     assert not generation_allows_stenosis(1.01, 1.0)
 
 
+def test_generation_allows_stenosis_minus_one_disables_all():
+    """max_generation=-1 means no element gets S (generations are non-negative)."""
+    assert not generation_allows_stenosis(0.0, -1.0)
+    assert not generation_allows_stenosis(1.0, -1.0)
+    assert not generation_allows_stenosis(100.0, -1.0)
+
+
+def test_stenosis_limit_accepts_minus_one():
+    from learn_lpns.config.models import StenosisGenerationLimitConfig
+
+    cfg = StenosisGenerationLimitConfig(
+        enabled=True,
+        junction_max_generation=-1.0,
+        vessel_max_generation=-1.0,
+    )
+    assert cfg.junction_limit() == pytest.approx(-1.0)
+    assert cfg.vessel_limit() == pytest.approx(-1.0)
+
+
+def test_zero_stenosis_by_generation_minus_one_zeros_all():
+    pred = np.array([0.5, -0.2, 1.0, 3.0])
+    gen = np.array([0.0, 1.0, 2.0, 0.0])
+    clipped = zero_stenosis_by_generation(pred, gen, max_generation=-1.0)
+    np.testing.assert_array_equal(clipped, np.zeros_like(pred))
+
+
 def test_zero_stenosis_by_generation():
     pred = np.array([0.5, -0.2, 1.0, 3.0])
     gen = np.array([0.0, 1.0, 2.0, 0.0])
@@ -206,7 +232,7 @@ def test_resolve_stenosis_generation_limits_separate_modalities():
 
     enabled, j_max, v_max = resolve_stenosis_generation_limits(None)
     # Root config/defaults.yaml may enable gating; assert split limits are loaded.
-    assert j_max == pytest.approx(1.0)
+    assert j_max == pytest.approx(0.0)
     assert v_max == pytest.approx(0.0)
     assert enabled is True
 

@@ -371,6 +371,7 @@ def test_inline_stenosis_set_overrides_under_limit(tmp_path, monkeypatch):
     base = tmp_path / "defaults.yaml"
     base_data = yaml.safe_load(resolve_config_path().read_text())
     limit = base_data["data_processing"]["stenosis_generation_limit"]
+    limit["junction_max_generation"] = 1.0
     limit["VMR_widetest"] = {"junction_max_generation": 0}
     base.write_text(yaml.dump(base_data))
     monkeypatch.setenv("LEARN_LPNS_CONFIG", str(base))
@@ -580,6 +581,7 @@ def test_defaults_gen_loss_vs_quadratic_resistor_profiles():
     assert gen.training.optimizer.decay_rate == pytest.approx(0.8)
     assert gen.training.include_speed_change is False
     assert gen.training.clip_predictions is False
+    assert gen.training.clip_input_features is False
     assert gen.training.resolved_activation() == "relu"
     assert gen.training.generation_weighted_loss_decay_base == pytest.approx(2.0)
     assert gen.training.vessel.num_layers == 2
@@ -590,27 +592,29 @@ def test_defaults_gen_loss_vs_quadratic_resistor_profiles():
     assert qr.training.optimizer.decay_rate == pytest.approx(0.99)
     assert qr.training.include_speed_change is True
     assert qr.training.clip_predictions is True
+    assert qr.training.clip_input_features is True
     assert qr.training.resolved_activation() == "leaky_relu"
-    assert qr.training.generation_weighted_loss_decay_base == pytest.approx(3.0)
+    assert qr.training.generation_weighted_loss_decay_base == pytest.approx(2.0)
     assert qr.training.vessel.num_layers == 1
     assert qr.training.vessel.layer_width == 10
-    assert qr.data_processing.flow_split_method == "peak_inlet_flow"
+    assert qr.data_processing.flow_split_method == "mean_over_time"
 
     r_gen = next(c for c in gen.training.rri_coefficients if c.name == "R")
     r_qr = next(c for c in qr.training.rri_coefficients if c.name == "R")
     s_qr = next(c for c in qr.training.rri_coefficients if c.name == "S")
     l_gen = next(c for c in gen.training.rri_coefficients if c.name == "L")
     l_qr = next(c for c in qr.training.rri_coefficients if c.name == "L")
+    # QR currently inherits base R/S/L architecture (QR coefficient overlay commented out).
     assert r_gen.junction_num_layers == 2
-    assert r_qr.junction_num_layers == 4
+    assert r_qr.junction_num_layers == 2
     assert s_qr.junction_num_layers == 1
-    assert s_qr.generation_weighted_loss_decay_base == pytest.approx(3.0)
+    assert s_qr.generation_weighted_loss_decay_base is None
     assert l_gen.junction_num_layers == 4
     assert l_gen.junction_layer_width == 20
-    assert l_qr.junction_num_layers == 2
-    assert l_qr.junction_layer_width == 10
+    assert l_qr.junction_num_layers == 4
+    assert l_qr.junction_layer_width == 20
 
     assert qr.data_processing.stenosis_generation_limit.enabled is True
-    assert qr.data_processing.stenosis_generation_limit.junction_max_generation == pytest.approx(1.0)
+    assert qr.data_processing.stenosis_generation_limit.junction_max_generation == pytest.approx(0.0)
     assert qr.data_processing.stenosis_generation_limit.vessel_max_generation == pytest.approx(0.0)
     assert qr.calibration.decoupled_nonneg_r is True

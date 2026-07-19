@@ -12,7 +12,12 @@ import numpy as np
 from learn_lpns.data_processing.rsl_nondim import redimensionalize_rsl_predictions
 from learn_lpns.neural_network.activations import resolve_activation_from_model
 from learn_lpns.neural_network.nn_model import RRI_NUM_OUTPUTS, predict
-from learn_lpns.neural_network.nn_util import clip_rsl_predictions, dill_load, resolve_train_output_bounds
+from learn_lpns.neural_network.nn_util import (
+    clip_inputs_to_train_bounds,
+    clip_rsl_predictions,
+    dill_load,
+    resolve_train_output_bounds,
+)
 from learn_lpns.zerod_calibration.stenosis_generation import (
     apply_stenosis_generation_gate,
     resolve_effective_stenosis_generation_limit,
@@ -154,6 +159,23 @@ def _resolve_clip_predictions(clip_predictions: bool | None, set_name: str) -> b
     return bool(get_pipeline_config(set_name=set_name).training.clip_predictions)
 
 
+def _resolve_clip_input_features(
+    clip_input_features: bool | None,
+    set_name: str,
+    run_config_suffix: str | None,
+) -> bool:
+    if clip_input_features is not None:
+        return bool(clip_input_features)
+    from learn_lpns.config import get_pipeline_config
+
+    return bool(
+        get_pipeline_config(
+            set_name=set_name,
+            run_config=run_config_suffix,
+        ).training.clip_input_features
+    )
+
+
 def _maybe_redimensionalize_rsl_predictions(
     pred_R: np.ndarray,
     pred_S: np.ndarray,
@@ -190,6 +212,7 @@ def run_nn_predict(
     multi_output_rri: bool | None = None,
     quadratic_resistor: bool = True,
     clip_predictions: bool | None = None,
+    clip_input_features: bool | None = None,
     run_config_suffix: str | None = None,
     data_root: str = "data",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -207,12 +230,26 @@ def run_nn_predict(
             raise FileNotFoundError(f"Model not found: {model_path}")
 
     X_jax = jnp.array(X, dtype=jnp.float32)
+    clip_inputs = _resolve_clip_input_features(
+        clip_input_features,
+        set_name,
+        run_config_suffix,
+    )
+    inputs_clipped = False
     bounds_model = None
     if len(model_paths) == 1:
         model_path = model_paths[0]
         print(f"      Loading multi-output model: {model_path}")
         model = dill_load(model_path)
         bounds_model = model
+        if clip_inputs:
+            clipped_X, changed_count = clip_inputs_to_train_bounds(np.asarray(X_jax), model)
+            X_jax = jnp.asarray(clipped_X, dtype=jnp.float32)
+            inputs_clipped = True
+            print(
+                "      clip_input_features: ON "
+                f"({changed_count} value(s) clipped to train-set bounds)"
+            )
         activation = resolve_activation_from_model(model)
         pred = np.array(predict(X_jax, model.weights, activation))
         if pred.ndim == 1:
@@ -228,6 +265,14 @@ def run_nn_predict(
             model = dill_load(model_path)
             if bounds_model is None:
                 bounds_model = model
+            if clip_inputs and not inputs_clipped:
+                clipped_X, changed_count = clip_inputs_to_train_bounds(np.asarray(X_jax), model)
+                X_jax = jnp.asarray(clipped_X, dtype=jnp.float32)
+                inputs_clipped = True
+                print(
+                    "      clip_input_features: ON "
+                    f"({changed_count} value(s) clipped to train-set bounds)"
+                )
             activation = resolve_activation_from_model(model)
             pred = predict(X_jax, model.weights, activation)
             preds_by_col[col] = np.array(pred).flatten()

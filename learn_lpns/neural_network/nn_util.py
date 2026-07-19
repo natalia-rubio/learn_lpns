@@ -59,6 +59,67 @@ def attach_train_output_bounds(model, train_inds) -> None:
     model.train_output_max = np.max(outputs, axis=0)
 
 
+def clip_data_dict_inputs_to_train_bounds(data_dict: dict, train_inds) -> dict:
+    """Return a shallow copy with all input rows clipped to train-set feature bounds."""
+    inds = np.asarray(train_inds, dtype=int).reshape(-1)
+    if inds.size == 0:
+        raise ValueError("Cannot clip input features without training indices.")
+
+    inputs = np.asarray(data_dict["input"], dtype=float)
+    if inputs.ndim != 2:
+        raise ValueError(f"Expected 2D input array, got shape {inputs.shape}.")
+    if np.min(inds) < 0 or np.max(inds) >= inputs.shape[0]:
+        raise IndexError(
+            f"Training indices [{np.min(inds)}, {np.max(inds)}] exceed input rows {inputs.shape[0]}."
+        )
+
+    train_inputs = inputs[inds]
+    bounds_min = np.min(train_inputs, axis=0)
+    bounds_max = np.max(train_inputs, axis=0)
+    clipped = np.clip(inputs, bounds_min, bounds_max)
+
+    out = copy.copy(data_dict)
+    out["input"] = jnp.asarray(clipped, dtype=jnp.asarray(data_dict["input"]).dtype)
+    out["train_input_min"] = jnp.asarray(bounds_min)
+    out["train_input_max"] = jnp.asarray(bounds_max)
+    out["clip_input_features"] = True
+    return out
+
+
+def resolve_train_input_bounds(model) -> tuple[np.ndarray, np.ndarray]:
+    """Return per-feature train bounds stored on a clipping-enabled checkpoint."""
+    if hasattr(model, "train_input_min") and hasattr(model, "train_input_max"):
+        return (
+            np.asarray(model.train_input_min, dtype=float),
+            np.asarray(model.train_input_max, dtype=float),
+        )
+    data_dict = getattr(model, "data_dict", None) or {}
+    if "train_input_min" in data_dict and "train_input_max" in data_dict:
+        return (
+            np.asarray(data_dict["train_input_min"], dtype=float),
+            np.asarray(data_dict["train_input_max"], dtype=float),
+        )
+    raise ValueError(
+        "clip_input_features is enabled but the model checkpoint has no train input bounds. "
+        "Retrain the model with training.clip_input_features enabled."
+    )
+
+
+def clip_inputs_to_train_bounds(inputs: np.ndarray, model) -> tuple[np.ndarray, int]:
+    """Clip a 2D input matrix using checkpoint bounds; return matrix and changed-value count."""
+    values = np.asarray(inputs, dtype=float)
+    bounds_min, bounds_max = resolve_train_input_bounds(model)
+    if values.ndim != 2:
+        raise ValueError(f"Expected 2D input array, got shape {values.shape}.")
+    if bounds_min.shape != (values.shape[1],) or bounds_max.shape != (values.shape[1],):
+        raise ValueError(
+            "Input clipping bounds do not match feature count: "
+            f"input={values.shape[1]}, min={bounds_min.shape}, max={bounds_max.shape}."
+        )
+    clipped = np.clip(values, bounds_min, bounds_max)
+    return clipped, int(np.count_nonzero(clipped != values))
+
+
 def attach_nondim_metadata_from_data_dict(model, data_dict: dict) -> None:
     """Copy non-dimensional R/S/L training metadata from jax pickle onto the model checkpoint."""
     if data_dict.get("nondim_rsl"):

@@ -49,6 +49,10 @@ class NeuralNet:
             self.data_dict = load_dict(jax_arrays_path)
 
         attach_nondim_metadata_from_data_dict(self, self.data_dict)
+        self.clip_input_features = bool(self.data_dict.get("clip_input_features", False))
+        if self.clip_input_features:
+            self.train_input_min = jnp.asarray(self.data_dict["train_input_min"])
+            self.train_input_max = jnp.asarray(self.data_dict["train_input_max"])
 
         self.model_name_suffix = network_params.get("model_name_suffix", "")
         self.activation = resolve_activation_from_network_params(network_params)

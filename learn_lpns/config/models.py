@@ -176,20 +176,26 @@ class StenosisGenerationLimitConfig(BaseModel):
     )
     junction_max_generation: float = Field(
         default=1.0,
-        ge=0.0,
-        description="Inclusive junction stenosis generation bound (inlet-vessel generation per junction row).",
+        ge=-1.0,
+        description=(
+            "Inclusive junction stenosis generation bound (inlet-vessel generation per junction row). "
+            "Use -1 to disable stenosis for all junctions (no generation is <= -1)."
+        ),
     )
     vessel_max_generation: float = Field(
         default=1.0,
-        ge=0.0,
-        description="Inclusive vessel stenosis generation bound (each vessel's own bifurcation generation).",
+        ge=-1.0,
+        description=(
+            "Inclusive vessel stenosis generation bound (each vessel's own bifurcation generation). "
+            "Use -1 to disable stenosis for all vessels (no generation is <= -1)."
+        ),
     )
     max_generation: float | None = Field(
         default=None,
-        ge=0.0,
+        ge=-1.0,
         description=(
             "Deprecated legacy alias: when set, overrides both junction_max_generation and "
-            "vessel_max_generation to this value."
+            "vessel_max_generation to this value. Use -1 to disable stenosis for all elements."
         ),
     )
 
@@ -359,6 +365,13 @@ class TrainingConfig(BaseModel):
         description=(
             "Clip R/S/L NN predictions at inference to train-set output_rri min/max "
             "stored on the model checkpoint."
+        ),
+    )
+    clip_input_features: bool = Field(
+        default=False,
+        description=(
+            "Clip NN input features to per-feature train-set min/max during validation "
+            "and inference. Training rows are unchanged because they define the bounds."
         ),
     )
     nondimensionalize_rsl: bool = Field(

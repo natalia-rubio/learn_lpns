@@ -13,6 +13,8 @@ Usage:
   python -m learn_lpns.visualizations.cv_max_pct_error_by_config_barchart VMR_rigid_aorta_adults \\
     --configs base gen_loss --output configs_comparison.pdf
   python -m learn_lpns.visualizations.cv_max_pct_error_by_config_barchart --bar_thickness_scale 1.3
+  python -m learn_lpns.visualizations.cv_max_pct_error_by_config_barchart VMR_pulmo \\
+    --metric pressure_mean_rel_error   # MAPE; also pressure_max_rel_error, pressure_max_error, pressure_mse
 
 Set DEFAULT_SET_NAMES / DEFAULT_RUN_CONFIGS below to avoid repeating long CLI lists.
 """
@@ -32,8 +34,11 @@ import numpy as np
 from scipy import stats
 
 from learn_lpns.config import get_pipeline_config
+from learn_lpns.visualizations.cv_pressure_max_pct_error_barchart import METRIC_CONFIG
 from learn_lpns.visualizations.matplotlib_tex import configure_matplotlib_latex, plot_label
 from learn_lpns.zerod_calibration.modality_paths import read_cv_metric_from_row
+
+DEFAULT_METRIC = "pressure_max_rel_error"
 
 # Display name for each run config (config subfolder name -> label on y-axis).
 # Value can be a string (single line) or a list/tuple of strings (multiple lines, joined by newline).
@@ -105,7 +110,6 @@ def _display_name_to_label(display_spec):
     return str(display_spec)
 
 
-PREFIX_REL = "PressureMaxRelError_"
 # Modality for the metric: NN junction + vessel (Learned Junctions and Vessels)
 MODALITY_COLUMN = "BloodVesselJunction_NN_plus_Vessel_NN"
 
@@ -114,8 +118,8 @@ def _isnan(x):
     return x != x
 
 
-def _discover_configs(data_root, set_name, geometry_variant):
-    """Find subfolders under results/cross_validation/<set_name>/ with pressure_max_rel_error CSV."""
+def _discover_configs(data_root, set_name, geometry_variant, csv_suffix):
+    """Find subfolders under results/cross_validation/<set_name>/ with the metric CSV."""
     base_dir = os.path.join(data_root, "cross_validation", set_name)
     if not os.path.isdir(base_dir):
         return []
@@ -124,28 +128,19 @@ def _discover_configs(data_root, set_name, geometry_variant):
         sub = os.path.join(base_dir, name)
         if not os.path.isdir(sub):
             continue
-        path = os.path.join(sub, f"{geometry_variant}_cv_summary_pressure_max_rel_error.csv")
+        path = os.path.join(sub, f"{geometry_variant}_cv_summary{csv_suffix}")
         if os.path.isfile(path):
             configs.append(name)
     return configs
 
 
-def _load_mean_max_rel_error(path, modality=MODALITY_COLUMN):
+def _load_mean_std_n(path, col_prefix, modality=MODALITY_COLUMN):
     """
-    Load the 'mean' row from the pressure max rel error CSV and return the value
-    for the given modality column (fraction, 0–1). Default: NN junction+vessel.
+    Load mean, std, and number of trials from the metric CSV for the given modality.
+    Returns (mean, std, n) in raw CSV units; std is nan if n < 2.
     """
-    mean_frac, _, _ = _load_mean_std_n(path, modality)
-    return mean_frac
-
-
-def _load_mean_std_n(path, modality=MODALITY_COLUMN):
-    """
-    Load mean, std, and number of trials from the pressure max rel error CSV for the
-    given modality. Returns (mean_frac, std_frac, n); std_frac is nan if n < 2.
-    """
-    mean_frac = float("nan")
-    std_frac = float("nan")
+    mean_val = float("nan")
+    std_val = float("nan")
     n = 0
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
@@ -154,12 +149,12 @@ def _load_mean_std_n(path, modality=MODALITY_COLUMN):
             if tid in ("", "mean", "std"):
                 if tid == "mean":
                     try:
-                        mean_frac = float(read_cv_metric_from_row(row, PREFIX_REL, modality) or float("nan"))
+                        mean_val = float(read_cv_metric_from_row(row, col_prefix, modality) or float("nan"))
                     except (ValueError, TypeError):
                         pass
                 elif tid == "std":
                     try:
-                        std_frac = float(read_cv_metric_from_row(row, PREFIX_REL, modality) or float("nan"))
+                        std_val = float(read_cv_metric_from_row(row, col_prefix, modality) or float("nan"))
                     except (ValueError, TypeError):
                         pass
                 continue
@@ -168,7 +163,7 @@ def _load_mean_std_n(path, modality=MODALITY_COLUMN):
                 n += 1
             except ValueError:
                 continue
-    return mean_frac, std_frac, n
+    return mean_val, std_val, n
 
 
 def _ci95_half_width_frac(std_frac, n):
@@ -201,6 +196,16 @@ def main():
         "-g",
         default="bifurcations_EL",
         help="Geometry variant for CSV filenames (default: bifurcations_EL)",
+    )
+    parser.add_argument(
+        "--metric",
+        "-m",
+        default=DEFAULT_METRIC,
+        choices=list(METRIC_CONFIG.keys()),
+        help=(
+            "Pressure metric to plot (default: pressure_max_rel_error). "
+            "pressure_mean_rel_error is MAPE."
+        ),
     )
     parser.add_argument(
         "--configs",
@@ -272,6 +277,14 @@ def main():
         raise SystemExit("Provide at least one set name (positional), or configure cohorts.default_cv_set_names.")
     geometry_variant = args.geometry
 
+    metric_cfg = METRIC_CONFIG[args.metric]
+    csv_suffix = metric_cfg["csv_suffix"]
+    col_prefix = metric_cfg["col_prefix"]
+    metric_scale = float(metric_cfg["scale"])
+    is_percent = metric_scale == 100.0
+    # Default output stem mirrors the per-trial chart naming (e.g. _max_pct_error).
+    metric_out_stem = metric_cfg["out_suffix"][: -len(".pdf")]
+
     # Resolve list of configs: each entry is "config_suffix" or "config_suffix:variant" (variant override for that bar)
     if args.configs:
         config_entries = [c.strip() for c in args.configs if c.strip()]
@@ -290,7 +303,7 @@ def main():
             else:
                 configs.append((c, geometry_variant, c))
     else:
-        discovered = _discover_configs(data_root, set_names[0], geometry_variant)
+        discovered = _discover_configs(data_root, set_names[0], geometry_variant, csv_suffix)
         configs = [(c, geometry_variant, c) for c in discovered]
     if not configs:
         raise SystemExit(
@@ -326,7 +339,7 @@ def main():
                 "cross_validation",
                 sn,
                 config_suffix,
-                f"{variant_to_use}_cv_summary_pressure_max_rel_error.csv",
+                f"{variant_to_use}_cv_summary{csv_suffix}",
             )
             if not os.path.isfile(path):
                 warnings.warn(
@@ -336,12 +349,12 @@ def main():
                 vals.append(float("nan"))
                 cis.append(float("nan"))
                 continue
-            mean_frac, std_frac, n = _load_mean_std_n(path)
-            val_pct = mean_frac * 100.0 if not _isnan(mean_frac) else float("nan")
-            ci_half_frac = _ci95_half_width_frac(std_frac, n)
-            ci_half_pct = ci_half_frac * 100.0 if not _isnan(mean_frac) else float("nan")
-            vals.append(val_pct)
-            cis.append(ci_half_pct)
+            mean_val, std_val, n = _load_mean_std_n(path, col_prefix)
+            val_scaled = mean_val * metric_scale if not _isnan(mean_val) else float("nan")
+            ci_half = _ci95_half_width_frac(std_val, n)
+            ci_half_scaled = ci_half * metric_scale if not _isnan(mean_val) else float("nan")
+            vals.append(val_scaled)
+            cis.append(ci_half_scaled)
         if all(_isnan(v) for v in vals):
             warnings.warn(f"Skipping config {display_key!r}: no data for any set.", stacklevel=1)
             continue
@@ -453,7 +466,7 @@ def main():
 
     ax.set_xlabel(
         plot_label(
-            r"Max. Inlet Pressure Error over Cardiac Cycle (MPE) (\%)",
+            metric_cfg["ylabel"],
             use_latex=use_latex,
         ),
         fontsize=PLOT_FONT_SIZE,
@@ -514,7 +527,10 @@ def main():
                 x_text = x_max + cap_label_offset
             ha = "left"
             ci_show = 0.0 if _isnan(ci) else ci
-            label_text = rf"{val:.1f}\% $\pm$ {ci_show:.1f}\%"
+            if is_percent:
+                label_text = rf"{val:.1f}\% $\pm$ {ci_show:.1f}\%"
+            else:
+                label_text = rf"{val:.3g} $\pm$ {ci_show:.3g}"
             ax.text(
                 x_text,
                 y[i],
@@ -533,7 +549,7 @@ def main():
                 data_root,
                 "cross_validation",
                 set_names[0],
-                f"{geometry_variant}_max_pct_error_by_config.pdf",
+                f"{geometry_variant}{metric_out_stem}_by_config.pdf",
             )
         else:
             set_slug = "__".join(set_names)
@@ -541,7 +557,7 @@ def main():
                 data_root,
                 "cross_validation",
                 set_names[0],
-                f"{geometry_variant}_max_pct_error_by_config_{len(set_names)}sets__{set_slug}.pdf",
+                f"{geometry_variant}{metric_out_stem}_by_config_{len(set_names)}sets__{set_slug}.pdf",
             )
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig.savefig(out_path, dpi=args.dpi, bbox_inches="tight")
