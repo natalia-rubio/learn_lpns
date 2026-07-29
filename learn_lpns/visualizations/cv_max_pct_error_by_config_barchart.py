@@ -15,6 +15,8 @@ Usage:
   python -m learn_lpns.visualizations.cv_max_pct_error_by_config_barchart --bar_thickness_scale 1.3
   python -m learn_lpns.visualizations.cv_max_pct_error_by_config_barchart VMR_pulmo \\
     --metric pressure_mean_rel_error   # MAPE; also pressure_max_rel_error, pressure_max_error, pressure_mse
+  python -m learn_lpns.visualizations.cv_max_pct_error_by_config_barchart \\
+    VMR_aorta VMR_abdo VMR_pulmo VMR_all --ignore_non_converged
 
 Set DEFAULT_SET_NAMES / DEFAULT_RUN_CONFIGS below to avoid repeating long CLI lists.
 """
@@ -40,7 +42,13 @@ from learn_lpns.visualizations.matplotlib_tex import (
     plot_label,
     savefig_with_latex_fallback,
 )
-from learn_lpns.zerod_calibration.modality_paths import read_cv_metric_from_row
+from learn_lpns.zerod_calibration.forward_mse import parse_mse_comparison_csv
+from learn_lpns.zerod_calibration.modality_paths import (
+    NN_JUNCTION_AND_VESSEL_SUFFIX,
+    NN_JUNCTION_ONLY_SUFFIX,
+    NN_VESSEL_ONLY_SUFFIX,
+    read_cv_metric_from_row,
+)
 
 DEFAULT_METRIC = "pressure_max_rel_error"
 
@@ -117,6 +125,16 @@ def _display_name_to_label(display_spec):
 # Modality for the metric: NN junction + vessel (Learned Junctions and Vessels)
 MODALITY_COLUMN = "BloodVesselJunction_NN_plus_Vessel_NN"
 
+# CV summary column prefix -> per-geometry mse_comparison.csv summary key
+_COL_PREFIX_TO_MSE_KEY = {
+    "PressureMaxRelError_": "mean_pressure_max_rel_error",
+    "PressureMeanRelError_": "mean_pressure_mean_rel_error",
+    "PressureMaxError_": "mean_pressure_max_error",
+    "PressureMSE_": "mean_pressure_mse",
+}
+
+_ZERO_CHECK_FIELDS = ("flow_in", "flow_out", "pressure_in", "pressure_out")
+
 
 def _isnan(x):
     return x != x
@@ -168,6 +186,133 @@ def _load_mean_std_n(path, col_prefix, modality=MODALITY_COLUMN):
             except ValueError:
                 continue
     return mean_val, std_val, n
+
+
+def _is_all_zero_solution(results_csv_path):
+    """True if the 0D results CSV is the all-zeros solver-fallback solution."""
+    if not os.path.isfile(results_csv_path):
+        return False
+    try:
+        with open(results_csv_path, newline="") as f:
+            reader = csv.DictReader(f)
+            fields = [c for c in _ZERO_CHECK_FIELDS if c in (reader.fieldnames or [])]
+            if not fields:
+                return False
+            saw_row = False
+            for row in reader:
+                saw_row = True
+                for field in fields:
+                    raw = (row.get(field) or "").strip()
+                    if raw == "":
+                        continue
+                    try:
+                        if float(raw) != 0.0:
+                            return False
+                    except ValueError:
+                        return False
+            return saw_row
+    except OSError:
+        return False
+
+
+def _modality_results_csv(geo_dir, geometry_variant, modality=MODALITY_COLUMN):
+    """Path to the forward-sim results CSV for the plotted modality."""
+    if modality == "BloodVesselJunction_NN_plus_Vessel_NN":
+        suffix = NN_JUNCTION_AND_VESSEL_SUFFIX
+    elif modality == "BloodVesselJunction_NN":
+        suffix = NN_JUNCTION_ONLY_SUFFIX
+    elif modality == "Vessel_NN":
+        suffix = NN_VESSEL_ONLY_SUFFIX
+    else:
+        return None
+    return os.path.join(geo_dir, f"{geometry_variant}_NN_{suffix}_results.csv")
+
+
+def _load_mean_std_n_ignoring_non_converged(
+    summary_path,
+    col_prefix,
+    *,
+    zero_d_root,
+    set_name,
+    config_suffix,
+    geometry_variant,
+    modality=MODALITY_COLUMN,
+):
+    """
+    Recompute mean/std/n from per-geometry MSE, skipping all-zero (non-converged) solutions.
+
+    If no all-zero solutions are found, returns the summary CSV mean/std (unchanged).
+    Returns (mean, std, n, had_convergence_issues) in raw CSV units.
+    """
+    mse_key = _COL_PREFIX_TO_MSE_KEY.get(col_prefix)
+    if mse_key is None:
+        warnings.warn(
+            f"No per-geometry MSE key for column prefix {col_prefix!r}; "
+            "falling back to summary mean/std.",
+            stacklevel=2,
+        )
+        mean_val, std_val, n = _load_mean_std_n(summary_path, col_prefix, modality=modality)
+        return mean_val, std_val, n, False
+
+    zero_d_base = os.path.join(zero_d_root, "zeroD", set_name, config_suffix)
+    mse_name = f"{geometry_variant}_mse_comparison.csv"
+
+    trial_rows = []
+    had_issues = False
+    with open(summary_path, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            tid = (row.get("trial_id") or "").strip()
+            if tid in ("", "mean", "std"):
+                break
+            try:
+                int(tid)
+            except ValueError:
+                break
+            geos = [g.strip() for g in (row.get("val_geometries") or "").split(",") if g.strip()]
+            trial_rows.append((tid, geos))
+
+    # Detect all-zero solutions among CV validation geometries.
+    non_converged = set()
+    for _, geos in trial_rows:
+        for geo in geos:
+            results_csv = _modality_results_csv(
+                os.path.join(zero_d_base, geo),
+                geometry_variant,
+                modality=modality,
+            )
+            if results_csv and _is_all_zero_solution(results_csv):
+                non_converged.add(geo)
+                had_issues = True
+
+    if not had_issues:
+        mean_val, std_val, n = _load_mean_std_n(summary_path, col_prefix, modality=modality)
+        return mean_val, std_val, n, False
+
+    trial_means = []
+    for _, geos in trial_rows:
+        geo_vals = []
+        for geo in geos:
+            if geo in non_converged:
+                continue
+            mse_path = os.path.join(zero_d_base, geo, mse_name)
+            parsed = parse_mse_comparison_csv(mse_path)
+            raw = parsed.get(modality, {}).get(mse_key)
+            if raw is None or (isinstance(raw, float) and _isnan(raw)):
+                continue
+            try:
+                geo_vals.append(float(raw))
+            except (TypeError, ValueError):
+                continue
+        if geo_vals:
+            trial_means.append(float(np.mean(geo_vals)))
+
+    if not trial_means:
+        return float("nan"), float("nan"), 0, True
+    mean_val = float(np.mean(trial_means))
+    # Match CV summary writer: np.nanstd with default ddof=0
+    std_val = float(np.std(trial_means, ddof=0)) if len(trial_means) > 1 else 0.0
+    return mean_val, std_val, len(trial_means), True
 
 
 def _ci95_half_width_frac(std_frac, n):
@@ -276,6 +421,19 @@ def main():
             "Default: keep --configs / DEFAULT_RUN_CONFIGS / discovery order."
         ),
     )
+    parser.add_argument(
+        "--ignore_non_converged",
+        action="store_true",
+        help=(
+            "Exclude all-zero (non-converged) forward solutions when computing bar means/CIs. "
+            "Bars that dropped any such geometry are marked with * and a footnote."
+        ),
+    )
+    parser.add_argument(
+        "--zero_d_root",
+        default="data",
+        help="Root containing zeroD/<set>/<config>/<geo>/ results (default: data).",
+    )
     args = parser.parse_args()
 
     data_root = args.data_root.rstrip(os.sep)
@@ -341,10 +499,12 @@ def main():
 
     # Load mean, std, n per (config, set); values[ci, si], ci_half_widths[ci, si]
     n_sets = len(set_names)
+    zero_d_root = args.zero_d_root.rstrip(os.sep)
     rows = []
     for config_suffix, variant_to_use, display_key in configs:
         vals = []
         cis = []
+        flags = []
         for sn in set_names:
             path = os.path.join(
                 data_root,
@@ -360,13 +520,26 @@ def main():
                 )
                 vals.append(float("nan"))
                 cis.append(float("nan"))
+                flags.append(False)
                 continue
-            mean_val, std_val, n = _load_mean_std_n(path, col_prefix)
+            if args.ignore_non_converged:
+                mean_val, std_val, n, had_issues = _load_mean_std_n_ignoring_non_converged(
+                    path,
+                    col_prefix,
+                    zero_d_root=zero_d_root,
+                    set_name=sn,
+                    config_suffix=config_suffix,
+                    geometry_variant=variant_to_use,
+                )
+            else:
+                mean_val, std_val, n = _load_mean_std_n(path, col_prefix)
+                had_issues = False
             val_scaled = mean_val * metric_scale if not _isnan(mean_val) else float("nan")
             ci_half = _ci95_half_width_frac(std_val, n)
             ci_half_scaled = ci_half * metric_scale if not _isnan(mean_val) else float("nan")
             vals.append(val_scaled)
             cis.append(ci_half_scaled)
+            flags.append(bool(had_issues))
         if all(_isnan(v) for v in vals):
             warnings.warn(f"Skipping config {display_key!r}: no data for any set.", stacklevel=1)
             continue
@@ -376,6 +549,7 @@ def main():
                 "label": _label_for_key(display_key),
                 "values": vals,
                 "ci_half": cis,
+                "convergence_issues": flags,
             }
         )
 
@@ -395,6 +569,7 @@ def main():
     config_labels = [r["label"] for r in rows]
     values = np.array([r["values"] for r in rows], dtype=float)
     ci_half_widths = np.array([r["ci_half"] for r in rows], dtype=float)
+    convergence_issues = np.array([r["convergence_issues"] for r in rows], dtype=bool)
 
     use_latex = configure_matplotlib_latex(plt)
     if not use_latex:
@@ -501,7 +676,13 @@ def main():
     for spine in ax.spines.values():
         spine.set_visible(False)
     if n_sets > 1:
-        ax.legend(loc="upper right", fontsize=PLOT_FONT_SIZE, framealpha=0)
+        ax.legend(
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1.0),
+            fontsize=PLOT_FONT_SIZE,
+            framealpha=0,
+            borderaxespad=0.0,
+        )
 
     # Fade out clipped bars on the right when xmax is set (white overlay, alpha 0 -> 1 left to right)
     fade_n = 40
@@ -546,14 +727,15 @@ def main():
                 x_text = x_max + cap_label_offset
             ha = "left"
             ci_show = 0.0 if _isnan(ci) else ci
+            star = r"$^{*}$" if convergence_issues[i, s] else ""
             if is_percent:
                 label_text = plot_label(
-                    rf"{val:.1f}\% $\pm$ {ci_show:.1f}\%",
+                    rf"{val:.1f}\% $\pm$ {ci_show:.1f}\%{star}",
                     use_latex=use_latex,
                 )
             else:
                 label_text = plot_label(
-                    rf"{val:.3g} $\pm$ {ci_show:.3g}",
+                    rf"{val:.3g} $\pm$ {ci_show:.3g}{star}",
                     use_latex=use_latex,
                 )
             ax.text(
@@ -566,7 +748,21 @@ def main():
                 clip_on=clip_labels,
             )
 
+    show_convergence_footnote = bool(args.ignore_non_converged and np.any(convergence_issues))
+
     plt.tight_layout()
+    if show_convergence_footnote:
+        fig.subplots_adjust(bottom=0.10)
+        footnote = plot_label(r"$^{*}$ convergence issues", use_latex=use_latex)
+        fig.text(
+            0.02,
+            0.02,
+            footnote,
+            ha="left",
+            va="bottom",
+            fontsize=max(10, PLOT_FONT_SIZE - 4),
+        )
+
     out_path = args.output
     if not out_path:
         if len(set_names) == 1:

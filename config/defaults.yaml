@@ -72,7 +72,7 @@ training:
   generation_weighted_loss_decay_base: 2.0   # default gen_loss weight = 1/base^generation; override per R/S/L below
   multi_output_rri: false                 # if true, train one 3-output network (R,S,L) instead of three separate nets
   activation: relu #leaky_relu                         # default hidden-layer activation (relu | leaky_relu | tanh)
-  clip_predictions: false        # if true, clip R/S/L predictions to train-set min/max at inference
+  clip_predictions: true        # if true, clip R/S/L predictions to train-set min/max at inference
   clip_input_features: false     # if true, clip validation/inference inputs to train-set feature min/max
   nondimensionalize_rsl: false   # if true, train on R*/S*/L* and map back to physical R/S/L at inference
   include_speed_change: false     # junction feature; off for gen_loss gold; QR overlay may enable

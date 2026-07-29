@@ -356,24 +356,16 @@ def main():
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    # Column headers aligned with bar positions (same x offsets as bar labels below).
-    header_y = 1.04
-    header_fs = 10
-    x_center = float(np.mean(x))
-    for i, modality in enumerate(MODALITY_ORDER):
-        ax.text(
-            x_center + offsets[i],
-            header_y,
-            _multiline_label(MODALITY_LABEL[modality]),
-            transform=ax.get_xaxis_transform(),
-            ha="center",
-            va="bottom",
-            fontsize=header_fs,
-            color=_modality_color(modality),
-            linespacing=0.85,
-        )
+    n_legend = len(MODALITY_ORDER)
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.18),
+        ncol=n_legend,
+        frameon=False,
+        fontsize=16,
+    )
 
-    plt.tight_layout(rect=(0, 0, 1, 0.86))
+    plt.tight_layout(rect=(0, 0, 1, 0.88))
 
     if args.output:
         out_path = args.output
