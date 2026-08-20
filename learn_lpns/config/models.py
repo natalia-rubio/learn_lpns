@@ -63,8 +63,9 @@ class CalibrationConfig(BaseModel):
     decoupled_nonneg_r: bool = Field(
         default=True,
         description=(
-            "When using decoupled_ls with quadratic_resistor (calibrate_stenosis_coefficient), "
-            "enforce R_poiseuille >= 0 in bounded least-squares fits. Ignored when S is not calibrated."
+            "When using decoupled_ls, enforce R_poiseuille >= 0 only on per-element RSL fits "
+            "(stenosis calibrated for that element). Ignored for RL fits and when S is not "
+            "calibrated at the config level."
         ),
     )
     decoupled_nonneg_l: bool = Field(

@@ -14,6 +14,7 @@ from learn_lpns.zerod_calibration.decoupled_ls_calibration import (
     _fit_rlc,
     _is_connector_vessel,
     calibrate_decoupled_ls,
+    collect_bound_activation_rows,
     infer_set_geo_from_zerod_path,
     rsl_fits_output_dir,
 )
@@ -97,12 +98,14 @@ def test_fit_rlc_recovers_known_parameters_without_stenosis():
     dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
-    r_fit, s_fit, l_fit, rel_err = _fit_rlc(delta_p, q_in, dq_in, fit_stenosis=False)
+    fit = _fit_rlc(delta_p, q_in, dq_in, fit_stenosis=False)
 
-    assert s_fit == 0.0
-    assert rel_err < 1e-10
-    assert r_fit == pytest.approx(r_true, rel=1e-6)
-    assert l_fit == pytest.approx(l_true, rel=1e-6)
+    assert fit.stenosis == 0.0
+    assert fit.rel_err < 1e-10
+    assert fit.r_poiseuille == pytest.approx(r_true, rel=1e-6)
+    assert fit.inductance == pytest.approx(l_true, rel=1e-6)
+    assert fit.r_lower_active is False
+    assert fit.l_lower_active is False
 
 
 def test_fit_rlc_l2_shrinks_coefficients_toward_zero():
@@ -114,8 +117,8 @@ def test_fit_rlc_l2_shrinks_coefficients_toward_zero():
     dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
-    r_unreg, _, l_unreg, _ = _fit_rlc(delta_p, q_in, dq_in, fit_stenosis=False)
-    r_reg, _, l_reg, _ = _fit_rlc(
+    unreg = _fit_rlc(delta_p, q_in, dq_in, fit_stenosis=False)
+    reg = _fit_rlc(
         delta_p,
         q_in,
         dq_in,
@@ -124,10 +127,10 @@ def test_fit_rlc_l2_shrinks_coefficients_toward_zero():
         l2_l=10.0,
     )
 
-    assert r_unreg == pytest.approx(r_true, rel=1e-5)
-    assert l_unreg == pytest.approx(l_true, rel=1e-5)
-    assert r_reg < r_unreg
-    assert l_reg < l_unreg
+    assert unreg.r_poiseuille == pytest.approx(r_true, rel=1e-5)
+    assert unreg.inductance == pytest.approx(l_true, rel=1e-5)
+    assert reg.r_poiseuille < unreg.r_poiseuille
+    assert reg.inductance < unreg.inductance
 
 
 def test_fit_rlc_enforces_nonnegative_r_and_l():
@@ -144,13 +147,13 @@ def test_fit_rlc_enforces_nonnegative_r_and_l():
     dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
-    r_fit, s_fit, l_fit, _rel_err = _fit_rlc(
+    fit = _fit_rlc(
         delta_p, q_in, dq_in, fit_stenosis=True, nonneg_r=True, nonneg_l=True
     )
 
-    assert r_fit >= 0.0
-    assert l_fit >= 0.0
-    assert s_fit == pytest.approx(s_true, rel=1e-4)
+    assert fit.r_poiseuille >= 0.0
+    assert fit.inductance >= 0.0
+    assert fit.stenosis == pytest.approx(s_true, rel=1e-4)
 
 
 def test_fit_rlc_allows_negative_r_and_l_when_nonneg_disabled():
@@ -162,7 +165,7 @@ def test_fit_rlc_allows_negative_r_and_l_when_nonneg_disabled():
     dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
-    r_fit, s_fit, l_fit, rel_err = _fit_rlc(
+    fit = _fit_rlc(
         delta_p,
         q_in,
         dq_in,
@@ -171,10 +174,12 @@ def test_fit_rlc_allows_negative_r_and_l_when_nonneg_disabled():
         nonneg_l=False,
     )
 
-    assert rel_err < 1e-10
-    assert r_fit == pytest.approx(r_true, rel=1e-5)
-    assert l_fit == pytest.approx(l_true, rel=1e-5)
-    assert s_fit == pytest.approx(0.0)
+    assert fit.rel_err < 1e-10
+    assert fit.r_poiseuille == pytest.approx(r_true, rel=1e-5)
+    assert fit.inductance == pytest.approx(l_true, rel=1e-5)
+    assert fit.stenosis == pytest.approx(0.0)
+    assert fit.r_lower_active is False
+    assert fit.l_lower_active is False
 
 
 def test_fit_rlc_recovers_known_parameters_with_stenosis():
@@ -191,16 +196,83 @@ def test_fit_rlc_recovers_known_parameters_with_stenosis():
     dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
     delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
 
-    r_fit, s_fit, l_fit, rel_err = _fit_rlc(delta_p, q_in, dq_in, fit_stenosis=True)
+    fit = _fit_rlc(delta_p, q_in, dq_in, fit_stenosis=True)
 
-    assert rel_err < 1e-10
-    assert r_fit == pytest.approx(r_true, rel=1e-5)
-    assert l_fit == pytest.approx(l_true, rel=1e-5)
-    assert s_fit == pytest.approx(s_true, rel=1e-5)
+    assert fit.rel_err < 1e-10
+    assert fit.r_poiseuille == pytest.approx(r_true, rel=1e-5)
+    assert fit.inductance == pytest.approx(l_true, rel=1e-5)
+    assert fit.stenosis == pytest.approx(s_true, rel=1e-5)
+    assert fit.r_lower_active is False
+    assert fit.l_lower_active is False
+
+
+def test_fit_rlc_reports_lower_bounds_active_when_unconstrained_would_be_negative():
+    r_true, l_true = -0.05, -0.2
+    config = _synthetic_vessel_config(r_true=r_true, l_true=l_true, s_true=0.0, fit_stenosis=False)
+    y = config["y"]
+    vessel_name = "branch0_seg0"
+    q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
+    dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
+    delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
+
+    fit = _fit_rlc(
+        delta_p,
+        q_in,
+        dq_in,
+        fit_stenosis=False,
+        nonneg_r=True,
+        nonneg_l=True,
+    )
+
+    assert fit.r_poiseuille >= 0.0
+    assert fit.inductance >= 0.0
+    assert fit.r_lower_active is True
+    assert fit.l_lower_active is True
+
+
+def test_fit_rlc_r_lower_active_false_when_nonneg_r_disabled():
+    r_true, l_true = -0.05, -0.2
+    config = _synthetic_vessel_config(r_true=r_true, l_true=l_true, s_true=0.0, fit_stenosis=False)
+    y = config["y"]
+    vessel_name = "branch0_seg0"
+    q_in = np.asarray(y[f"flow:INFLOW:{vessel_name}"])
+    dq_in = np.asarray(config["dy"][f"flow:INFLOW:{vessel_name}"])
+    delta_p = np.asarray(y[f"pressure:INFLOW:{vessel_name}"]) - np.asarray(y["pressure:branch0_seg0:OUT"])
+
+    fit = _fit_rlc(
+        delta_p,
+        q_in,
+        dq_in,
+        fit_stenosis=False,
+        nonneg_r=False,
+        nonneg_l=True,
+    )
+
+    assert fit.r_poiseuille < 0.0
+    assert fit.inductance >= 0.0
+    assert fit.r_lower_active is False
+    assert fit.l_lower_active is True
+
+
+def test_collect_bound_activation_rows_marks_active_bounds():
+    config = _synthetic_vessel_config(r_true=-0.05, l_true=-0.2, s_true=0.0, fit_stenosis=True)
+    rows = collect_bound_activation_rows(config, nonneg_r=True, nonneg_l=True)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["element_kind"] == "vessel"
+    assert row["fit_stenosis"] is True
+    assert row["nonneg_r_enabled"] is True
+    assert row["nonneg_l_enabled"] is True
+    assert row["r_lower_active"] is True
+    assert row["l_lower_active"] is True
+    assert row["R"] >= 0.0
+    assert row["L"] >= 0.0
+    # Input config is not mutated.
+    assert config["vessels"][0]["zero_d_element_values"]["R_poiseuille"] == 1.0
 
 
 def test_calibrate_decoupled_ls_skips_nonneg_r_without_stenosis():
-    """decoupled_nonneg_r applies only when calibrate_stenosis_coefficient is true."""
+    """decoupled_nonneg_r applies only when the element fits stenosis (RSL)."""
     config = _synthetic_vessel_config(r_true=-0.05, l_true=0.15, s_true=0.0, fit_stenosis=False)
     out = calibrate_decoupled_ls(config, nonneg_r=True, nonneg_l=False)
     values = out["vessels"][0]["zero_d_element_values"]

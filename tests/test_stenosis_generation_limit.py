@@ -250,7 +250,25 @@ def test_calibrate_decoupled_ls_rl_for_high_generation_vessel():
     values = downstream["zero_d_element_values"]
     assert values["stenosis_coefficient"] == 0.0
     assert np.isfinite(values["R_poiseuille"])
-    assert values["R_poiseuille"] >= 0.0
+
+
+def test_calibrate_decoupled_ls_rl_allows_negative_r_under_qr():
+    """Generation-limited RL fits leave R unbounded even when QR/nonneg_r is on."""
+    r_true = -0.05
+    config = _synthetic_downstream_vessel_config(r_true=r_true, l_true=0.2, s_true=0.0)
+    out = calibrate_decoupled_ls(
+        config,
+        nonneg_r=True,
+        nonneg_l=True,
+        stenosis_generation_limit_enabled=True,
+        vessel_stenosis_generation_max=0.0,
+        junction_stenosis_generation_max=1.0,
+    )
+    downstream = next(v for v in out["vessels"] if v["vessel_name"] == "branch1_seg0")
+    values = downstream["zero_d_element_values"]
+    assert values["stenosis_coefficient"] == 0.0
+    assert values["R_poiseuille"] == pytest.approx(r_true, rel=1e-3)
+    assert values["L"] >= 0.0
 
 
 def test_calibrate_decoupled_ls_rsl_for_low_generation_vessel():

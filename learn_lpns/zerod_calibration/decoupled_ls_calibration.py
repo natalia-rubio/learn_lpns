@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import re
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 from scipy.optimize import lsq_linear
@@ -201,6 +202,17 @@ def _relative_fit_error(
     return rms_residual / rms_delta_p
 
 
+class FitRlcResult(NamedTuple):
+    """Decoupled LS coefficients plus lower-bound activation flags from ``lsq_linear``."""
+
+    r_poiseuille: float
+    stenosis: float
+    inductance: float
+    rel_err: float
+    r_lower_active: bool
+    l_lower_active: bool
+
+
 def _fit_rlc(
     delta_p: np.ndarray,
     q_in: np.ndarray,
@@ -212,7 +224,7 @@ def _fit_rlc(
     l2_l: float = 0.0,
     nonneg_r: bool = True,
     nonneg_l: bool = True,
-) -> tuple[float, float, float, float]:
+) -> FitRlcResult:
     """Fit R, S, L from local pressure drop; optional R/L lower bounds; optional L2 toward 0."""
     delta_p = np.asarray(delta_p, dtype=float)
     q_in = np.asarray(q_in, dtype=float)
@@ -233,18 +245,22 @@ def _fit_rlc(
         lower = np.array([r_lower, -np.inf, l_lower])
         upper = np.array([np.inf, np.inf, np.inf])
         l2_weights = np.array([l2_r, l2_stenosis, l2_l], dtype=float)
+        r_idx, l_idx = 0, 2
     else:
         design = np.column_stack([q, dq])
         lower = np.array([r_lower, l_lower])
         upper = np.array([np.inf, np.inf])
         l2_weights = np.array([l2_r, l2_l], dtype=float)
+        r_idx, l_idx = 0, 1
 
     if np.any(l2_weights > 0.0):
         reg_rows = np.diag(np.sqrt(l2_weights))
         design = np.vstack([design, reg_rows])
         dp = np.concatenate([dp, np.zeros(reg_rows.shape[0], dtype=float)])
 
-    coeffs = lsq_linear(design, dp, bounds=(lower, upper)).x
+    res = lsq_linear(design, dp, bounds=(lower, upper))
+    coeffs = res.x
+    active_mask = np.asarray(res.active_mask)
 
     if fit_stenosis:
         r_poiseuille, stenosis, inductance = (float(c) for c in coeffs)
@@ -252,8 +268,19 @@ def _fit_rlc(
         r_poiseuille, inductance = (float(c) for c in coeffs)
         stenosis = 0.0
 
+    # active_mask == -1 means the lower bound is active for that coefficient.
+    r_lower_active = bool(nonneg_r) and int(active_mask[r_idx]) == -1
+    l_lower_active = bool(nonneg_l) and int(active_mask[l_idx]) == -1
+
     rel_err = _relative_fit_error(delta_p, q_in, dq_in, r_poiseuille, stenosis, inductance)
-    return r_poiseuille, stenosis, inductance, rel_err
+    return FitRlcResult(
+        r_poiseuille=r_poiseuille,
+        stenosis=stenosis,
+        inductance=inductance,
+        rel_err=rel_err,
+        r_lower_active=r_lower_active,
+        l_lower_active=l_lower_active,
+    )
 
 
 def _warn_if_poor_fit(element_name: str, rel_err: float) -> None:
@@ -384,9 +411,9 @@ def calibrate_decoupled_ls(
     freeze_connector = bool(cal_params.get("freeze_connector_segments", True))
     nonneg_r = bool(nonneg_r) and fit_stenosis
     if nonneg_r and nonneg_l:
-        print("  decoupled_ls: R_poiseuille and L bounded >= 0")
+        print("  decoupled_ls: R_poiseuille bounded >= 0 on RSL fits only; L bounded >= 0")
     elif nonneg_r:
-        print("  decoupled_ls: R_poiseuille bounded >= 0; L unbounded")
+        print("  decoupled_ls: R_poiseuille bounded >= 0 on RSL fits only; L unbounded")
     elif nonneg_l:
         print("  decoupled_ls: R_poiseuille unbounded; L bounded >= 0")
     else:
@@ -495,7 +522,9 @@ def calibrate_decoupled_ls(
             else None
         )
         fit_stenosis_element = _fit_stenosis_for_element(element_gen, vessel_stenosis_generation_max)
-        r_poiseuille, stenosis, inductance, rel_err = _fit_rlc(
+        # R >= 0 only on RSL fits; RL (S=0) leaves R unbounded even under QR configs.
+        element_nonneg_r = nonneg_r and fit_stenosis_element
+        fit = _fit_rlc(
             delta_p,
             q_in,
             dq_in,
@@ -503,17 +532,24 @@ def calibrate_decoupled_ls(
             l2_r=l2_r,
             l2_stenosis=l2_stenosis,
             l2_l=l2_l,
-            nonneg_r=nonneg_r,
+            nonneg_r=element_nonneg_r,
             nonneg_l=nonneg_l,
         )
-        if not fit_stenosis_element:
-            stenosis = 0.0
+        stenosis = fit.stenosis if fit_stenosis_element else 0.0
 
-        values["R_poiseuille"] = r_poiseuille
-        values["L"] = inductance
+        values["R_poiseuille"] = fit.r_poiseuille
+        values["L"] = fit.inductance
         values["stenosis_coefficient"] = stenosis
-        _warn_if_poor_fit(vessel_name, rel_err)
-        _maybe_plot(vessel_name, delta_p, q_in, dq_in, r_poiseuille, stenosis, inductance)
+        _warn_if_poor_fit(vessel_name, fit.rel_err)
+        _maybe_plot(
+            vessel_name,
+            delta_p,
+            q_in,
+            dq_in,
+            fit.r_poiseuille,
+            stenosis,
+            fit.inductance,
+        )
 
     for junction in junctions:
         if junction.get("junction_type") != "BloodVesselJunction":
@@ -564,7 +600,8 @@ def calibrate_decoupled_ls(
                 continue
 
             delta_p, q_in, dq_in = resolved
-            r_poiseuille, stenosis, inductance, rel_err = _fit_rlc(
+            element_nonneg_r = nonneg_r and fit_stenosis_junction
+            fit = _fit_rlc(
                 delta_p,
                 q_in,
                 dq_in,
@@ -572,17 +609,24 @@ def calibrate_decoupled_ls(
                 l2_r=l2_r,
                 l2_stenosis=l2_stenosis,
                 l2_l=l2_l,
-                nonneg_r=nonneg_r,
+                nonneg_r=element_nonneg_r,
                 nonneg_l=nonneg_l,
             )
-            if not fit_stenosis_junction:
-                stenosis = 0.0
+            stenosis = fit.stenosis if fit_stenosis_junction else 0.0
 
-            r_list[outlet_index] = r_poiseuille
-            l_list[outlet_index] = inductance
+            r_list[outlet_index] = fit.r_poiseuille
+            l_list[outlet_index] = fit.inductance
             s_list[outlet_index] = stenosis
-            _warn_if_poor_fit(element_label, rel_err)
-            _maybe_plot(element_label, delta_p, q_in, dq_in, r_poiseuille, stenosis, inductance)
+            _warn_if_poor_fit(element_label, fit.rel_err)
+            _maybe_plot(
+                element_label,
+                delta_p,
+                q_in,
+                dq_in,
+                fit.r_poiseuille,
+                stenosis,
+                fit.inductance,
+            )
 
         junc_values["R_poiseuille"] = r_list
         junc_values["L"] = l_list
@@ -592,3 +636,198 @@ def calibrate_decoupled_ls(
         print(f"  stenosis_generation_limit: {rsl_fit_count} RSL fits, {rl_fit_count} RL fits (S=0)")
 
     return cali
+
+
+def collect_bound_activation_rows(
+    config: dict,
+    *,
+    l2_r: float = 0.0,
+    l2_stenosis: float = 0.0,
+    l2_l: float = 0.0,
+    nonneg_r: bool = True,
+    nonneg_l: bool = True,
+    stenosis_generation_limit_enabled: bool = False,
+    junction_stenosis_generation_max: float = 1.0,
+    vessel_stenosis_generation_max: float = 1.0,
+) -> list[dict[str, Any]]:
+    """
+    Re-run decoupled LS fits and return per-element bound-activation diagnostics.
+
+    Does not mutate the input config or write calibrated outputs / fit plots.
+    Bound enablement matches ``calibrate_decoupled_ls`` (R nonneg only on per-element
+    RSL fits when stenosis is calibrated at the config level).
+    """
+    return list(
+        _iter_bound_activation_rows(
+            config,
+            l2_r=l2_r,
+            l2_stenosis=l2_stenosis,
+            l2_l=l2_l,
+            nonneg_r=nonneg_r,
+            nonneg_l=nonneg_l,
+            stenosis_generation_limit_enabled=stenosis_generation_limit_enabled,
+            junction_stenosis_generation_max=junction_stenosis_generation_max,
+            vessel_stenosis_generation_max=vessel_stenosis_generation_max,
+        )
+    )
+
+
+def _iter_bound_activation_rows(
+    config: dict,
+    *,
+    l2_r: float = 0.0,
+    l2_stenosis: float = 0.0,
+    l2_l: float = 0.0,
+    nonneg_r: bool = True,
+    nonneg_l: bool = True,
+    stenosis_generation_limit_enabled: bool = False,
+    junction_stenosis_generation_max: float = 1.0,
+    vessel_stenosis_generation_max: float = 1.0,
+) -> Iterator[dict[str, Any]]:
+    cali = copy.deepcopy(config)
+    cal_params = cali.get("calibration_parameters", {})
+    fit_stenosis = bool(cal_params.get("calibrate_stenosis_coefficient", False))
+    freeze_connector = bool(cal_params.get("freeze_connector_segments", True))
+    nonneg_r = bool(nonneg_r) and fit_stenosis
+    nonneg_l = bool(nonneg_l)
+
+    if not cali.get("y") or not cali.get("dy"):
+        full_obs = cali.get("_full_observations")
+        if full_obs and full_obs.get("y") and full_obs.get("dy"):
+            cali["y"] = full_obs["y"]
+            cali["dy"] = full_obs["dy"]
+
+    y = cali.get("y")
+    dy = cali.get("dy")
+    if not y or not dy:
+        raise ValueError("Calibration config must contain observation dictionaries 'y' and 'dy'")
+
+    vessels = cali.get("vessels", [])
+    junctions = cali.get("junctions", [])
+    vessel_id_map = _build_vessel_id_map(vessels)
+
+    gen_by_vessel: dict[Any, float] | None = None
+    if fit_stenosis and stenosis_generation_limit_enabled:
+        gen_by_vessel = compute_bifurcation_generation_by_vessel(cali)
+
+    def _fit_stenosis_for_element(element_gen: float | None, max_generation: float) -> bool:
+        if not fit_stenosis:
+            return False
+        if not stenosis_generation_limit_enabled or element_gen is None:
+            return True
+        return generation_allows_stenosis(element_gen, max_generation)
+
+    def _row(
+        *,
+        element_name: str,
+        element_kind: str,
+        fit_stenosis_element: bool,
+        element_nonneg_r: bool,
+        fit: FitRlcResult,
+    ) -> dict[str, Any]:
+        stenosis = fit.stenosis if fit_stenosis_element else 0.0
+        return {
+            "element_name": element_name,
+            "element_kind": element_kind,
+            "fit_stenosis": fit_stenosis_element,
+            "nonneg_r_enabled": element_nonneg_r,
+            "nonneg_l_enabled": nonneg_l,
+            "R": fit.r_poiseuille,
+            "S": stenosis,
+            "L": fit.inductance,
+            "r_lower_active": fit.r_lower_active,
+            "l_lower_active": fit.l_lower_active,
+            "rel_err": fit.rel_err,
+        }
+
+    for vessel in vessels:
+        element_type = vessel.get("zero_d_element_type")
+        if element_type not in VESSEL_ELEMENT_TYPES:
+            continue
+
+        vessel_name = vessel["vessel_name"]
+        if freeze_connector and _is_connector_vessel(vessel_name):
+            continue
+
+        resolved = _resolve_vessel_observations(cali, vessel, junctions)
+        if resolved is None:
+            continue
+
+        delta_p, q_in, dq_in = resolved
+        element_gen = (
+            vessel_generation(int(vessel["vessel_id"]), gen_by_vessel)
+            if gen_by_vessel is not None
+            else None
+        )
+        fit_stenosis_element = _fit_stenosis_for_element(element_gen, vessel_stenosis_generation_max)
+        element_nonneg_r = nonneg_r and fit_stenosis_element
+        fit = _fit_rlc(
+            delta_p,
+            q_in,
+            dq_in,
+            fit_stenosis=fit_stenosis_element,
+            l2_r=l2_r,
+            l2_stenosis=l2_stenosis,
+            l2_l=l2_l,
+            nonneg_r=element_nonneg_r,
+            nonneg_l=nonneg_l,
+        )
+        yield _row(
+            element_name=vessel_name,
+            element_kind="vessel",
+            fit_stenosis_element=fit_stenosis_element,
+            element_nonneg_r=element_nonneg_r,
+            fit=fit,
+        )
+
+    for junction in junctions:
+        if junction.get("junction_type") != "BloodVesselJunction":
+            continue
+        num_outlets = _num_junction_outlets(junction)
+        if num_outlets < 2:
+            continue
+
+        junc_name = junction["junction_name"]
+        outlet_names = _junction_outlet_names(junction, vessel_id_map)
+        junction_element_gen = (
+            junction_inlet_generation(junction, gen_by_vessel) if gen_by_vessel is not None else None
+        )
+        fit_stenosis_junction = _fit_stenosis_for_element(
+            junction_element_gen,
+            junction_stenosis_generation_max,
+        )
+
+        for outlet_index, outlet_name in enumerate(outlet_names):
+            if freeze_connector and _is_connector_vessel(outlet_name):
+                continue
+
+            resolved = _resolve_junction_outlet_observations(
+                cali,
+                junction,
+                outlet_index,
+                outlet_name,
+                vessel_id_map,
+            )
+            if resolved is None:
+                continue
+
+            delta_p, q_in, dq_in = resolved
+            element_nonneg_r = nonneg_r and fit_stenosis_junction
+            fit = _fit_rlc(
+                delta_p,
+                q_in,
+                dq_in,
+                fit_stenosis=fit_stenosis_junction,
+                l2_r=l2_r,
+                l2_stenosis=l2_stenosis,
+                l2_l=l2_l,
+                nonneg_r=element_nonneg_r,
+                nonneg_l=nonneg_l,
+            )
+            yield _row(
+                element_name=f"{junc_name}/outlet_{outlet_index} ({outlet_name})",
+                element_kind="junction_outlet",
+                fit_stenosis_element=fit_stenosis_junction,
+                element_nonneg_r=element_nonneg_r,
+                fit=fit,
+            )

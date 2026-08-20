@@ -1,5 +1,9 @@
 # Learned Lumped-Parameter Networks
 
+Developed by Natalia Rubio as part of Ph.D. at Stanford University.  Subject to Stanford IP policy.  Please do not delete or move this repository without notifying me (Natalia).
+
+
+
 This repository contains functionality to train and deploy neural networks that predict lumped parameters (e.g. resistances, inductances) for 0D "electric circuit" models of cardiovascular flows.  The neural networks predict lumped parameters from the vascular geometry and are trained on high-fidelity 3D data.  This work is described in greater detail in this [paper](https://arxiv.org/abs/2604.01549).  A second, more lightweight repo, [learnedZeroD](https://github.com/natalia-rubio/learnedZeroD), provides functionality to convert a standard 0D model of a vasculature into the more accurate learned representation using pre-trained neural networks.
 
 ## Pipeline Overview
@@ -117,7 +121,7 @@ make notebook
 | [docs/architecture.md](docs/architecture.md)                                     | Design decisions                                                                                                    |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                                               | Setup, checks                                                                                                       |
 | [docs/data_and_results.md](docs/data_and_results.md)                             | Data layout, sample cohort, output paths                                                                            |
-| [data/README.md](data/README.md)                                                 | Provided VMR_aorta_starter cohort, inputs needed for example notebook                                                      |
+| [data/README.md](data/README.md)                                                 | Provided VMR_aorta_starter cohort, inputs needed for example notebook                                               |
 | [examples/nn_parameter_comparison.ipynb](examples/nn_parameter_comparison.ipynb) | Notebook: Representative workflow skipping steps that require external svzerodsolver and svzerodcalibrator binaries |
 
 
@@ -171,15 +175,15 @@ See [data/README.md](data/README.md) for provided sample cohort paths.
 ## Console entry points
 
 
-| Command                      | Purpose                                                                 |
-| ---------------------------- | ----------------------------------------------------------------------- |
-| `learn-lpns-cv`              | k-fold cross-validation                                                 |
-| `learn-lpns-batch-zerod`     | Batch 0D generation                                                     |
-| `learn-lpns-data-processing` | Build `ml_inputs`, `jax_arrays`, and `split_indices`                    |
+| Command                      | Purpose                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| `learn-lpns-cv`              | k-fold cross-validation                                                  |
+| `learn-lpns-batch-zerod`     | Batch 0D generation                                                      |
+| `learn-lpns-data-processing` | Build `ml_inputs`, `jax_arrays`, and `split_indices`                     |
 | `learn-lpns-train`           | Train junction/vessel NNs (`--set_name` required; `--num_geos` optional) |
 
-Example: `learn-lpns-train --set_name VMR_aorta_starter --run_config gen_loss`. All commands use keyword flags — see [docs/usage.md](docs/usage.md).
 
+Example: `learn-lpns-train --set_name VMR_aorta_starter --run_config gen_loss`. All commands use keyword flags — see [docs/usage.md](docs/usage.md).
 
 ## Configuration
 
@@ -194,3 +198,4 @@ The repo uses two related config layers:
 ```python
 from learn_lpns import get_pipeline_config, resolve_run_config_suffix, modality_table_header
 ```
+
